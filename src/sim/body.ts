@@ -6,7 +6,11 @@
 import { interiorAt, ROOF_THICKNESS, STEP_UP, supportAt, type TrainGeometry } from './geometry';
 import {
   DT,
+  HARD_LANDING,
+  LADDER_JUMP,
+  LADDER_REACH,
   LADDER_SPEED,
+  LADDER_TOP_REACH,
   RIDER_ACCEL,
   RIDER_CROUCH_HEIGHT,
   RIDER_GRAVITY,
@@ -22,17 +26,6 @@ import {
 import type { Dir, SurfaceKind } from './types';
 
 // ---- Tunables (candidates for rules.ts) ---------------------------------------------------------
-
-/** W grabs a ladder within this horizontal distance of it. */
-export const LADDER_REACH = 0.35;
-/** S at the top of a ladder mounts it within this distance of where it tops out. */
-export const LADDER_TOP_REACH = 0.35;
-/** Space on a ladder jumps off it with this fraction of a full jump. */
-export const LADDER_JUMP = 0.5;
-/** Landing faster than this (m/s) is a hard landing (a louder thud). */
-export const HARD_LANDING = 9;
-/** Feet below this height (m above the rails, under every floor) means off the train. */
-export const FALL_OFF_Y = 0.6;
 
 export const HALF_W = RIDER_WIDTH / 2;
 const EPS = 1e-6;

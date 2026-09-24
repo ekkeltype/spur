@@ -37,9 +37,13 @@ import {
   DWELL_SECONDS,
   FIRE_MAX,
   FULL_POWER_PSI,
+  GOVERNOR_GAIN,
+  GOVERNOR_HYSTERESIS,
   GOVERNOR_TARGET_PSI,
   GRAVITY,
   HEAT_LOSS,
+  HOLDUP_BRAKE,
+  HOLDUP_EASE,
   LOW_WATER,
   MPH,
   OBSTACLE_SAFE,
@@ -49,7 +53,9 @@ import {
   P_START,
   REVERSER_MAX_SPEED,
   ROLL,
+  secondsToTicks,
   SPOUT_MAX_SPEED,
+  SPOUT_PROMPT_RANGE,
   SPOUT_REACH,
   SPOUT_WINDOW,
   STATION_STOP_SPEED,
@@ -68,7 +74,6 @@ import {
   WHISTLE_SCARE_MAX,
   WHISTLE_SCARE_MIN,
   WHISTLE_SCARE_SECONDS,
-  secondsToTicks,
 } from './rules';
 import type {
   Assists,
@@ -92,17 +97,6 @@ import type {
 } from './types';
 
 // ---- Tunables (to move into rules.ts) ---------------------------------------------------------
-
-/** Governor: extra psi/s of firing asked for per psi below GOVERNOR_TARGET_PSI (spec §5.5). */
-export const GOVERNOR_GAIN = 0.5;
-/** Governor: how far (in notches) past the halfway point the ideal fire must be before it changes notch, so it doesn't flicker. */
-export const GOVERNOR_HYSTERESIS = 0.3;
-/** Held up (spec §5.2): the sim eases the brake to this… */
-export const HOLDUP_BRAKE = 0.5;
-/** …and the throttle to 0, moving each lever at most this much per second. */
-export const HOLDUP_EASE = 1;
-/** The Rider's 'align' prompt shows once a spout is within this many metres of the hatch (spec §5.5). */
-export const SPOUT_PROMPT_RANGE = 40;
 
 // ---------------------------------------------------------------------------------------------
 // The consist (spec §5.1, §6.1)

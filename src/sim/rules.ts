@@ -265,3 +265,93 @@ export const SHOP: readonly ShopItem[] = [
 
 /** Cars anyone can add to a consist without buying them. */
 export const FREE_CARS: readonly CarType[] = ['express', 'passenger', 'boxcar'];
+
+// ---- The train (train.ts) ------------------------------------------------------------------
+
+/** Governor: extra psi/s of firing asked for per psi below GOVERNOR_TARGET_PSI (spec §5.5). */
+export const GOVERNOR_GAIN = 0.5;
+/** Governor: how far (in notches) past the halfway point the ideal fire must be before it changes notch, so it doesn't flicker. */
+export const GOVERNOR_HYSTERESIS = 0.3;
+/** Held up (spec §5.2): the sim eases the brake to this… */
+export const HOLDUP_BRAKE = 0.5;
+/** …and the throttle to 0, moving each lever at most this much per second. */
+export const HOLDUP_EASE = 1;
+/** The Rider's 'align' prompt shows once a spout is within this many metres of the hatch (spec §5.5). */
+export const SPOUT_PROMPT_RANGE = 40;
+
+// ---- Signals (signals.ts) ------------------------------------------------------------------
+
+/**
+ * The loco crossing the same signal again within this many seconds (rolling back and forth over it)
+ * is one passing, not several: one event, one fine.
+ */
+export const SIGNAL_DEBOUNCE_SECONDS = 3;
+
+// ---- Figures on the train (body.ts) --------------------------------------------------------
+
+/** W grabs a ladder within this horizontal distance of it. */
+export const LADDER_REACH = 0.35;
+/** S at the top of a ladder mounts it within this distance of where it tops out. */
+export const LADDER_TOP_REACH = 0.35;
+/** Space on a ladder jumps off it with this fraction of a full jump. */
+export const LADDER_JUMP = 0.5;
+/** Landing faster than this (m/s) is a hard landing (a louder thud). */
+export const HARD_LANDING = 9;
+/** Feet below this height (m above the rails, under every floor) means off the train. */
+export const FALL_OFF_Y = 0.6;
+
+// ---- Fighting (fight.ts) -------------------------------------------------------------------
+
+/**
+ * Feet higher than this inside a tunnel hit its roof (spec §4.3): standing or crouching on a car
+ * roof (3.9–4.7 m) or the cab roof (4.0 m) does, the tender top (2.8 m) doesn't — unless you jump.
+ */
+export const TUNNEL_FEET_Y = 3.5;
+/** A horseman's rider as a target (spec §7.2: riders can be hit, horses can't): half-width, saddle to hat. */
+export const HORSEMAN_HALF_W = 0.35;
+export const HORSEMAN_Y0 = 1.5;
+export const HORSEMAN_Y1 = 2.7;
+/** Where a horseman's shots leave from, and where shots at one are aimed. */
+export const HORSEMAN_GUN_Y = 2.3;
+export const HORSEMAN_CHEST_Y = 2.1;
+/** Downed or swept-off figures fall for this long (for drawing) before they're gone. */
+export const FALL_SECONDS = 1.0;
+/** A hit knocks a boarding horseman back by this much speed (spec §7.2: "a hit during boarding knocks them off"). */
+export const BOARD_KNOCKBACK = 2;
+
+// ---- The Rider (rider.ts) ------------------------------------------------------------------
+
+/** Changing weapons takes this long before the next shot. */
+export const WEAPON_SWITCH_SECONDS = 0.25;
+/**
+ * A miss that passes this close to a horseman was aimed into the trackside lane: its tracer flies
+ * on past the train instead of stopping at the car body behind (it's in front of it).
+ */
+export const NEAR_MISS = 1.5;
+/** The spyglass view eases toward the pointer with this time constant. */
+export const SCOPE_SMOOTH_SECONDS = 0.3;
+/** Dropped loot is picked up by feet within this distance of it (and this close in height). */
+export const LOOT_REACH = 0.6;
+export const LOOT_REACH_Y = 0.5;
+
+// ---- Bandits (bandits.ts) ------------------------------------------------------------------
+
+/** Members of a wave start this far apart. */
+export const SPAWN_SPACING = 4;
+/** A horseman closes on his mark at up to this much faster than the train (m/s)… */
+export const HORSE_CLOSE = 6;
+/** …braking with this share of HORSE_ACCEL so he doesn't overshoot. */
+export const HORSE_BRAKE = 0.8;
+/** Within this of his mark a horseman is pacing; past twice this he's approaching again. */
+export const PACE_RANGE = 4;
+/** Giving up: rein in to this much slower than the train, and gone after RETREAT_SECONDS. */
+export const RETREAT_REL = 8;
+export const RETREAT_SECONDS = 6;
+/** Powder horsemen spread along the powder car this far apart. */
+export const POWDER_SPREAD = 3;
+/** A hunting bandit closes to this range of the Rider (with a clear shot) before standing to fight. */
+export const HUNT_CLOSE = 8;
+/** Missed shots fly on this far past their target. */
+export const MISS_CARRY = 4;
+/** Height of a powder hit on the car's side. */
+export const POWDER_HIT_Y = 2.4;

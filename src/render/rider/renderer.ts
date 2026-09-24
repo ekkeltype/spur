@@ -445,8 +445,16 @@ export class RiderRenderer {
               mx = m.x;
               my = m.y;
             }
+          } else if (e.id !== undefined) {
+            // The sim names the shooter: start the tracer at their drawn gun.
+            key = `${e.by === 'bandit' ? 'b' : 'h'}${e.id}`;
+            const m = this.muzzleOf(key);
+            if (m && Math.hypot(m.x - e.x0, m.y - e.y0) < 3.5) {
+              mx = m.x;
+              my = m.y;
+            }
           } else {
-            // Find the shooter nearest the shot's origin, and start the tracer at their drawn gun.
+            // No shooter named: take the one nearest the shot's origin.
             let best = 3;
             if (e.by === 'bandit') {
               for (const b of st.bandits) {

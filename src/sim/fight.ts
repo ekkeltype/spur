@@ -4,34 +4,22 @@
 import { bodyHeight, HALF_W, type Body } from './body';
 import { groundBelow, trainGeometry, type Rect, type TrainGeometry } from './geometry';
 import {
+  BOARD_KNOCKBACK,
   DT,
+  HORSEMAN_HALF_W,
+  HORSEMAN_Y0,
+  HORSEMAN_Y1,
   INVULN_SECONDS,
   LOW_BRIDGE_CLEARANCE,
   RESPAWN_DOWN_SECONDS,
   RESPAWN_OFF_CABOOSE_SECONDS,
   RESPAWN_OFF_SECONDS,
   secondsToTicks,
+  TUNNEL_FEET_Y,
 } from './rules';
 import type { BanditState, FrameHazard, GameState, HorsemanState, HurtCause, RunDef, SimEvent, TrackPoint } from './types';
 
 // ---- Tunables (candidates for rules.ts) ---------------------------------------------------------
-
-/**
- * Feet higher than this inside a tunnel hit its roof (spec §4.3): standing or crouching on a car
- * roof (3.9–4.7 m) or the cab roof (4.0 m) does, the tender top (2.8 m) doesn't — unless you jump.
- */
-export const TUNNEL_FEET_Y = 3.5;
-/** A horseman's rider as a target (spec §7.2: riders can be hit, horses can't): half-width, saddle to hat. */
-export const HORSEMAN_HALF_W = 0.35;
-export const HORSEMAN_Y0 = 1.5;
-export const HORSEMAN_Y1 = 2.7;
-/** Where a horseman's shots leave from, and where shots at one are aimed. */
-export const HORSEMAN_GUN_Y = 2.3;
-export const HORSEMAN_CHEST_Y = 2.1;
-/** Downed or swept-off figures fall for this long (for drawing) before they're gone. */
-export const FALL_SECONDS = 1.0;
-/** A hit knocks a boarding horseman back by this much speed (spec §7.2: "a hit during boarding knocks them off"). */
-export const BOARD_KNOCKBACK = 2;
 
 export interface FightCtx {
   state: GameState;

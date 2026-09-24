@@ -4,14 +4,17 @@
 // those change.
 
 import { netIndex, spanDir, spanLength, spansOverlap, switchOf, walk, xOnSpans, type NetIndex } from './network';
-import { APPROACH_LIMIT, BLOCK_MAX, DIVERGE_LIMIT, RED_SIGNAL_FINE, SPEED_FINE, SPEED_FINE_TOLERANCE, secondsToTicks } from './rules';
+import {
+  APPROACH_LIMIT,
+  BLOCK_MAX,
+  DIVERGE_LIMIT,
+  RED_SIGNAL_FINE,
+  secondsToTicks,
+  SIGNAL_DEBOUNCE_SECONDS,
+  SPEED_FINE,
+  SPEED_FINE_TOLERANCE,
+} from './rules';
 import type { Aspect, GameState, RunDef, SignalDef, SignalMemo, SimEvent, Span, TickMotion } from './types';
-
-/**
- * The loco crossing the same signal again within this many seconds (rolling back and forth over it)
- * is one passing, not several: one event, one fine.
- */
-export const SIGNAL_DEBOUNCE_SECONDS = 3;
 
 const EPS = 1e-6;
 

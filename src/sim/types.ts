@@ -789,7 +789,8 @@ export type SimEvent =
   | { type: 'runawayWrecked'; id: string }
   | { type: 'sideJob'; id: string; state: 'aboard' | 'done' }
   // Rider and fighting
-  | { type: 'shot'; by: 'rider' | 'bandit' | 'horseman'; weapon: Weapon; layer: ShotLayer; x0: number; y0: number; x1: number; y1: number; hit: 'rider' | 'bandit' | 'horseman' | 'car' | 'none' }
+  /** `id`: the bandit or horseman who fired (absent for the Rider's shots). */
+  | { type: 'shot'; by: 'rider' | 'bandit' | 'horseman'; id?: number; weapon: Weapon; layer: ShotLayer; x0: number; y0: number; x1: number; y1: number; hit: 'rider' | 'bandit' | 'horseman' | 'car' | 'none' }
   | { type: 'aim'; by: 'bandit' | 'horseman'; id: number }
   | { type: 'reload'; weapon: Weapon }
   | { type: 'dryFire' }

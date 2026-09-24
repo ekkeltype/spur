@@ -310,7 +310,7 @@ describe('horsemen (spec §7.2)', () => {
     expect(ev).toContainEqual({ type: 'aim', by: 'horseman', id: 80 });
     const shot = tick(w, Math.round(0.6 * TICK_HZ)).filter((e) => e.type === 'shot' && e.by === 'horseman');
     expect(shot.length).toBe(1);
-    expect(shot[0]).toMatchObject({ layer: 'trackside' });
+    expect(shot[0]).toMatchObject({ layer: 'trackside', id: 80 }); // the shooter, for the tracer's origin
     // Inside the express: no telegraph.
     const inside = world();
     inside.state.train.v = 10;
@@ -344,7 +344,7 @@ describe('boarded bandits (spec §7.3)', () => {
     expect(before.some((e) => e.type === 'shot')).toBe(false);
     const shot = tick(w, 2).filter((e) => e.type === 'shot' && e.by === 'bandit');
     expect(shot.length).toBe(1);
-    expect(shot[0]).toMatchObject({ layer: 'train', x0: 22 });
+    expect(shot[0]).toMatchObject({ layer: 'train', x0: 22, id: 5 });
     // Through a roof there's no line of sight: no telegraph.
     const blind = world();
     placeRider(blind, 16, 1.2, 'floor');

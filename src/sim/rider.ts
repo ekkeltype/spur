@@ -1,6 +1,6 @@
 // The Rider (spec §6): movement, wind, hazards, shooting, the spyglass, respawns.
 
-import { bodyHeight, FALL_OFF_Y, IDLE, stepBody, windOf, type BodyInput } from './body';
+import { bodyHeight, IDLE, stepBody, windOf, type BodyInput } from './body';
 import {
   banditAlive,
   banditBox,
@@ -10,7 +10,6 @@ import {
   damageHorseman,
   horsemanAlive,
   horsemanBox,
-  HORSEMAN_CHEST_Y,
   hurtRider,
   inTunnel,
   riderOff,
@@ -24,39 +23,33 @@ import {
   AIM_ASSIST_DEGREES,
   CABOOSE_HEAL_SECONDS,
   DT,
+  FALL_OFF_Y,
   FAST_MOVE,
   FLAG_MAX,
   FLAG_TTL_SECONDS,
   HEARTS,
+  HORSEMAN_CHEST_Y,
   INVULN_SECONDS,
+  LOOT_REACH,
+  LOOT_REACH_Y,
+  NEAR_MISS,
   QUICK_RELOAD_FACTOR,
   RIDER_CROUCH_WALK,
   RIDER_SHOULDER,
   RIDER_SHOULDER_CROUCH,
   RIDER_WALK,
   SCOPE_MIN,
-  STUN_SECONDS,
-  WEAPONS,
+  SCOPE_SMOOTH_SECONDS,
   secondsToTicks,
+  STUN_SECONDS,
+  WEAPON_SWITCH_SECONDS,
+  WEAPONS,
 } from './rules';
 import type { Assists, CarState, GameState, LootState, RiderInput, RiderState, ShotLayer, SimEvent, UpgradeId, Weapon } from './types';
 
 export type { FightCtx } from './fight';
 
 // ---- Tunables (candidates for rules.ts) ---------------------------------------------------------
-
-/** Changing weapons takes this long before the next shot. */
-export const WEAPON_SWITCH_SECONDS = 0.25;
-/**
- * A miss that passes this close to a horseman was aimed into the trackside lane: its tracer flies
- * on past the train instead of stopping at the car body behind (it's in front of it).
- */
-export const NEAR_MISS = 1.5;
-/** The spyglass view eases toward the pointer with this time constant. */
-export const SCOPE_SMOOTH_SECONDS = 0.3;
-/** Dropped loot is picked up by feet within this distance of it (and this close in height). */
-export const LOOT_REACH = 0.6;
-export const LOOT_REACH_Y = 0.5;
 
 const DEG = Math.PI / 180;
 const SCOPE_SMOOTH = 1 - Math.exp(-DT / SCOPE_SMOOTH_SECONDS);

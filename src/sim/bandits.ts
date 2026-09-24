@@ -4,14 +4,12 @@
 // Called by game.ts after the Rider each tick (spec §15 steps 9, 11 and 12): spawnWave when the loco
 // passes a wave's trigger, then stepBandits. All randomness comes from state.rng.
 
-import { bodyHeight, FALL_OFF_Y, IDLE, stepBody, windOf, type Body, type BodyInput, type Wind } from './body';
+import { bodyHeight, IDLE, stepBody, windOf, type Body, type BodyInput, type Wind } from './body';
 import {
   banditAlive,
   bridgeHits,
   chestY,
-  FALL_SECONDS,
   horsemanAlive,
-  HORSEMAN_GUN_Y,
   hurtRider,
   removeBandit,
   tunnelHits,
@@ -34,10 +32,14 @@ import {
   CRACK_SECONDS,
   CROUCH_ACCURACY,
   DT,
+  FALL_OFF_Y,
+  FALL_SECONDS,
   FAST_MOVE_WINDOW,
   HORSE_ACCEL,
   HORSE_AMBUSH_AHEAD,
   HORSE_AMBUSH_WAKE,
+  HORSE_BRAKE,
+  HORSE_CLOSE,
   HORSE_GIVE_UP_BEHIND,
   HORSE_GIVE_UP_SECONDS,
   HORSE_MAX,
@@ -47,22 +49,31 @@ import {
   HORSE_STAMINA_SECONDS,
   HORSEMAN_ACCURACY_BASE,
   HORSEMAN_ACCURACY_FALLOFF,
+  HORSEMAN_GUN_Y,
   HORSEMAN_HP,
   HORSEMAN_INTERVAL,
   HORSEMAN_RANGE,
   HORSEMAN_TELEGRAPH,
+  HUNT_CLOSE,
   MAX_BANDITS_ABOARD,
   MAX_HORSEMEN,
+  MISS_CARRY,
   MOVING_ACCURACY,
+  PACE_RANGE,
   POWDER_HIT_CHANCE,
-  RIDER_CROUCH_WALK,
+  POWDER_HIT_Y,
+  POWDER_SPREAD,
+  RETREAT_REL,
+  RETREAT_SECONDS,
   RIDER_ACCEL,
+  RIDER_CROUCH_WALK,
   RIDER_SHOULDER,
   RIDER_SHOULDER_CROUCH,
   RIDER_WALK,
+  secondsToTicks,
+  SPAWN_SPACING,
   STUN_SECONDS,
   TICK_HZ,
-  secondsToTicks,
 } from './rules';
 import type { BanditGoal, BanditState, Dir, GameState, HorsemanState, SimEvent, Tier, WaveDef } from './types';
 
@@ -70,29 +81,10 @@ export type { FightCtx } from './fight';
 
 // ---- Tunables (candidates for rules.ts) ---------------------------------------------------------
 
-/** Members of a wave start this far apart. */
-export const SPAWN_SPACING = 4;
-/** A horseman closes on his mark at up to this much faster than the train (m/s)… */
-export const HORSE_CLOSE = 6;
-/** …braking with this share of HORSE_ACCEL so he doesn't overshoot. */
-export const HORSE_BRAKE = 0.8;
-/** Within this of his mark a horseman is pacing; past twice this he's approaching again. */
-export const PACE_RANGE = 4;
-/** Giving up: rein in to this much slower than the train, and gone after RETREAT_SECONDS. */
-export const RETREAT_REL = 8;
-export const RETREAT_SECONDS = 6;
-/** Powder horsemen spread along the powder car this far apart. */
-export const POWDER_SPREAD = 3;
-/** A hunting bandit closes to this range of the Rider (with a clear shot) before standing to fight. */
-export const HUNT_CLOSE = 8;
 /** Walking to a point: close enough. */
 export const ARRIVE = 0.15;
 /** A bandit is at a place when within this of it (same walk region). */
 export const AT_PLACE = 0.35;
-/** Missed shots fly on this far past their target. */
-export const MISS_CARRY = 4;
-/** Height of a powder hit on the car's side. */
-export const POWDER_HIT_Y = 2.4;
 
 const BANDIT_CROUCH_WALK = BANDIT_WALK * (RIDER_CROUCH_WALK / RIDER_WALK);
 const STUNNED: BodyInput = { ...IDLE, crouch: true };
@@ -432,7 +424,7 @@ function horsemanFires(ctx: FightCtx, h: HorsemanState, events: SimEvent[]): voi
   const hit = p > 0 && chance(state.rng, p);
   if (hit) hurtRider(ctx, 'bullet', events);
   const end = hit ? { x: r.x, y: cy } : pastTarget(h.x, HORSEMAN_GUN_Y, r.x, cy + 0.7, d + MISS_CARRY);
-  events.push({ type: 'shot', by: 'horseman', weapon: 'revolver', layer: 'trackside', x0: h.x, y0: HORSEMAN_GUN_Y, x1: end.x, y1: end.y, hit: hit ? 'rider' : 'none' });
+  events.push({ type: 'shot', by: 'horseman', id: h.id, weapon: 'revolver', layer: 'trackside', x0: h.x, y0: HORSEMAN_GUN_Y, x1: end.x, y1: end.y, hit: hit ? 'rider' : 'none' });
 }
 
 function pastTarget(x0: number, y0: number, tx: number, ty: number, dist: number): { x: number; y: number } {
@@ -447,7 +439,7 @@ function powderShot(ctx: FightCtx, h: HorsemanState, events: SimEvent[]): void {
   if (!car) return;
   const hit = chance(state.rng, POWDER_HIT_CHANCE);
   const x1 = Math.min(car.x1 - 0.5, Math.max(car.x0 + 0.5, h.x));
-  events.push({ type: 'shot', by: 'horseman', weapon: 'revolver', layer: 'trackside', x0: h.x, y0: HORSEMAN_GUN_Y, x1, y1: POWDER_HIT_Y, hit: hit ? 'car' : 'none' });
+  events.push({ type: 'shot', by: 'horseman', id: h.id, weapon: 'revolver', layer: 'trackside', x0: h.x, y0: HORSEMAN_GUN_Y, x1, y1: POWDER_HIT_Y, hit: hit ? 'car' : 'none' });
   if (!hit) return;
   car.hp = Math.max(0, car.hp - 1);
   state.stats.carDamage++;
@@ -795,7 +787,7 @@ function banditFires(ctx: FightCtx, geo: TrainGeometry, b: BanditState, events: 
     const t = raySolid(geo, b.x, sy, dx, dy, d + MISS_CARRY);
     end = { x: b.x + dx * t, y: sy + dy * t };
   }
-  events.push({ type: 'shot', by: 'bandit', weapon: 'revolver', layer: 'train', x0: b.x, y0: sy, x1: end.x, y1: end.y, hit: hit ? 'rider' : 'none' });
+  events.push({ type: 'shot', by: 'bandit', id: b.id, weapon: 'revolver', layer: 'train', x0: b.x, y0: sy, x1: end.x, y1: end.y, hit: hit ? 'rider' : 'none' });
 }
 
 // ---- The hold-up (spec §5.2, §7.4) --------------------------------------------------------------

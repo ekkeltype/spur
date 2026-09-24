@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { newGame } from '../src/sim/game';
 import { frontHead, moveSpans, netIndex, spansFromFront, spansLength, walk } from '../src/sim/network';
-import { APPROACH_LIMIT, BLOCK_MAX, DIVERGE_LIMIT, RED_SIGNAL_FINE, SPEED_FINE, SPEED_FINE_TOLERANCE, TICK_HZ } from '../src/sim/rules';
-import { aspectOf, blockOf, initialSignals, restrictionLimit, SIGNAL_DEBOUNCE_SECONDS, stepSignals } from '../src/sim/signals';
+import {
+  APPROACH_LIMIT,
+  BLOCK_MAX,
+  DIVERGE_LIMIT,
+  RED_SIGNAL_FINE,
+  SIGNAL_DEBOUNCE_SECONDS,
+  SPEED_FINE,
+  SPEED_FINE_TOLERANCE,
+  TICK_HZ,
+} from '../src/sim/rules';
+import { aspectOf, blockOf, initialSignals, restrictionLimit, stepSignals } from '../src/sim/signals';
 import type { AiTrainState, Aspect, GameState, ObstacleKind, ObstacleState, RunDef, SignalDef, SimEvent, TickMotion, TrackHead } from '../src/sim/types';
 import { filterForEngineer } from '../src/sim/views';
 import { baseRun, yRun } from './fixtures';
