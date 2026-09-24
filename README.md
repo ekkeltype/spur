@@ -76,7 +76,7 @@ Query parameters:
 
 - `?local=1` opens local test mode, and `?join=CODE` pre-fills the join screen. Both also work in production builds.
 - `?run=N` (1–6, or a run id) and `?seed=S` force the next run started, and with it the variant.
-- `?debug=1` adds overlays: bandits' goals and modes, and the sim's state line.
+- `?debug=1` adds overlays: on the Engineer's map, the hidden obstacles and every signal's aspect; in the Rider's view, each bandit's goal and mode, and the sim's state line.
 - `?autopilot=1` lets the plan-following autopilot drive the train, so one person can play the Rider's side.
 
 Debug keys (the Rider's keyboard):
