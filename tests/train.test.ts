@@ -559,6 +559,20 @@ describe('the hold-up override (spec §5.2)', () => {
     runFor(s, run, 1, steady);
     expect(s.train.brake).toBe(0.5);
   });
+
+  it('lets the fire die down, so a long hold-up costs pressure, not the boiler', () => {
+    const run = straight();
+    const s = game(run);
+    s.train.fire = 3;
+    s.train.water = 3;
+    s.train.heldUp = true;
+    const events = runFor(s, run, 60, steady);
+    expect(s.train.fire).toBe(0);
+    expect(s.phase).toBe('running');
+    expect(events.some((e) => e.type === 'lost')).toBe(false);
+    expect(s.train.water).toBeGreaterThan(0);
+    expect(s.train.pressure).toBeLessThan(180); // it cooled while the fire was out
+  });
 });
 
 describe('switches and buffers under the train (spec §4.1)', () => {

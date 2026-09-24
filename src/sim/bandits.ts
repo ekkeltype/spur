@@ -4,7 +4,7 @@
 // Called by game.ts after the Rider each tick (spec §15 steps 9, 11 and 12): spawnWave when the loco
 // passes a wave's trigger, then stepBandits. All randomness comes from state.rng.
 
-import { bodyHeight, FALL_OFF_Y, IDLE, stepBody, windOf, type BodyInput, type Wind } from './body';
+import { bodyHeight, FALL_OFF_Y, IDLE, stepBody, windOf, type Body, type BodyInput, type Wind } from './body';
 import {
   banditAlive,
   bridgeHits,
@@ -550,7 +550,7 @@ function decide(ctx: FightCtx, geo: TrainGeometry, b: BanditState, wind: Wind, e
       return IDLE;
     }
     setMode(b, 'moving');
-    return steer(geo, b, placeOf(geo, geo.nav.cab), wind);
+    return steerTo(geo, b, placeOf(geo, geo.nav.cab), wind);
   }
   if (b.goal === 'safe' && geo.safe) {
     if (loot.status === 'dropped') {
@@ -563,7 +563,7 @@ function decide(ctx: FightCtx, geo: TrainGeometry, b: BanditState, wind: Wind, e
           return IDLE;
         }
         setMode(b, 'moving');
-        return steer(geo, b, { region, x: loot.x }, wind);
+        return steerTo(geo, b, { region, x: loot.x }, wind);
       }
     }
     const busy = state.bandits.some((o) => o !== b && banditAlive(o) && o.mode === 'cracking');
@@ -572,7 +572,7 @@ function decide(ctx: FightCtx, geo: TrainGeometry, b: BanditState, wind: Wind, e
       const safe = placeOf(geo, geo.nav.safe);
       if (at(geo, b, safe.region, safe.x)) return crack(ctx, b, events);
       setMode(b, 'moving');
-      return steer(geo, b, safe, wind);
+      return steerTo(geo, b, safe, wind);
     }
   }
   return hunt(ctx, geo, b, wind);
@@ -608,7 +608,7 @@ function flee(ctx: FightCtx, geo: TrainGeometry, b: BanditState, wind: Wind, eve
   if (b.navTarget === null || !geo.nav.boarding.includes(b.navTarget)) b.navTarget = escapeNode(geo, b);
   if (b.navTarget === null) return hunt(ctx, geo, b, wind);
   const node = placeOf(geo, b.navTarget);
-  if (!at(geo, b, node.region, node.x)) return steer(geo, b, node, wind);
+  if (!at(geo, b, node.region, node.x)) return steerTo(geo, b, node, wind);
   const horse = state.horsemen.find((h) => h.pickup && horsemanAlive(h) && h.mode !== 'retreat' && Math.abs(h.x - b.x) <= BOARD_TOLERANCE);
   if (horse && Math.abs(state.train.v) <= HORSE_MAX + 0.5) escape(ctx, b, horse, events);
   return IDLE;
@@ -654,7 +654,7 @@ function hunt(ctx: FightCtx, geo: TrainGeometry, b: BanditState, wind: Wind): Bo
   }
   setMode(b, 'moving');
   const region = regionAt(geo, r.x, r.y);
-  return region >= 0 ? steer(geo, b, { region, x: r.x }, wind) : IDLE;
+  return region >= 0 ? steerTo(geo, b, { region, x: r.x }, wind) : IDLE;
 }
 
 function inCab(geo: TrainGeometry, b: BanditState): boolean {
@@ -662,30 +662,29 @@ function inCab(geo: TrainGeometry, b: BanditState): boolean {
   return b.x >= c.x0 && b.x <= c.x1 && b.y >= c.floorY - 0.05 && b.y < c.ceilY;
 }
 
-function placeOf(geo: TrainGeometry, node: number): { region: number; x: number } {
+export function placeOf(geo: TrainGeometry, node: number): { region: number; x: number } {
   const n = geo.nav.nodes[node];
   return { region: n.region, x: n.x };
 }
 
-function regionOf(geo: TrainGeometry, b: BanditState): number {
+export function regionOf(geo: TrainGeometry, b: Body): number {
   if (!b.onGround) return -1;
   const s = supportAt(geo, b.x, b.y);
   return s >= 0 ? geo.surfaces[s].region : -1;
 }
 
-function at(geo: TrainGeometry, b: BanditState, region: number, x: number): boolean {
+function at(geo: TrainGeometry, b: Body, region: number, x: number): boolean {
   return b.ladder === null && regionOf(geo, b) === region && Math.abs(b.x - x) <= AT_PLACE;
 }
 
 // ---- Navigation (spec §7.3) ---------------------------------------------------------------------
 
 /**
- * Steers a bandit toward a place: walking within its walk region, and between regions by the
+ * Steers a figure toward a place: walking within its walk region, and between regions by the
  * cheapest move of the nav graph (climbing, dropping through a hatch, jumping a gap the wind
- * allows, or stepping off a roof's end).
+ * allows, or stepping off a roof's end). Bandits use it; so do the test bots playing the Rider.
  */
-function steer(geo: TrainGeometry, b: BanditState, goal: { region: number; x: number }, wind: Wind): BodyInput {
-  const walk = BANDIT_WALK;
+export function steerTo(geo: TrainGeometry, b: Body, goal: { region: number; x: number }, wind: Wind, walk = BANDIT_WALK): BodyInput {
   if (b.ladder !== null) {
     const l = geo.ladders[b.ladder];
     const field = navField(geo, goal.region, goal.x, walk, wind.dir, wind.w);
@@ -738,7 +737,7 @@ function steer(geo: TrainGeometry, b: BanditState, goal: { region: number; x: nu
 }
 
 /** Walk to x, easing off in time to stop there. */
-function walkTo(b: BanditState, x: number): BodyInput {
+function walkTo(b: Body, x: number): BodyInput {
   const dx = x - b.x;
   if (Math.abs(dx) <= ARRIVE) return IDLE;
   const stopping = (b.vx * b.vx) / (2 * RIDER_ACCEL);

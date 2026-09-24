@@ -56,6 +56,14 @@ Where the spec was silent or ambiguous, these are the choices made (spec §0). E
 - **The getaway.** A looter runs to the nearest platform. A horseman already riding along (never the boss) brings the horse; otherwise one comes up from the rear, only if the train is at 18 m/s or less, and the escape itself needs the train at 18.5 m/s or less. Speed protects the payroll.
 - **God mode** stops all shooting, including at the powder car.
 
+## Balance
+
+Tuned against `tests/balance.test.ts`: the autopilot drives while a bot Rider fights, and a sharp Rider must win every run and variant, while an idle Rider must lose every run whose cargo the bandits are after.
+
+- **Horses are faster than the spec's first numbers**: 21 m/s (47 mph) with a 25 m/s sprint, instead of 18 and 21. At 18 m/s the autopilot's ordinary 45 mph cruise left every horseman behind, so the Rider in run 2 never saw a fight. Now shaking bandits takes a deliberate push past about 48 mph, which costs water and is limited by curves, as the pitch intended.
+- **A hold-up lets the fire down.** With the Engineer's hands up nobody can tend the fire, and a long hold-up used to boil the tender dry and blow the boiler. That's a confusing way to lose to a bandit. Now it costs time and pressure instead. It can still cost the run if the train stands on the main line when a scheduled train is due.
+- **The powder car** has 12 hit points and a horseman's shot hits it 40% of the time (from 8 and 60%). A few tier-3 riders used to finish it in seconds.
+
 ## The campaign
 
 - **One railroad.** The six maps chain into one line pushing east: Juniper → Coyote Bend → Pale Rock → Mesa → Silver Flats → Tanner's Pass → Summit. Main edges run west to east, so eastbound is +1 and every signal faces +1.

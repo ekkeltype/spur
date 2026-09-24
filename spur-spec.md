@@ -168,7 +168,7 @@ types:
 | boxcar | 13 | 24 | Freight. Roof hatch. |
 | armored | 13 | 42 | Purchased. A roof parapet gives cover when crouching; gun slits let you shoot trackside targets from inside. |
 | caboose | 10 | 14 | Purchased. Faster respawn (4 s instead of 6 s); heals 1 heart every 20 s while inside |
-| powder | 12 | 30 | Dynamite contracts only. 8 hit points; it explodes at 0 (loss: `powder`). |
+| powder | 12 | 30 | Dynamite contracts only. 12 hit points; it explodes at 0 (loss: `powder`). |
 
 Every car except the loco and tender has a 0.5 m **end platform** at floor height (1.2 m, the
 armored, boxcar and powder cars 1.3 m) at both ends, with a ladder to the roof and a doorway to the
@@ -190,7 +190,8 @@ third), armored and powder 3.9.
 | Switches | normal or reverse per junction | Refused while any part of a train occupies the junction's edges within 20 m of the node |
 
 While **held up** (a bandit in the cab, §7.4), every command except the whistle is refused ("Hands
-up! There's a gun on you"). The sim eases the throttle to 0 and the brake to 0.5.
+up! There's a gun on you"). The sim eases the throttle to 0 and the brake to 0.5, and the fire is let
+down, so a hold-up costs time and pressure but can't boil the boiler dry.
 
 ### 5.3 Motion
 
@@ -332,7 +333,7 @@ a goal (`safe`, `cab`, `hunt`, `powder` or `mixed`), a tier (1–3), an optional
 
 ### 7.2 Horsemen (the trackside layer)
 
-- World speed up to `HORSE_MAX` (18 m/s), sprinting at up to 21 m/s for 8 s of stamina. Stamina
+- World speed up to `HORSE_MAX` (21 m/s, 47 mph), sprinting at up to 25 m/s for 8 s of stamina. Stamina
   refills at one third of that rate. They accelerate at 3 m/s².
 - A horseman who can't keep up for 12 s, or falls 70 m behind the rear, gives up.
 - They move to a boarding point that suits their goal:
@@ -366,7 +367,7 @@ a goal (`safe`, `cab`, `hunt`, `powder` or `mixed`), a tier (1–3), an optional
   it to recover it.
 - **Cab.** In the cab, a bandit **holds up** the Engineer until killed (§5.2).
 - **Hunt.** Go after the Rider.
-- **Powder.** Horsemen shoot the powder car, and each shot has a 60% chance of hitting it. At 0 HP it
+- **Powder.** Horsemen shoot the powder car, and each shot has a 40% chance of hitting it. At 0 HP it
   explodes.
 
 ## 8. Obstacles (hidden from the Engineer)

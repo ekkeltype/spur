@@ -5,7 +5,7 @@ import { newGame } from '../src/sim/game';
 import { trainGeometry } from '../src/sim/geometry';
 import { framePath, framePoint, netIndex } from '../src/sim/network';
 import { initialLoot, initialRider, stepRider, type FightCtx } from '../src/sim/rider';
-import { SCOPE_MAX, TICK_HZ } from '../src/sim/rules';
+import { CAR_SPECS, HORSE_MAX, HORSE_SPRINT, SCOPE_MAX, TICK_HZ } from '../src/sim/rules';
 import {
   NO_INPUT,
   type BanditState,
@@ -210,8 +210,8 @@ describe('horsemen (spec §7.2)', () => {
   it('gives up after 12 s when the train is faster than a horse can keep up with', () => {
     const w = world();
     riderAway(w);
-    w.state.train.v = 19.5;
-    w.state.horsemen = [horseman({ x: -20, worldV: 18, goal: 'safe', mode: 'approach' })];
+    w.state.train.v = HORSE_MAX + 1.5;
+    w.state.horsemen = [horseman({ x: -20, worldV: HORSE_MAX, goal: 'safe', mode: 'approach' })];
     const h = w.state.horsemen[0];
     tick(w, 11 * TICK_HZ);
     expect(h.mode).toBe('approach');
@@ -224,7 +224,7 @@ describe('horsemen (spec §7.2)', () => {
   it('gives up at once when 70 m behind the rear', () => {
     const w = world();
     riderAway(w);
-    w.state.train.v = 30;
+    w.state.train.v = HORSE_SPRINT + 8;
     spawnWave(w.ctx, wave({ count: 1 }), []);
     const h = w.state.horsemen[0];
     tick(w, 4 * TICK_HZ);
@@ -244,18 +244,18 @@ describe('horsemen (spec §7.2)', () => {
     tick(w, 20 * TICK_HZ);
     expect(Math.abs(h.x - 13.55)).toBeLessThan(1.2);
     expect(h.worldV).toBeCloseTo(12, 0);
-    // At 20 m/s it can only hold on by sprinting, and its stamina drains.
-    w.state.train.v = 20;
-    tick(w, 3 * TICK_HZ);
+    // Faster than HORSE_MAX it can only hold on by sprinting, and its stamina drains.
+    w.state.train.v = HORSE_MAX + 2;
+    tick(w, 5 * TICK_HZ); // time to accelerate past HORSE_MAX at HORSE_ACCEL
     expect(h.stamina).toBeLessThan(8);
-    expect(Math.abs(h.worldV)).toBeGreaterThan(18);
+    expect(Math.abs(h.worldV)).toBeGreaterThan(HORSE_MAX);
   });
 
-  it('boards only when the train is no faster than 18.5 m/s, after 1.4 s at the platform', () => {
+  it('boards only when the train is no faster than HORSE_MAX + 0.5, after 1.4 s at the platform', () => {
     const fast = world();
     riderAway(fast);
-    fast.state.train.v = 19;
-    fast.state.horsemen = [horseman({ x: 13.55, targetX: 13.55, worldV: 19, goal: 'safe' })];
+    fast.state.train.v = HORSE_MAX + 1;
+    fast.state.horsemen = [horseman({ x: 13.55, targetX: 13.55, worldV: HORSE_MAX + 1, goal: 'safe' })];
     expect(tick(fast, 5 * TICK_HZ).some((e) => e.type === 'banditBoarded')).toBe(false);
 
     const w = world();
@@ -625,7 +625,7 @@ describe('goals (spec §7.4)', () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(shots.length).toBeGreaterThan(hits.length);
     const car = w.state.train.cars[2];
-    expect(car.hp).toBe(8 - hits.length);
+    expect(car.hp).toBe(CAR_SPECS.powder.hp - hits.length);
     expect(w.state.stats.carDamage).toBe(hits.length);
     expect(w.state.phase).toBe('running');
     car.hp = 1;

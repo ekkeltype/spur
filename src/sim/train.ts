@@ -220,12 +220,17 @@ export function applyEngineerCmd(state: GameState, run: RunDef, cmd: EngineerCmd
   events.push(refused === null ? { type: 'cmdResult', seq: cmd.seq, ok: true } : { type: 'cmdResult', seq: cmd.seq, ok: false, reason: refused });
 }
 
-/** A bandit in the cab eases the throttle shut and puts the brake on (spec §5.2). */
+/**
+ * A bandit in the cab eases the throttle shut, puts the brake on and has the fire let down (spec
+ * §5.2). With the fire out a hold-up costs time and pressure, but can't boil the boiler dry while
+ * the Engineer's hands are up.
+ */
 function holdUpOverride(t: TrainState): void {
   if (!t.heldUp) return;
   const ease = HOLDUP_EASE * DT;
   t.throttle = Math.max(0, t.throttle - ease);
   t.brake = t.brake < HOLDUP_BRAKE ? Math.min(HOLDUP_BRAKE, t.brake + ease) : Math.max(HOLDUP_BRAKE, t.brake - ease);
+  t.fire = 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -274,7 +279,7 @@ export function governorFire(t: TrainState): number {
 
 function boiler(state: GameState, events: SimEvent[]): void {
   const t = state.train;
-  if (governed(state)) t.fire = governorFire(t);
+  if (governed(state) && !t.heldUp) t.fire = governorFire(t);
   const raised = t.water > 0 ? STEAM_PER_FIRE * t.fire : 0;
   const p = t.pressure + (raised - cylinderDraw(t) - HEAT_LOSS) * DT;
   // At P_MAX with a surplus the safety valve lifts and the surplus is lost (its water with it).

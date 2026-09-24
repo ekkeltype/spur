@@ -39,7 +39,7 @@ export const CAR_SPECS: Record<CarKind, CarSpec> = {
   boxcar: { length: 13, mass: 24, floorY: 1.3, roofY: 4.0, hp: 1 },
   armored: { length: 13, mass: 42, floorY: 1.3, roofY: 3.9, hp: 1 },
   caboose: { length: 10, mass: 14, floorY: 1.2, roofY: 4.0, hp: 1 },
-  powder: { length: 12, mass: 30, floorY: 1.3, roofY: 3.9, hp: 8 },
+  powder: { length: 12, mass: 30, floorY: 1.3, roofY: 3.9, hp: 12 },
 };
 
 /** The loco's cab: its rear this many metres. */
@@ -203,8 +203,8 @@ export const QUICK_RELOAD_FACTOR = 0.65;
 
 export const MAX_HORSEMEN = 6;
 export const MAX_BANDITS_ABOARD = 4;
-export const HORSE_MAX = 18;
-export const HORSE_SPRINT = 21;
+export const HORSE_MAX = 21;
+export const HORSE_SPRINT = 25;
 export const HORSE_STAMINA_SECONDS = 8;
 export const HORSE_STAMINA_REGEN = 1 / 3;
 export const HORSE_ACCEL = 3;
@@ -236,7 +236,7 @@ export const BANDIT_ACCURACY_FALLOFF = 0.015;
 export const BANDIT_CROUCH_ACCURACY = 0.7;
 
 export const CRACK_SECONDS: Record<1 | 2 | 3, number> = { 1: 18, 2: 18, 3: 14 };
-export const POWDER_HIT_CHANCE = 0.6;
+export const POWDER_HIT_CHANCE = 0.4;
 
 // ---- Economy (spec §12) --------------------------------------------------------------------------
 
