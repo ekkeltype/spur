@@ -134,6 +134,20 @@ describe('the autopilot', () => {
     expect(s.stats.waterStops).toBe(1);
   });
 
+  it('decides at the tower, not at the start, whether a full tender can skip it', () => {
+    // A full tender at the start: by the time the train reaches a tower 2 km on, it has used water.
+    const run = yRun({
+      initialWater: 100,
+      waterTowers: [{ id: 'w1', edge: 'e4', at: 500, name: 'Far tank' }],
+      plan: plan({ stops: ['w1', 'dest'] }),
+    });
+    const { s, ap } = start(run);
+    const events = drive(s, ap, run, 500);
+    expect(s.phase, ap.note).toBe('won');
+    expect(ofType(events, 'spout').filter((e) => e.down)).toHaveLength(1);
+    expect(s.stats.waterStops).toBe(1);
+  });
+
   it('backs up to the water tower when it starts past the spout', () => {
     // The hatch starts 8 m past the spout.
     const run = yRun({

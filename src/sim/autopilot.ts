@@ -10,7 +10,7 @@
 // - stops: station and water tower ids, in order; the destination is added if the list doesn't end
 //   with it. A station: the loco's front on the stop mark until the stop completes. A water tower:
 //   the tender hatch under the spout, `lowerSpout` until the tender is full (skipped when it's
-//   already full).
+//   already full on coming within AP_TOWER_DECIDE of the tower).
 // - holds: in order. Stop the loco's front at `at` and wait until the clock reaches `until`; a hold
 //   whose time has passed is dropped.
 // - whistles: a blast of AP_WHISTLE_SECONDS starting AP_WHISTLE_LEAD before each point, and another
@@ -99,6 +99,12 @@ export const AP_WHISTLE_SECONDS = 1.2;
 export const AP_WHISTLE_LEAD = 300;
 /** Gives up on a water tower whose spout nobody lowers after this long. */
 export const AP_SPOUT_WAIT_SECONDS = 45;
+/**
+ * A water tower stop is only skipped for a full tender once the tower is this close (m): about the
+ * planned braking distance from full speed. Judged any earlier, a tender full at the start would
+ * skip a tower it needs by the time it gets there.
+ */
+export const AP_TOWER_DECIDE = 600;
 
 const EPS = 1e-6;
 
@@ -408,7 +414,10 @@ export function autopilotStep(ap: AutopilotState, state: GameState, run: RunDef)
     const station = run.stations.find((s) => s.id === id);
     const tower = station ? undefined : run.waterTowers.find((w) => w.id === id);
     const madeStop = station && t.stationStop?.stationId === id && t.stationStop.done;
-    const tankFull = tower && t.spout === 'up' && t.water >= t.waterCap - 1;
+    const towerX = tower ? xOf(path, { edge: tower.edge, off: tower.at }) : null;
+    // Off the look-ahead path (null) means farther on than the autopilot is looking yet.
+    const towerNear = towerX !== null && towerX - hatchX(t) <= AP_TOWER_DECIDE;
+    const tankFull = tower && towerNear && t.spout === 'up' && t.water >= t.waterCap - 1;
     const gaveUp = tower && ap.towerWait > secondsToTicks(AP_SPOUT_WAIT_SECONDS);
     if (station && !madeStop) break;
     if (tower && !tankFull && !gaveUp) break;
