@@ -309,6 +309,8 @@ class EngineerPlay {
       keyboard: local ? 'local' : 'full',
       lampLetters: settings.lampLetters,
       assist: game.assists.engineer,
+      consist: game.consist,
+      governor: game.upgrades.includes('governor'),
     });
     this.hints = new Hints(() => hintsOn(opts.settings.get(), game.run.index === 0));
     this.pause = pauseOverlay('engineer', (r) => session.setReady(r), opts.mode === 'online' ? [['Leave', () => opts.onExit()]] : undefined);
@@ -325,7 +327,8 @@ class EngineerPlay {
     );
     this.unsubs.push(session.onSnapshot((view) => this.desk.setView(view, performance.now())));
     this.unsubs.push(session.onEvent((e) => this.onEvent(e)));
-    this.unsubs.push(session.onRefusal((reason) => this.desk.refused(reason, performance.now())));
+    this.unsubs.push(session.onRefusal((reason, cmd) => this.desk.refused(reason, performance.now(), cmd)));
+    this.unsubs.push(opts.settings.onChange((s) => this.desk.setLampLetters(s.lampLetters)));
     // Joining a game under way (or the countdown's first snapshot) arrives before this screen exists.
     if (session.view) this.desk.setView(session.view, performance.now());
   }

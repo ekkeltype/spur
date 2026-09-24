@@ -1,0 +1,1616 @@
+/* The Engineer's desk (spec §11): an 1880s dispatcher's desk. Brass gauges and levers, a painted
+   track diagram, a paper train graph, ink and brass on dark wood. "Rye" for display text and big
+   numbers, "Alegreya Sans" for everything else. Every size is in em: the desk sets its own font
+   size from its box (1280×720 → 14px), so the whole layout scales with the window. */
+
+.desk {
+  --desk-bg: #120f0c;
+  --panel: #1e1813;
+  --panel-hi: #261f18;
+  --inset: #15110d;
+  --line: rgba(200, 161, 90, 0.22);
+  --line-hi: rgba(200, 161, 90, 0.5);
+  --brass: #c8a15a;
+  --brass-hi: #f2d493;
+  --brass-lo: #8c6b32;
+  --paper: #efe6d2;
+  --paper-dim: rgba(239, 230, 210, 0.66);
+  --paper-faint: rgba(239, 230, 210, 0.38);
+  --paper-ghost: rgba(239, 230, 210, 0.12);
+  --ink: #2a2118;
+  --red: #e0442e;
+  --red-hi: #ff8a70;
+  --yellow: #f2b632;
+  --green: #5bc46b;
+  --water: #6fa3cf;
+  --rye: 'Rye', 'Alegreya Sans', Georgia, serif;
+  --sans: 'Alegreya Sans', system-ui, sans-serif;
+
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 25.5em minmax(0, 1fr) 21.5em;
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1.14fr) 7.6em;
+  grid-template-areas:
+    'head head head'
+    'cab map map'
+    'cab chart ahead'
+    'foot foot foot';
+  gap: 0.5em;
+  padding: 0.5em;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(200, 161, 90, 0.06), transparent 60%),
+    repeating-linear-gradient(92deg, rgba(255, 255, 255, 0.012) 0 2px, transparent 2px 7px),
+    var(--desk-bg);
+  color: var(--paper);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.25;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  font-variant-numeric: tabular-nums;
+}
+
+.desk *,
+.desk *::before,
+.desk *::after {
+  box-sizing: border-box;
+}
+
+.desk [hidden] {
+  display: none !important;
+}
+
+.desk kbd {
+  display: inline-block;
+  min-width: 1.45em;
+  padding: 0.05em 0.3em;
+  border: 1px solid rgba(200, 161, 90, 0.45);
+  border-bottom-width: 2px;
+  border-radius: 0.28em;
+  font: 700 0.72em/1.2 var(--sans);
+  color: var(--brass-hi);
+  text-align: center;
+  vertical-align: 0.12em;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.desk canvas {
+  display: block;
+}
+
+/* ------------------------------------------------------------------ panels */
+
+.desk-panel {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+  border: 1px solid var(--line);
+  border-radius: 0.5em;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.desk-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-height: 2em;
+  padding: 0.3em 0.7em 0.2em;
+  flex: none;
+}
+
+.desk-panel-head h2 {
+  margin: 0;
+  font: 400 0.9em/1 var(--rye);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--brass);
+  white-space: nowrap;
+}
+
+.desk-panel-head .spacer {
+  flex: 1;
+}
+
+.desk-panel-head .hint {
+  color: var(--paper-faint);
+  font-size: 0.78em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.desk-canvas-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 0.45em 0.45em;
+  border-radius: 0.3em;
+  overflow: hidden;
+}
+
+.desk-canvas-wrap > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ------------------------------------------------------------------ buttons */
+
+.desk-btn {
+  font: 700 0.86em/1 var(--sans);
+  color: var(--paper-dim);
+  background: linear-gradient(180deg, #34291f, #251d16);
+  border: 1px solid rgba(200, 161, 90, 0.35);
+  border-radius: 0.35em;
+  padding: 0.38em 0.7em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.12s,
+    color 0.12s,
+    border-color 0.12s;
+}
+
+.desk-btn:hover:not(:disabled) {
+  color: var(--paper);
+  border-color: var(--brass);
+}
+
+.desk-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.desk-btn[aria-pressed='true'],
+.desk-btn.on {
+  color: var(--ink);
+  background: linear-gradient(180deg, #f0d596, #b58d46);
+  border-color: #f2d493;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.desk-btn:focus-visible {
+  outline: 2px solid var(--brass-hi);
+  outline-offset: 2px;
+}
+
+.desk-seg {
+  display: inline-flex;
+  border-radius: 0.4em;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.desk-seg .desk-btn {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.desk-seg .desk-btn:first-child {
+  border-radius: 0.4em 0 0 0.4em;
+  margin-left: 0;
+}
+
+.desk-seg .desk-btn:last-child {
+  border-radius: 0 0.4em 0.4em 0;
+}
+
+/* ------------------------------------------------------------------ header */
+
+.desk-head {
+  grid-area: head;
+  display: flex;
+  align-items: center;
+  gap: 1.3em;
+  padding: 0.35em 0.9em;
+  min-height: 3.6em;
+  background: linear-gradient(180deg, #2a2119, #1c1612);
+  border: 1px solid var(--line);
+  border-radius: 0.5em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dh-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25em;
+  color: var(--paper);
+  padding-right: 1.1em;
+  border-right: 1px solid var(--line);
+}
+
+.dh-time {
+  font: 400 2.15em/1 var(--rye);
+  letter-spacing: 0.02em;
+}
+
+.dh-ampm {
+  font: 400 0.95em/1 var(--rye);
+  color: var(--brass);
+}
+
+.dh-run {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.dh-runname {
+  font: 400 1.2em/1.05 var(--rye);
+  color: var(--brass);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dh-contract {
+  color: var(--paper-dim);
+  font-size: 0.95em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dh-contract b {
+  color: var(--paper);
+}
+
+.dh-jobs {
+  margin-left: 0.6em;
+}
+
+.dh-job {
+  display: inline-block;
+  margin-right: 0.35em;
+  padding: 0.05em 0.45em;
+  border-radius: 0.25em;
+  border: 1px solid rgba(200, 161, 90, 0.45);
+  color: var(--brass-hi);
+  font-size: 0.88em;
+}
+
+.dh-job.aboard {
+  background: rgba(200, 161, 90, 0.18);
+}
+
+.dh-job.done {
+  border-color: rgba(91, 196, 107, 0.6);
+  color: var(--green);
+}
+
+.dh-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15em;
+}
+
+.dh-stat .lbl {
+  font: 700 0.7em/1 var(--sans);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+
+.dh-stat .val {
+  font: 400 1.35em/1 var(--rye);
+  color: var(--paper);
+}
+
+.dh-stat.overdue .val,
+.dh-stat.bad .val {
+  color: var(--red);
+}
+
+.dh-stat.good .val {
+  color: var(--green);
+}
+
+.dh-stat.zero .val {
+  color: var(--paper-dim);
+}
+
+.dh-pause {
+  margin-left: 0.4em;
+}
+
+/* ------------------------------------------------------------------ cab */
+
+.desk-cab {
+  grid-area: cab;
+}
+
+.cab-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  padding: 0 0.6em 0.6em;
+}
+
+/* Spare height is shared by the dials (centred in their box) and the levers (a longer throttle
+   quadrant is a finer one) until the levers reach their full size. */
+.cab-gauges {
+  position: relative;
+  flex: 1 1 auto;
+  /* Tall enough for dials as big as the column's width allows. */
+  min-height: 11.2em;
+}
+
+.cab-status {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
+.cab-gauges > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.cab-controls {
+  flex: 1 1 auto;
+  max-height: 21em;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 5.4em minmax(0, 1fr);
+  align-content: space-between;
+  gap: 0.45em 0.6em;
+}
+
+.lever {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.lever-cap {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  font: 700 0.72em/1 var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  white-space: nowrap;
+  margin-bottom: 0.25em;
+}
+
+.lever-cap .val {
+  margin-left: auto;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  font-size: 1.25em;
+  color: var(--brass-hi);
+}
+
+.lever-cap .val.emerg {
+  color: var(--red-hi);
+}
+
+.lever .q {
+  position: relative;
+}
+
+.lever .q canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+
+.lever .q canvas:active {
+  cursor: grabbing;
+}
+
+.lever-throttle {
+  grid-row: 1 / span 4;
+}
+
+.lever-throttle .lever-cap {
+  justify-content: center;
+}
+
+.lever-throttle .q {
+  flex: 1 1 auto;
+  min-height: 7em;
+}
+
+.lever-throttle .notch {
+  text-align: center;
+  font: 400 1.05em/1 var(--rye);
+  color: var(--brass-hi);
+  margin-top: 0.2em;
+}
+
+.lever-brake .q {
+  height: 3.1em;
+}
+
+.ctl-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-width: 0;
+}
+
+.ctl-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  width: 7.2em;
+  flex: none;
+  font: 700 0.72em/1 var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  white-space: nowrap;
+}
+
+.ctl-row .desk-seg {
+  flex: 1 1 auto;
+}
+
+.ctl-row .desk-seg .desk-btn {
+  flex: 1 1 0;
+  font: 400 1.05em/1 var(--rye);
+  padding: 0.42em 0;
+  min-width: 0;
+}
+
+.ctl-row .auto {
+  font: 700 0.7em/1 var(--sans);
+  letter-spacing: 0.1em;
+  color: var(--ink);
+  background: var(--green);
+  border-radius: 0.3em;
+  padding: 0.3em 0.45em;
+}
+
+.ctl-fire.auto-on .desk-seg .desk-btn {
+  cursor: default;
+}
+
+.ctl-fire.auto-on .desk-seg .desk-btn:not(.on) {
+  opacity: 0.5;
+}
+
+.whistle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  padding: 0.55em 0.6em;
+  font: 400 1em/1 var(--rye);
+  letter-spacing: 0.08em;
+  color: var(--brass-hi);
+  touch-action: none;
+}
+
+.whistle.on {
+  color: var(--ink);
+  background: radial-gradient(ellipse at 50% 30%, #fff3d6, #e8c77c 60%, #b58d46);
+  border-color: #fff3d6;
+  box-shadow: 0 0 1.2em rgba(244, 212, 140, 0.45);
+}
+
+.whistle.on kbd {
+  color: var(--ink);
+  border-color: rgba(42, 33, 24, 0.5);
+}
+
+.flash-refused {
+  animation: desk-refused 0.55s ease-out;
+}
+
+@keyframes desk-refused {
+  0%,
+  40% {
+    box-shadow: 0 0 0 2px var(--red), 0 0 1em rgba(224, 68, 46, 0.6);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(224, 68, 46, 0);
+  }
+}
+
+/* Annunciator lamps: always labelled, lit when they apply. */
+
+.cab-annun {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.3em;
+}
+
+.lamp {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 2.3em;
+  padding: 0.2em 0.25em;
+  border-radius: 0.3em;
+  background: #110d0a;
+  border: 1px solid rgba(239, 230, 210, 0.08);
+  font: 700 0.66em/1.1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(239, 230, 210, 0.26);
+}
+
+.lamp.lit-yellow {
+  color: #2a1e05;
+  background: var(--yellow);
+  border-color: #ffd97a;
+  box-shadow: 0 0 0.9em rgba(242, 182, 50, 0.5);
+}
+
+.lamp.lit-red {
+  color: #fff3ee;
+  background: var(--red);
+  border-color: #ff9a86;
+  box-shadow: 0 0 0.9em rgba(224, 68, 46, 0.6);
+  animation: desk-blink 0.5s steps(1) infinite;
+}
+
+.lamp.lit-steam {
+  color: var(--ink);
+  background: #e8e3d8;
+  border-color: #fff;
+  box-shadow: 0 0 0.9em rgba(244, 241, 234, 0.35);
+}
+
+@keyframes desk-blink {
+  50% {
+    filter: brightness(0.6);
+  }
+}
+
+/* The precision-stop readout. */
+
+.cab-stop {
+  flex: none;
+  min-height: 5.2em;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  gap: 0.25em 0.6em;
+  align-content: center;
+  padding: 0.45em 0.65em;
+  border-radius: 0.4em;
+  background: var(--inset);
+  border: 1px solid rgba(239, 230, 210, 0.08);
+}
+
+.cab-stop .st-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45em;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.cab-stop .st-kind {
+  font: 700 0.7em/1 var(--sans);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+
+.cab-stop .st-name {
+  font-weight: 700;
+  color: var(--paper);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cab-stop .st-dist {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  text-align: right;
+  font: 400 1.55em/1 var(--rye);
+  color: var(--paper);
+  white-space: nowrap;
+}
+
+.cab-stop .st-dist small {
+  display: block;
+  margin-top: 0.25em;
+  font: 700 0.46em/1 var(--sans);
+  letter-spacing: 0.06em;
+  color: var(--paper-faint);
+}
+
+.cab-stop.on-mark .st-dist {
+  color: var(--green);
+}
+
+.cab-stop.past .st-dist {
+  color: var(--red-hi);
+}
+
+.cab-stop .st-ruler {
+  grid-column: 1;
+  position: relative;
+  height: 1.1em;
+  border-radius: 0.2em;
+  background: repeating-linear-gradient(90deg, rgba(239, 230, 210, 0.16) 0 1px, transparent 1px 10%), #0b0907;
+  overflow: hidden;
+}
+
+.cab-stop .st-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(91, 196, 107, 0.35);
+  border-left: 1px solid rgba(91, 196, 107, 0.8);
+  border-right: 1px solid rgba(91, 196, 107, 0.8);
+}
+
+.cab-stop .st-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--paper);
+}
+
+.cab-stop .st-pos {
+  position: absolute;
+  top: 50%;
+  width: 0;
+  height: 0;
+  margin: -0.42em 0 0 -0.5em;
+  border-top: 0.42em solid transparent;
+  border-bottom: 0.42em solid transparent;
+  border-left: 0.75em solid var(--brass-hi);
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+}
+
+.cab-stop .st-sub {
+  grid-column: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-size: 0.85em;
+  color: var(--paper-dim);
+  min-height: 1.1em;
+}
+
+.cab-stop .st-bar {
+  flex: 1 1 auto;
+  height: 0.5em;
+  border-radius: 0.25em;
+  background: #0b0907;
+  overflow: hidden;
+}
+
+.cab-stop .st-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--brass);
+}
+
+.cab-stop .st-bar.done > i {
+  background: var(--green);
+}
+
+.cab-stop.idle {
+  grid-template-columns: 1fr;
+}
+
+.cab-stop.idle .st-idle {
+  color: var(--paper-faint);
+  font-size: 0.9em;
+}
+
+.cab-stop.idle .st-idle b {
+  color: var(--paper-dim);
+}
+
+/* Hands up: the controls go dead and grey under a red banner; the dials and the whistle live on. */
+
+.cab-controls {
+  position: relative;
+}
+
+.desk-cab.held .lever,
+.desk-cab.held .ctl-row {
+  filter: grayscale(0.9) brightness(0.55);
+}
+
+/* Over the brake and reverser, leaving the throttle in view: it flashes red when tried. */
+.handsup {
+  position: absolute;
+  left: 5.6em;
+  right: -0.2em;
+  top: 0;
+  z-index: 3;
+  padding: 0.6em 0.8em;
+  text-align: center;
+  background: rgba(120, 18, 10, 0.94);
+  border: 2px solid var(--red);
+  border-radius: 0.4em;
+  box-shadow:
+    0 0 2em rgba(224, 68, 46, 0.55),
+    0 0.4em 1em rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  animation: desk-handsup 1.2s ease-in-out infinite;
+}
+
+.handsup b {
+  display: block;
+  font: 400 1.75em/1 var(--rye);
+  letter-spacing: 0.06em;
+  color: #fff3ee;
+}
+
+.handsup span {
+  display: block;
+  margin-top: 0.3em;
+  font-size: 0.9em;
+  color: #ffd6cc;
+}
+
+.handsup.shake {
+  animation:
+    desk-shake 0.4s ease-in-out,
+    desk-handsup 1.2s ease-in-out infinite;
+}
+
+@keyframes desk-shake {
+  20% {
+    transform: translateX(-0.35em);
+  }
+  40% {
+    transform: translateX(0.3em);
+  }
+  60% {
+    transform: translateX(-0.2em);
+  }
+  80% {
+    transform: translateX(0.1em);
+  }
+}
+
+@keyframes desk-handsup {
+  50% {
+    box-shadow:
+      0 0 3em rgba(224, 68, 46, 0.85),
+      0 0.4em 1em rgba(0, 0, 0, 0.6);
+  }
+}
+
+.desk.disabled .cab-controls,
+.desk.disabled .map-tools {
+  opacity: 0.55;
+}
+
+.desk.disabled canvas,
+.desk.disabled .desk-btn {
+  cursor: default !important;
+}
+
+/* ------------------------------------------------------------------ map */
+
+.desk-map {
+  grid-area: map;
+}
+
+.map-tools .desk-btn {
+  font-size: 0.78em;
+  padding: 0.35em 0.65em;
+}
+
+.desk-map canvas {
+  cursor: default;
+}
+
+.desk-map canvas.over-switch {
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ chart */
+
+.desk-chart {
+  grid-area: chart;
+}
+
+.desk-chart .desk-canvas-wrap {
+  background: #efe6d2;
+}
+
+.chart-badge {
+  font: 700 0.78em/1 var(--sans);
+  padding: 0.3em 0.55em;
+  border-radius: 0.3em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.chart-badge.conflict {
+  color: #fff4ee;
+  background: var(--red);
+}
+
+.chart-badge.meet {
+  color: #1d2610;
+  background: #a9b98a;
+}
+
+.chart-advice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  margin: -0.15em 0.45em 0.45em;
+  padding: 0.4em 0.6em;
+  border-radius: 0.3em;
+  background: #2f261c;
+  border: 1px solid rgba(200, 161, 90, 0.35);
+  color: var(--paper);
+  font-size: 0.9em;
+  line-height: 1.2;
+}
+
+.chart-advice b {
+  font: 400 0.8em/1 var(--rye);
+  color: var(--ink);
+  background: var(--brass);
+  padding: 0.3em 0.45em;
+  border-radius: 0.25em;
+  letter-spacing: 0.06em;
+}
+
+/* ------------------------------------------------------------------ ahead */
+
+.desk-ahead {
+  grid-area: ahead;
+}
+
+.ahead-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.45em 0.45em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ah-row {
+  display: grid;
+  grid-template-columns: 2.1em minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55em;
+  padding: 0.28em 0.5em 0.28em 0.35em;
+  min-height: 2.55em;
+  border-radius: 0.35em;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(239, 230, 210, 0.05);
+}
+
+.ah-row:first-child {
+  background: rgba(200, 161, 90, 0.1);
+  border-color: rgba(200, 161, 90, 0.28);
+}
+
+.ah-icon {
+  width: 2.1em;
+  height: 2.1em;
+  display: grid;
+  place-items: center;
+  border-radius: 0.35em;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.ah-icon svg {
+  width: 1.45em;
+  height: 1.45em;
+}
+
+.ah-tunnel .ah-icon {
+  background: #3a3a3a;
+  color: #f0e8d6;
+  box-shadow: inset 0 0 0 1px rgba(239, 230, 210, 0.35);
+}
+
+.ah-lowBridge .ah-icon {
+  background: var(--sand, #d9b77e);
+}
+
+.ah-trestle .ah-icon {
+  background: #a8683e;
+  color: #fff1e0;
+}
+
+.ah-curve .ah-icon {
+  background: var(--yellow);
+}
+
+.ah-signal .ah-icon {
+  background: #8d8a84;
+  color: #1a1612;
+}
+
+.ah-junction .ah-icon {
+  background: var(--brass);
+}
+
+.ah-station .ah-icon {
+  background: var(--paper);
+}
+
+.ah-water .ah-icon {
+  background: var(--water);
+  color: #0d2233;
+}
+
+.ah-end .ah-icon {
+  background: #b04a36;
+  color: #fff1ea;
+}
+
+.ah-flag .ah-icon {
+  background: var(--red);
+  color: #fff1ea;
+}
+
+.ah-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12em;
+  min-width: 0;
+}
+
+.ah-name {
+  font-weight: 700;
+  font-size: 1.02em;
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ah-name .plate {
+  display: inline-block;
+  margin-left: 0.3em;
+  padding: 0.05em 0.35em;
+  border: 1.5px solid var(--yellow);
+  border-radius: 0.25em;
+  color: var(--yellow);
+  font-size: 0.9em;
+  line-height: 1.1;
+}
+
+.ah-name .num {
+  display: inline-grid;
+  place-items: center;
+  width: 1.35em;
+  height: 1.35em;
+  margin-right: 0.3em;
+  border-radius: 50%;
+  background: var(--brass);
+  color: var(--ink);
+  font: 400 0.8em/1 var(--rye);
+  vertical-align: 0.08em;
+}
+
+.ah-detail {
+  font-size: 0.8em;
+  color: var(--paper-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ah-detail .warn {
+  color: var(--yellow);
+  font-weight: 700;
+}
+
+.ah-detail .bad {
+  color: var(--red-hi);
+  font-weight: 700;
+}
+
+.ah-when {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15em;
+  white-space: nowrap;
+}
+
+.ah-eta {
+  font: 400 1.3em/1 var(--rye);
+  color: var(--paper);
+}
+
+.ah-dist {
+  font-size: 0.8em;
+  color: var(--paper-dim);
+}
+
+.ah-row.soon .ah-eta {
+  color: var(--yellow);
+}
+
+.ah-row.imminent .ah-eta {
+  color: var(--red-hi);
+}
+
+.ah-row.here .ah-eta {
+  color: var(--brass-hi);
+}
+
+.ahead-empty {
+  margin: 0.2em 0.9em;
+  color: var(--paper-faint);
+  font-size: 0.9em;
+}
+
+/* ------------------------------------------------------------------ footer */
+
+.desk-foot {
+  grid-area: foot;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) 17em auto;
+  gap: 0.5em;
+  min-height: 0;
+}
+
+.desk-foot > .desk-panel {
+  min-height: 0;
+}
+
+.desk-log ol {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.6em 0.4em;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(200, 161, 90, 0.35) transparent;
+}
+
+.log-line {
+  display: grid;
+  grid-template-columns: 3.1em 0.6em minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.35em;
+  padding: 0.12em 0;
+  font-size: 0.9em;
+  color: var(--paper-dim);
+  animation: desk-log-in 0.35s ease-out;
+}
+
+.log-line:first-child {
+  color: var(--paper);
+}
+
+.log-line time {
+  color: var(--paper-faint);
+  font-size: 0.9em;
+}
+
+.log-line .dot {
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background: var(--paper-faint);
+  align-self: center;
+}
+
+.log-line.good .dot {
+  background: var(--green);
+}
+
+.log-line.warn .dot {
+  background: var(--yellow);
+}
+
+.log-line.danger .dot {
+  background: var(--red);
+}
+
+.log-line.danger .txt {
+  color: var(--red-hi);
+}
+
+.log-line.telegram .dot {
+  background: var(--brass);
+  border-radius: 0.1em;
+}
+
+/* Telegrams in the log: a strip of tape. */
+.log-line.telegram .txt {
+  justify-self: start;
+  max-width: 100%;
+  padding: 0.1em 0.5em;
+  background: #e6dcc4;
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 0.88em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  clip-path: polygon(0 0, 100% 0, 99% 50%, 100% 100%, 0 100%, 1% 50%);
+}
+
+.log-line.quiet {
+  color: var(--paper-faint);
+}
+
+.log-line .count {
+  margin-left: 0.35em;
+  color: var(--paper-faint);
+}
+
+@keyframes desk-log-in {
+  from {
+    background: rgba(200, 161, 90, 0.18);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+/* The latest telegram, as paper tape. */
+
+.desk-telegram .tape-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 0.6em 0.5em;
+}
+
+.tape {
+  position: relative;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  padding: 0.55em 0.8em;
+  background: #efe6d2;
+  color: var(--ink);
+  font: 700 0.92em/1.35 var(--sans);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  box-shadow: 0 0.15em 0.4em rgba(0, 0, 0, 0.45);
+  clip-path: polygon(0 0, 100% 0, 98.5% 50%, 100% 100%, 0 100%, 1.5% 50%);
+}
+
+.tape::before,
+.tape::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: radial-gradient(circle, rgba(42, 33, 24, 0.35) 1px, transparent 1.5px) 0 0 / 8px 3px repeat-x;
+}
+
+.tape::before {
+  top: 3px;
+}
+
+.tape::after {
+  bottom: 3px;
+}
+
+.tape.fresh {
+  animation: desk-tape 1.2s ease-out;
+}
+
+.tape.none {
+  background: transparent;
+  color: var(--paper-faint);
+  box-shadow: none;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  clip-path: none;
+  padding-left: 0;
+}
+
+.tape.none::before,
+.tape.none::after {
+  display: none;
+}
+
+@keyframes desk-tape {
+  0% {
+    transform: translateX(-4%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: none;
+  }
+}
+
+/* The Rider's whereabouts. */
+
+.desk-rider .rider-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35em;
+  padding: 0 0.7em 0.55em;
+  min-height: 0;
+}
+
+.rider-status {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  font: 400 1.15em/1.1 var(--rye);
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rider-status svg {
+  width: 1.2em;
+  height: 1.2em;
+  flex: none;
+  color: var(--brass);
+}
+
+.rider-status.bad {
+  color: var(--red-hi);
+}
+
+.rider-status.bad svg {
+  color: var(--red-hi);
+}
+
+.rider-where {
+  font-size: 0.85em;
+  color: var(--paper-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.consist {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.18em;
+  height: 1.5em;
+}
+
+.consist i {
+  position: relative;
+  flex: 1 1 0;
+  max-width: 2.6em;
+  height: 0.7em;
+  border-radius: 0.15em;
+  background: rgba(239, 230, 210, 0.2);
+}
+
+.consist i.loco {
+  max-width: 3em;
+  height: 0.95em;
+  border-radius: 0.15em 0.5em 0.15em 0.15em;
+  background: rgba(239, 230, 210, 0.32);
+}
+
+.consist i.tender {
+  max-width: 1.8em;
+  height: 0.6em;
+}
+
+.consist i.here {
+  background: var(--brass);
+}
+
+.consist i.here::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 0.45em;
+  height: 0.45em;
+  margin-left: -0.225em;
+  border-radius: 50%;
+  background: var(--brass-hi);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.consist i.here.roof::after {
+  bottom: 100%;
+  margin-bottom: 0.12em;
+}
+
+.consist i.here.inside::after {
+  top: 50%;
+  margin-top: -0.225em;
+  background: var(--ink);
+}
+
+.desk-rulebook-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35em;
+  min-width: 7.5em;
+  padding: 0.5em 1em;
+  font: 400 1em/1 var(--rye);
+  letter-spacing: 0.08em;
+  color: var(--brass-hi);
+  border-radius: 0.5em;
+}
+
+.desk-rulebook-btn .book {
+  width: 1.8em;
+  height: 1.8em;
+}
+
+/* ------------------------------------------------------------------ rulebook */
+
+.desk-rulebook {
+  grid-row: 2 / span 2;
+  grid-column: 2 / span 2;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 3em),
+    #efe6d2;
+  color: var(--ink);
+  border-radius: 0.5em;
+  border: 1px solid #b89a63;
+  box-shadow:
+    0 0.6em 2em rgba(0, 0, 0, 0.6),
+    inset 0 0 3em rgba(140, 107, 50, 0.18);
+  overflow: hidden;
+}
+
+.rb-head {
+  display: flex;
+  align-items: center;
+  gap: 1em;
+  padding: 0.55em 1em 0.5em;
+  border-bottom: 2px solid rgba(42, 33, 24, 0.75);
+  flex: none;
+}
+
+.rb-title {
+  margin: 0;
+  font: 400 1.35em/1 var(--rye);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rb-sub {
+  flex: 1 1 auto;
+  font-style: italic;
+  color: rgba(42, 33, 24, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rb-close {
+  color: var(--paper);
+}
+
+.rb-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 1.4em;
+  padding: 0.7em 1em 0.9em;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.rb-col h3 {
+  margin: 0 0 0.45em;
+  font: 400 0.9em/1 var(--rye);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6b4a22;
+}
+
+.rb-col h3:not(:first-child) {
+  margin-top: 0.9em;
+}
+
+.rb-aspects {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.rb-aspects th,
+.rb-aspects td {
+  padding: 0.2em 0.25em;
+  vertical-align: middle;
+}
+
+.rb-aspects thead th {
+  font: 700 0.7em/1.1 var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(42, 33, 24, 0.65);
+  text-align: center;
+}
+
+.rb-aspects thead th.rb-meaning-h {
+  text-align: left;
+}
+
+.rb-aspects thead th.rb-group {
+  border-bottom: 1px solid rgba(42, 33, 24, 0.3);
+}
+
+.rb-aspects tbody tr + tr {
+  border-top: 1px solid rgba(42, 33, 24, 0.14);
+}
+
+.rb-aspect {
+  text-align: left;
+  font-weight: 700;
+  font-size: 0.95em;
+  white-space: nowrap;
+  padding-right: 0.5em !important;
+}
+
+.rb-pic {
+  text-align: center;
+}
+
+.rb-pic canvas {
+  width: 3.6em;
+  height: 4.6em;
+  margin: 0 auto;
+  border-radius: 0.3em;
+}
+
+.rb-none {
+  color: rgba(42, 33, 24, 0.35);
+}
+
+.rb-rule {
+  font-size: 0.88em;
+  line-height: 1.3;
+  padding-left: 0.6em !important;
+}
+
+.rb-note {
+  margin: 0.6em 0 0;
+  font-size: 0.85em;
+  font-style: italic;
+  color: rgba(42, 33, 24, 0.75);
+}
+
+.rb-list {
+  margin: 0;
+  padding: 0 0 0 1.1em;
+  font-size: 0.88em;
+  line-height: 1.3;
+}
+
+.rb-list li + li {
+  margin-top: 0.3em;
+}
+
+.rb-tt {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88em;
+}
+
+.rb-tt th,
+.rb-tt td {
+  padding: 0.25em 0.4em;
+  text-align: left;
+  border-bottom: 1px solid rgba(42, 33, 24, 0.14);
+  white-space: nowrap;
+}
+
+.rb-tt thead th {
+  border-bottom: 2px solid rgba(42, 33, 24, 0.6);
+  vertical-align: bottom;
+}
+
+.rb-tt .rb-train {
+  display: block;
+  font-weight: 700;
+}
+
+.rb-tt .rb-dir {
+  display: block;
+  font-size: 0.85em;
+  font-weight: 400;
+  color: rgba(42, 33, 24, 0.65);
+}
+
+.rb-tt tbody th {
+  font-weight: 700;
+}
+
+.rb-tt tr.rb-siding th,
+.rb-tt tr.rb-siding td {
+  background: rgba(138, 154, 107, 0.2);
+  font-style: italic;
+}
+
+.rb-contract {
+  margin: 0.6em 0 0;
+  font-size: 0.88em;
+}
+
+/* ------------------------------------------------------------------ narrow boxes */
+
+/* Tall or narrow boxes (a split screen): the Ahead list moves beside the map and the chart
+   spans the width under it. */
+.desk.narrow {
+  grid-template-columns: 22em minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 0.85fr) minmax(16.5em, 1fr) minmax(0, 1fr) 7.6em;
+  grid-template-areas:
+    'head head'
+    'cab map'
+    'cab ahead'
+    'chart chart'
+    'foot foot';
+}
+
+.desk.narrow .desk-foot {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.desk.narrow .desk-telegram {
+  display: none;
+}
+
+.desk.narrow .ctl-label {
+  width: 5.9em;
+}
+
+.desk.narrow .desk-rulebook {
+  grid-row: 2 / span 3;
+  grid-column: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desk *,
+  .desk *::before,
+  .desk *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

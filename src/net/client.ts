@@ -81,7 +81,7 @@ export class ClientSession {
   private changeListeners = new Set<() => void>();
   private eventListeners = new Set<(e: EngineerEvent) => void>();
   private snapshotListeners = new Set<(view: EngineerView) => void>();
-  private refusalListeners = new Set<(reason: string) => void>();
+  private refusalListeners = new Set<(reason: string, cmd?: EngineerCmd) => void>();
   private depotRefusalListeners = new Set<(reason: string) => void>();
 
   constructor(private transport: Transport) {
@@ -112,7 +112,8 @@ export class ClientSession {
   }
 
   /** A command the host refused, with its reason. */
-  onRefusal(cb: (reason: string) => void): () => void {
+  /** A command the host refused: the reason, and the command itself when this client sent it. */
+  onRefusal(cb: (reason: string, cmd?: EngineerCmd) => void): () => void {
     this.refusalListeners.add(cb);
     return () => this.refusalListeners.delete(cb);
   }
@@ -205,14 +206,16 @@ export class ClientSession {
       case 'event':
         for (const cb of this.eventListeners) cb(m.event);
         break;
-      case 'ack':
+      case 'ack': {
+        const cmd = this.pending.get(m.seq);
         this.pending.delete(m.seq);
         if (!m.ok) {
           const reason = m.reason ?? 'Not allowed';
           this.lastRefusal = { text: reason, t: now };
-          for (const cb of this.refusalListeners) cb(reason);
+          for (const cb of this.refusalListeners) cb(reason, cmd);
         }
         break;
+      }
       case 'pause':
         this.screen = 'playing';
         this.mode = 'paused';
