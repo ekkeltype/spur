@@ -886,6 +886,8 @@ export interface EngineerView {
     safetyValve: boolean;
     spout: 'up' | 'down';
     stationStop: { stationId: string; progress: number } | null;
+    /** The last station whose stop was completed (the origin at the start). */
+    lastStation: string | null;
     /** Main-line distance of the loco's front, if it can be projected. */
     mainPos: number | null;
     /** The tender's water hatch, for the spout-distance readout. */

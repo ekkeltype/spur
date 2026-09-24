@@ -343,6 +343,14 @@ describe('stopTarget (the precision-stop readout)', () => {
     expect(t?.dist).toBeCloseTo(-20, 6);
   });
 
+  it("forgets a station once its stop is done and it's behind: pulling out isn't an overshoot", () => {
+    const spans: Span[] = [{ edge: 'm1', from: 180, to: 320 }];
+    expect(stopTarget(ix, sw(run), spans, { edge: 'm1', off: 297 }, { kinds: ['station'], done: 'orig' })).toBeNull();
+    // Still ahead (a stop being made again after backing away) it counts.
+    const short: Span[] = [{ edge: 'm1', from: 150, to: 290 }];
+    expect(stopTarget(ix, sw(run), short, { edge: 'm1', off: 267 }, { kinds: ['station'], done: 'orig' })?.dist).toBeCloseTo(10, 6);
+  });
+
   it('measures from the tender hatch to a water spout', () => {
     const spans: Span[] = [{ edge: 'm1', from: 150, to: 290 }];
     // The hatch is 23 m behind the front (m1 267); the spout (330) is 40 m past the front: 63 m.

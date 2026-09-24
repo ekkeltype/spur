@@ -531,6 +531,7 @@ class FakeHost {
         safetyValve: s.safetyValve,
         spout: s.spout,
         stationStop: s.stationStop ? { stationId: s.stationStop.stationId, progress: s.stationStop.done ? 1 : Math.min(1, s.stationStop.ticks / (DWELL_SECONDS * TICK_HZ)) } : null,
+        lastStation: null,
         mainPos: mainPos(ix, front),
         hatch: hatchPoint(s.spans),
         limit: limitAt(ix, front),

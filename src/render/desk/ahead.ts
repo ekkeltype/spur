@@ -235,6 +235,8 @@ export interface StopOptions {
   /** Keep a mark overrun by up to this much (default 40 m). */
   behind?: number;
   kinds?: readonly ('station' | 'water')[];
+  /** The station whose stop was just completed: forgotten once it's behind the loco's front, so pulling out isn't read as an overshoot. */
+  done?: string | null;
 }
 
 /** The station or water tower nearest the train's stopping point, or null when none is in reach. */
@@ -261,7 +263,8 @@ export function stopTarget(ix: NetIndex, switches: Record<string, SwitchState>, 
   if (kinds.includes('station')) {
     for (const s of ix.run.stations) {
       const x = xOf({ edge: s.edge, off: s.at });
-      if (x !== null) consider({ kind: 'station', id: s.id, name: s.name, dist: x - L, window: STATION_WINDOW });
+      if (x === null || (s.id === opts.done && x - L < -STATION_WINDOW)) continue;
+      consider({ kind: 'station', id: s.id, name: s.name, dist: x - L, window: STATION_WINDOW });
     }
   }
   if (kinds.includes('water')) {

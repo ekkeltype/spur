@@ -506,7 +506,7 @@ export class EngineerDesk {
       flags: view.flags,
       destination: this.run.contract.destination,
     });
-    this.target = stopTarget(this.ix, switches, t.spans, t.hatch);
+    this.target = stopTarget(this.ix, switches, t.spans, t.hatch, { done: t.lastStation });
     this.route = walk(this.ix, switches, head, ROUTE_RANGE).spans;
     this.routeEdges = new Set([...this.route.map((s) => s.edge), ...t.spans.map((s) => s.edge)]);
     this.chartDataDirty = true;

@@ -67,6 +67,7 @@ export function toEngineerView(state: GameState, run: RunDef, sightRange = 1500)
       safetyValve: t.safetyValve,
       spout: t.spout,
       stationStop: stop ? { stationId: stop.stationId, progress: stop.done ? 1 : Math.min(1, stop.ticks / (DWELL_SECONDS * TICK_HZ)) } : null,
+      lastStation: t.lastStation,
       mainPos: mainPos(ix, front),
       hatch: hatchPoint(state),
       limit: Math.min(limitAt(ix, front), restriction),
