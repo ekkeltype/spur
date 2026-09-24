@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spur sound bench</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        --bg: #1c1712;
+        --panel: #2a2118;
+        --line: #5e4c38;
+        --text: #efe6d2;
+        --dim: #b3a58c;
+        --accent: #c8a15a;
+        --good: #5bc46b;
+        --bad: #e0442e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.45 system-ui, 'Segoe UI', sans-serif;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      p {
+        margin: 4px 0 0;
+        color: var(--dim);
+      }
+      code {
+        color: var(--text);
+      }
+      #status {
+        margin: 12px 0 20px;
+        font-size: 13px;
+        color: var(--dim);
+      }
+      #status b {
+        color: var(--text);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 14px;
+      }
+      .group {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      button {
+        font: inherit;
+        color: var(--text);
+        background: #3a2e22;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 6px 10px;
+        cursor: pointer;
+        touch-action: none;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button[aria-pressed='true'] {
+        background: #5a4520;
+        border-color: var(--accent);
+      }
+      button.primary {
+        background: var(--accent);
+        color: #1c1712;
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: progress;
+      }
+      label.knob {
+        display: grid;
+        grid-template-columns: 120px 1fr 44px;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        font-size: 13px;
+        color: var(--dim);
+      }
+      label.knob output {
+        text-align: right;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+      }
+      input[type='range'] {
+        width: 100%;
+        accent-color: var(--accent);
+      }
+      input[type='text'] {
+        font: inherit;
+        color: var(--text);
+        background: #3a2e22;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 5px 8px;
+        width: 160px;
+      }
+      #offline {
+        margin-top: 22px;
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      #summary,
+      .hint {
+        color: var(--dim);
+        font-size: 13px;
+      }
+      .table-wrap {
+        overflow-x: auto;
+        margin-top: 12px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12.5px;
+        font-variant-numeric: tabular-nums;
+      }
+      th,
+      td {
+        padding: 4px 8px;
+        border-bottom: 1px solid #3f3326;
+        text-align: right;
+        white-space: nowrap;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      th {
+        color: var(--dim);
+        font-weight: 600;
+      }
+      ul.checks {
+        list-style: none;
+        margin: 12px 0 0;
+        padding: 0;
+        columns: 2 360px;
+        font-size: 12.5px;
+      }
+      ul.checks li {
+        break-inside: avoid;
+        padding: 2px 0;
+      }
+      #spectra-group {
+        margin-top: 14px;
+      }
+      #spectra {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        margin-top: 12px;
+      }
+      figure.spectrum {
+        margin: 0;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      figure.spectrum canvas {
+        display: block;
+        height: 160px;
+        border: 1px solid #3f3326;
+      }
+      figure.spectrum figcaption {
+        font-size: 12px;
+        color: var(--dim);
+        margin-top: 2px;
+      }
+      .pass {
+        color: #8fd69a;
+      }
+      .fail {
+        color: #f08a78;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Spur sound bench</h1>
+      <p>
+        Dev only. Every sound in <code>src/audio/sfx.ts</code>, synthesized live with WebAudio. The first click
+        unlocks audio. Continuous layers are driven every frame, as the game does; toggles and sliders set what they're fed.
+      </p>
+      <div id="status"></div>
+      <div class="grid" id="controls"></div>
+      <section id="offline" class="group">
+        <h2>Offline render</h2>
+        <div class="bar">
+          <button class="primary" id="render" type="button">Render all offline</button>
+          <span id="summary">Renders every sound into an OfflineAudioContext and checks it. Also <code>window.renderAll()</code>.</span>
+        </div>
+        <ul class="checks" id="checks"></ul>
+        <div class="table-wrap"><table id="stats"></table></div>
+      </section>
+      <section class="group" id="spectra-group">
+        <h2>Spectrograms</h2>
+        <div class="bar">
+          <button id="draw-spectra" type="button">Draw spectrograms</button>
+          <input id="spectra-filter" type="text" placeholder="filter, e.g. engine" aria-label="Only sounds whose name contains" />
+          <span class="hint">40 Hz – 16 kHz on a log scale, −100 to 0 dBFS; a tick every half second.</span>
+        </div>
+        <div id="spectra"></div>
+      </section>
+    </main>
+    <script type="module" src="/src/dev/sfx-test.ts"></script>
+  </body>
+</html>

@@ -522,6 +522,8 @@ export interface RiderState {
   scopeDist: number;
   /** Tick of the last time the Rider moved faster than 3 m/s (for bandit aim). */
   lastFastTick: number;
+  /** Ticks spent inside the caboose toward the next healed heart. */
+  healTicks: number;
 }
 
 export interface HorsemanState {

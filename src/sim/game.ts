@@ -2,15 +2,17 @@
 // debug commands, the Engineer's commands, the train (which reports what its front covered), the
 // other trains, signals and telegrams, wave triggers, the Rider, the bandits, and the outcome.
 
-import { frameRange, framePath, framePoint, frameX, moveSpans, netIndex, pathCrosses } from './network';
+import { spawnWave, stepBandits } from './bandits';
+import { banditAlive, damageBandit, damageHorseman, horsemanAlive, type FightCtx } from './fight';
+import { frameRange, framePath, framePoint, frameX, moveSpans, netIndex, pathCrosses, type FramePath } from './network';
+import { initialLoot, initialRider, stepRider } from './rider';
 import { seedRng } from './rng';
-import { HEARTS, SCOPE_MAX, SCOPE_MAX_HEADLAMP, SCOPE_MAX_NIGHT, TICK_HZ, WEAPONS } from './rules';
+import { SCOPE_MAX, SCOPE_MAX_HEADLAMP, SCOPE_MAX_NIGHT, TICK_HZ } from './rules';
 import { initialSignals, stepSignals } from './signals';
 import { initialTraffic, stepTelegrams, stepTraffic } from './traffic';
 import { applyEngineerCmd, initialTrain, stepTrain, tryLowerSpout } from './train';
 import type {
   Assists,
-  CarState,
   CarType,
   DebugCmd,
   EngineerCmd,
@@ -18,7 +20,6 @@ import type {
   GameState,
   Medal,
   RiderInput,
-  RiderState,
   RunDef,
   RunResult,
   SimEvent,
@@ -57,42 +58,6 @@ export function scopeMaxFor(state: GameState, run: RunDef): number {
   return state.upgrades.includes('headlamp') ? SCOPE_MAX_HEADLAMP : SCOPE_MAX_NIGHT;
 }
 
-// SCAFFOLD: replaced by rider.ts's initialRider when the fight module is integrated.
-function scaffoldRider(cars: readonly CarState[], upgrades: readonly UpgradeId[], assists: Assists): RiderState {
-  const weapons = (['revolver', 'shotgun', 'rifle'] as const).filter((w) => w === 'revolver' || upgrades.includes(w));
-  const maxHearts = HEARTS + (upgrades.includes('extraHeart') ? 1 : 0) + (assists.rider ? 2 : 0);
-  const riderCar = cars.length > 2 ? 2 : 1;
-  const car = cars[riderCar];
-  return {
-    x: (car.x0 + car.x1) / 2,
-    y: riderCar === 1 ? 2.8 : 4.2,
-    vx: 0,
-    vy: 0,
-    onGround: true,
-    surface: riderCar === 1 ? 'tenderTop' : 'roof',
-    car: riderCar,
-    inside: null,
-    crouch: false,
-    ladder: null,
-    facing: 1,
-    aim: 0,
-    hearts: maxHearts,
-    maxHearts,
-    weapon: 'revolver',
-    weapons: [...weapons],
-    ammo: { revolver: WEAPONS.revolver.rounds, shotgun: WEAPONS.shotgun.rounds, rifle: WEAPONS.rifle.rounds },
-    reloadTicks: 0,
-    cooldownTicks: 0,
-    invulnTicks: 0,
-    stunTicks: 0,
-    mode: 'active',
-    respawnTicks: 0,
-    scoped: false,
-    scopeDist: 200,
-    lastFastTick: -1000,
-  };
-}
-
 export function newGame(run: RunDef, opts: NewGameOptions): GameState {
   const variant = variantFor(run, opts.seed);
   const train = initialTrain(run, opts.consist, opts.upgrades, opts.assists);
@@ -117,10 +82,10 @@ export function newGame(run: RunDef, opts: NewGameOptions): GameState {
       .map((o) => ({ id: o.id, kind: o.kind, edge: o.edge, at: o.at, state: 'present' as const, ticks: 0 })),
     ai: initialTraffic(run),
     signals: initialSignals(),
-    rider: scaffoldRider(train.cars, opts.upgrades, opts.assists),
+    rider: initialRider(train.cars, opts.upgrades, opts.assists),
     horsemen: [],
     bandits: [],
-    loot: { status: 'safe', crack: 0, x: 0, y: 0, carrier: null, everCracked: false },
+    loot: initialLoot(),
     waves: run.waves.filter((w) => !w.variants || w.variants.includes(variant)).map((w) => ({ id: w.id, triggered: false, queued: 0 })),
     flags: [],
     telegramsSent: [],
@@ -152,6 +117,8 @@ export function newGame(run: RunDef, opts: NewGameOptions): GameState {
 
 /** How far behind the rear hazards are looked for (a portal passing over the last car, a Rider fallen off a trestle). */
 const HAZARD_BEHIND = 60;
+/** …and ahead of the loco's front (a portal or beam about to reach the cab roof). */
+const HAZARD_AHEAD = 40;
 
 /** Tunnels, low bridges and trestles near the train, in the train frame. */
 export function hazardsNear(state: GameState, run: RunDef, ahead: number): FrameHazard[] {
@@ -181,6 +148,25 @@ export function hazardsNear(state: GameState, run: RunDef, ahead: number): Frame
   return out;
 }
 
+/**
+ * The context the Rider and bandit modules work in this tick (spec §15 steps 9–12), built after the
+ * train has moved. The spyglass's track lookup is only built if a flag is actually placed.
+ */
+export function fightContext(state: GameState, run: RunDef): FightCtx {
+  const scopeMax = scopeMaxFor(state, run);
+  let fp: FramePath | null = null;
+  return {
+    state,
+    run,
+    hazards: hazardsNear(state, run, HAZARD_AHEAD),
+    trackPointAt(x: number) {
+      fp ??= framePath(netIndex(run), state.switches, state.train.spans, 0, scopeMax + 50);
+      return framePoint(fp, x);
+    },
+    scopeMax,
+  };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Debug commands (dev builds only; spec §19)
 // ---------------------------------------------------------------------------------------------
@@ -190,20 +176,13 @@ function applyDebug(state: GameState, run: RunDef, cmd: DebugCmd, events: SimEve
     case 'god':
       state.godMode = cmd.on;
       break;
-    case 'killBandits':
-      for (const b of state.bandits) events.push({ type: 'banditDown', id: b.id, x: b.x, y: b.y, boss: b.boss });
-      state.bandits = [];
-      state.horsemen = [];
+    case 'killBandits': {
+      const ctx = fightContext(state, run);
+      for (const b of state.bandits) if (banditAlive(b)) damageBandit(ctx, b, b.hp, events);
+      for (const h of state.horsemen) if (horsemanAlive(h)) damageHorseman(ctx, h, h.hp, events);
       for (const w of state.waves) w.queued = 0;
-      if (state.train.heldUp) {
-        state.train.heldUp = false;
-        events.push({ type: 'holdupEnded' });
-      }
-      if (state.loot.status === 'carried' || state.loot.status === 'cracking') {
-        state.loot.status = 'safe';
-        state.loot.carrier = null;
-      }
       break;
+    }
     case 'skip': {
       const m = moveSpans(netIndex(run), state.switches, state.train.spans, cmd.meters);
       state.train.spans = m.spans;
@@ -233,14 +212,20 @@ export function step(state: GameState, run: RunDef, input: RiderInput, cmds: Eng
   stepTelegrams(state, run, motion, events);
 
   if (state.phase === 'running') {
+    const ctx = fightContext(state, run);
     // Waves fire as the loco's front passes their trigger (spec §7.1).
     for (const w of state.waves) {
       if (w.triggered) continue;
       const def = run.waves.find((d) => d.id === w.id);
-      if (def && pathCrosses(motion.frontPath, def.trigger)) w.triggered = true;
+      if (def && pathCrosses(motion.frontPath, def.trigger)) {
+        w.triggered = true;
+        spawnWave(ctx, def, events);
+      }
     }
     // The Rider's E lowers the water spout (spec §5.5); nothing else uses E.
     if (input.interactPressed && state.rider.mode === 'active') tryLowerSpout(state, run, events);
+    stepRider(ctx, input, events);
+    stepBandits(ctx, events);
   }
 
   state.tick++;
