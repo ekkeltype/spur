@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fouls,
   framePath,
+  framePoint,
   frameRange,
   frameX,
   frontHead,
@@ -11,6 +12,7 @@ import {
   moveSpans,
   netIndex,
   nextEdge,
+  pathCrosses,
   pointAt,
   rearHead,
   spansFromFront,
@@ -236,6 +238,22 @@ describe('spans', () => {
   });
 });
 
+describe('pathCrosses', () => {
+  it('is true for points the path covered after its start, on the same edge', () => {
+    const path: Span[] = [
+      { edge: 'e1', from: 990, to: 1000 },
+      { edge: 'e2', from: 0, to: 5 },
+    ];
+    expect(pathCrosses(path, { edge: 'e1', off: 995 })).toBe(true);
+    expect(pathCrosses(path, { edge: 'e2', off: 5 })).toBe(true); // the end counts
+    expect(pathCrosses(path, { edge: 'e1', off: 990 })).toBe(false); // the start doesn't (it was last tick's end)
+    expect(pathCrosses(path, { edge: 'e2', off: 6 })).toBe(false);
+    expect(pathCrosses(path, { edge: 'e3', off: 2 })).toBe(false);
+    expect(pathCrosses([{ edge: 'e4', from: 300, to: 290 }], { edge: 'e4', off: 295 })).toBe(true); // b→a
+    expect(pathCrosses([], { edge: 'e4', off: 295 })).toBe(false);
+  });
+});
+
 describe('fouls', () => {
   const run = loopRun();
   const ix = netIndex(run);
@@ -287,6 +305,16 @@ describe('framePath', () => {
     expect(frameX(fp, { edge: 'e3', off: 100 })).toBeNull(); // not on the route
     expect(frameRange(fp, 'e1', 900, 1000)).toEqual([50, 150]);
     expect(frameRange(fp, 'e2', 0, 1000)).toEqual([150, 400]); // clipped to what the path covers
+  });
+
+  it('maps a train-frame x back to a track point', () => {
+    const spans = spansFromFront(ix, switches, { edge: 'e1', off: 950, dir: 1 }, 100);
+    const fp = framePath(ix, switches, spans, 200, 300);
+    expect(framePoint(fp, 0)).toEqual({ edge: 'e1', off: 850 });
+    expect(framePoint(fp, 250)).toEqual({ edge: 'e2', off: 100 });
+    expect(framePoint(fp, -150)).toEqual({ edge: 'e1', off: 700 });
+    expect(framePoint(fp, 401)).toBeNull(); // past the end of the path
+    expect(framePoint(fp, -201)).toBeNull();
   });
 
   it('is shorter behind when the track ends', () => {

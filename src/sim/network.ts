@@ -336,6 +336,21 @@ export function xOnSpans(spans: readonly Span[], p: TrackPoint): number | null {
   return null;
 }
 
+/**
+ * Did a path (what something covered this tick, in order) pass `p`? The path's very start doesn't
+ * count, since it was the previous tick's end; its end does.
+ */
+export function pathCrosses(path: readonly Span[], p: TrackPoint): boolean {
+  for (let i = 0; i < path.length; i++) {
+    const s = path[i];
+    if (s.edge !== p.edge) continue;
+    const d = (p.off - s.from) * spanDir(s);
+    const len = spanLength(s);
+    if (d > (i === 0 ? EPS : -EPS) && d <= len + EPS) return true;
+  }
+  return false;
+}
+
 /** Do two occupancies share any stretch of track (more than `margin` metres)? */
 export function spansOverlap(a: readonly Span[], b: readonly Span[], margin = 0): boolean {
   for (const s of a) {
@@ -422,6 +437,14 @@ export function framePath(ix: NetIndex, switches: Record<string, SwitchState>, t
 export function frameX(fp: FramePath, p: TrackPoint): number | null {
   const d = xOnSpans(fp.spans, p);
   return d === null ? null : fp.x0 + d;
+}
+
+/** The track point at train-frame x on the frame path, or null beyond its ends. */
+export function framePoint(fp: FramePath, x: number): TrackPoint | null {
+  const d = x - fp.x0;
+  if (d < -EPS || d > spansLength(fp.spans) + EPS) return null;
+  const p = pointAt(fp.spans, d);
+  return { edge: p.edge, off: p.off };
 }
 
 /**

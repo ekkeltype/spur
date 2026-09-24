@@ -665,6 +665,27 @@ export interface GameState {
 }
 
 // =============================================================================================
+// Per-tick context passed between sim modules by game.ts
+// =============================================================================================
+
+/** What the train did this tick (returned by the train step; used by triggers). */
+export interface TickMotion {
+  /** Track the loco's front covered this tick while moving forward, in order (empty when reversing or stopped). */
+  frontPath: Span[];
+  /** Signed distance moved this tick (m). */
+  moved: number;
+}
+
+/** A track hazard for the people on the train, in the train frame (lowBridge: x0 = x1). */
+export interface FrameHazard {
+  kind: 'tunnel' | 'lowBridge' | 'trestle';
+  id: string;
+  x0: number;
+  x1: number;
+  burning?: boolean;
+}
+
+// =============================================================================================
 // Inputs and commands
 // =============================================================================================
 
