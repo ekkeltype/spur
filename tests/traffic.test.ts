@@ -3,7 +3,7 @@ import { newGame } from '../src/sim/game';
 import { frontHead, moveSpans, netIndex, spansFromFront, spansLength, walk } from '../src/sim/network';
 import { GRAVITY, RUNAWAY_ACCEL, RUNAWAY_MAX, TICK_HZ } from '../src/sim/rules';
 import { routeDistanceAt, routeSpans } from '../src/sim/schedule';
-import { EXPLOSION_HEIGHT, initialTraffic, stepTelegrams, stepTraffic } from '../src/sim/traffic';
+import { collisionDetail, EXPLOSION_HEIGHT, initialTraffic, stepTelegrams, stepTraffic } from '../src/sim/traffic';
 import type { AiTrainDef, GameState, GradeDef, RunDef, SimEvent, TickMotion, TrackHead } from '../src/sim/types';
 import { loopRun, yRun } from './fixtures';
 
@@ -456,3 +456,12 @@ describe('determinism', () => {
     expect(JSON.parse(JSON.stringify(a.state))).toEqual(a.state);
   });
 });
+
+describe('collision sentences', () => {
+  it("don't double the full stop after a place name that already ends in one", () => {
+    expect(collisionDetail('No. 7 Freight', 'front', 'front', 'Red Rock Jct.')).toBe('Met No. 7 Freight head-on near Red Rock Jct.');
+    expect(collisionDetail('No. 7 Freight', 'front', 'front', 'Mesa Loop')).toBe('Met No. 7 Freight head-on near Mesa Loop.');
+    expect(collisionDetail('No. 7 Freight', 'front', 'front', null)).toBe('Met No. 7 Freight head-on.');
+  });
+});
+

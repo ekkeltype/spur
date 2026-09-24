@@ -175,7 +175,7 @@ function contactOf(ours: readonly Span[], theirs: readonly Span[]): Contact | nu
   return point ? { point, ours: a, theirs: b } : null;
 }
 
-type TrainEnd = 'front' | 'rear' | 'side';
+export type TrainEnd = 'front' | 'rear' | 'side';
 
 /** Which part of a train an overlap [lo, hi] (m from its rear) touches: its front wins when both ends are in it. */
 function endOf(range: [number, number], length: number): TrainEnd {
@@ -212,13 +212,16 @@ function placeNear(ix: NetIndex, run: RunDef, p: TrackPoint): string | null {
 
 const capitalized = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
+/** Ends a sentence with a full stop, unless it already ends in one (a place like "Red Rock Jct."). */
+const sentence = (s: string): string => (s.endsWith('.') ? s : `${s}.`);
+
 /** One sentence for the results screen, e.g. "Met No. 7 Freight head-on near Mesa Loop." */
-function collisionDetail(name: string, ours: TrainEnd, theirs: TrainEnd, place: string | null): string {
+export function collisionDetail(name: string, ours: TrainEnd, theirs: TrainEnd, place: string | null): string {
   const near = place ? ` near ${place}` : '';
-  if (ours === 'front' && theirs === 'front') return `Met ${name} head-on${near}.`;
-  if (ours === 'front') return theirs === 'rear' ? `Ran into the back of ${name}${near}.` : `Ran into ${name}${near}.`;
-  if (theirs === 'front') return ours === 'rear' ? `${capitalized(name)} ran into the back of the train${near}.` : `${capitalized(name)} struck the train${near}.`;
-  return `Collided with ${name}${near}.`;
+  if (ours === 'front' && theirs === 'front') return sentence(`Met ${name} head-on${near}`);
+  if (ours === 'front') return sentence(theirs === 'rear' ? `Ran into the back of ${name}${near}` : `Ran into ${name}${near}`);
+  if (theirs === 'front') return sentence(ours === 'rear' ? `${capitalized(name)} ran into the back of the train${near}` : `${capitalized(name)} struck the train${near}`);
+  return sentence(`Collided with ${name}${near}`);
 }
 
 function checkCollisions(ix: NetIndex, state: GameState, run: RunDef, events: SimEvent[]): void {
