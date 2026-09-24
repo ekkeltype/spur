@@ -93,30 +93,30 @@ export class CabPanel {
     const controls = el('div', 'cab-controls');
 
     // The throttle: a tall quadrant on the left (↑/↓ move it a notch).
-    const throttle = el('div', 'lever lever-throttle');
+    const throttle = el('div', 'dk-lever dk-lever-throttle');
     const tCanvas = this.levers.throttle.hi.canvas;
     tCanvas.setAttribute('role', 'slider');
     tCanvas.setAttribute('aria-label', 'Throttle');
     tCanvas.setAttribute('aria-valuemin', '0');
     tCanvas.setAttribute('aria-valuemax', '8');
     // Canvases sit in sized boxes: a canvas's own backing store must never size the layout.
-    const tBox = el('div', 'q');
+    const tBox = el('div', 'dk-q');
     tBox.append(tCanvas);
-    this.throttleVal = el('div', 'notch', 'Shut');
-    const tKeys = el('div', 'lever-cap keys');
+    this.throttleVal = el('div', 'dk-notch', 'Shut');
+    const tKeys = el('div', 'dk-lever-cap');
     tKeys.innerHTML = `${kbd('↑')}${kbd('↓')}`;
-    throttle.append(el('div', 'lever-cap', 'Throttle'), tBox, this.throttleVal, tKeys);
+    throttle.append(el('div', 'dk-lever-cap', 'Throttle'), tBox, this.throttleVal, tKeys);
 
     // The brake: release … service … emergency, left to right (←/→, Space throws it all the way).
-    const brake = el('div', 'lever lever-brake');
-    const bCap = el('div', 'lever-cap');
+    const brake = el('div', 'dk-lever dk-lever-brake');
+    const bCap = el('div', 'dk-lever-cap');
     bCap.innerHTML = `Brake ${kbd('←')}${kbd('→')}${local ? '' : ` ${kbd('Space')}`}`;
-    this.brakeVal = el('span', 'val', 'Released');
+    this.brakeVal = el('span', 'dk-val', 'Released');
     bCap.append(this.brakeVal);
     const bCanvas = this.levers.brake.hi.canvas;
     bCanvas.setAttribute('role', 'slider');
     bCanvas.setAttribute('aria-label', 'Brake');
-    const bBox = el('div', 'q');
+    const bBox = el('div', 'dk-q');
     bBox.append(bCanvas);
     brake.append(bCap, bBox);
 
@@ -140,16 +140,16 @@ export class CabPanel {
     const fSeg = el('div', 'desk-seg');
     this.fire = Array.from({ length: FIRE_MAX + 1 }, (_, v) => btn('desk-btn', String(v), () => this.input.fire(v, performance.now()), `Firebox ${v}`));
     fSeg.append(...this.fire);
-    this.fireAuto = el('span', 'auto', 'AUTO');
+    this.fireAuto = el('span', 'dk-auto', 'AUTO');
     this.fireAuto.title = opts.governor ? 'The governor keeps the steam up' : 'Engineer assist: the firebox runs itself';
     this.fireAuto.hidden = !opts.autoFire;
-    setClass(this.fireRow, 'auto-on', opts.autoFire);
+    setClass(this.fireRow, 'dk-auto-on', opts.autoFire);
     this.fireRow.append(fLabel, fSeg, this.fireAuto);
 
-    this.whistleBtn = btn('desk-btn whistle', `Whistle ${kbd('H')}`, () => undefined);
+    this.whistleBtn = btn('desk-btn dk-whistle', `Whistle ${kbd('H')}`, () => undefined);
     this.bindWhistle();
 
-    this.handsup = el('div', 'handsup');
+    this.handsup = el('div', 'dk-handsup');
     this.handsup.innerHTML = '<b>HANDS UP!</b><span>A bandit has a gun on you. Only the whistle works until the Rider clears the cab.</span>';
     this.handsup.hidden = true;
     controls.append(throttle, brake, this.reverserRow, this.fireRow, this.whistleBtn, this.handsup);
@@ -157,7 +157,7 @@ export class CabPanel {
     // Warning lamps: always labelled, lit when they apply.
     const annun = el('div', 'cab-annun');
     const lamp = (text: string): HTMLElement => {
-      const l = el('div', 'lamp', text);
+      const l = el('div', 'dk-lamp', text);
       annun.append(l);
       return l;
     };
@@ -178,21 +178,21 @@ export class CabPanel {
   update(look: CabLook): void {
     const v = look.view;
     const held = !!v?.train.heldUp;
-    setClass(this.el, 'held', held);
+    setClass(this.el, 'dk-held', held);
     this.handsup.hidden = !held;
     const stopped = !!v && Math.abs(v.train.v) < REVERSER_MAX_SPEED;
     const revVals = [1, 0, -1];
     this.reverser.forEach((b, i) => {
-      setClass(b, 'on', revVals[i] === look.reverser);
+      setClass(b, 'dk-on', revVals[i] === look.reverser);
       b.disabled = !look.live || (!stopped && revVals[i] !== look.reverser);
     });
     this.reverserRow.title = stopped ? '' : 'Stop the train to move the reverser';
     this.fire.forEach((b, i) => {
-      setClass(b, 'on', Math.round(look.fire) === i);
+      setClass(b, 'dk-on', Math.round(look.fire) === i);
       b.disabled = !look.live || this.opts.autoFire;
     });
     this.whistleBtn.disabled = !look.enabled || !v || v.phase !== 'running';
-    setClass(this.whistleBtn, 'on', look.whistle);
+    setClass(this.whistleBtn, 'dk-on', look.whistle);
     if (v) this.updateLamps(v);
   }
 
@@ -200,11 +200,11 @@ export class CabPanel {
     const t = view.train;
     const L = this.lamps;
     const dry = t.water <= 0 && t.fire > 0;
-    L.water.className = `lamp${!dry && t.water < LOW_WATER ? ' lit-yellow' : ''}`;
-    L.dry.className = `lamp${dry ? ' lit-red' : ''}`;
-    L.valve.className = `lamp${t.safetyValve ? ' lit-steam' : ''}`;
+    L.water.className = `dk-lamp${!dry && t.water < LOW_WATER ? ' dk-lit-yellow' : ''}`;
+    L.dry.className = `dk-lamp${dry ? ' dk-lit-red' : ''}`;
+    L.valve.className = `dk-lamp${t.safetyValve ? ' dk-lit-steam' : ''}`;
     setText(L.speed, t.overspeed === 2 ? 'Derail!' : 'Overspeed');
-    L.speed.className = `lamp${t.overspeed === 2 ? ' lit-red' : t.overspeed === 1 ? ' lit-yellow' : ''}`;
+    L.speed.className = `dk-lamp${t.overspeed === 2 ? ' dk-lit-red' : t.overspeed === 1 ? ' dk-lit-yellow' : ''}`;
   }
 
   // -------------------------------------------------------------------------------------------
@@ -284,7 +284,7 @@ export class CabPanel {
     const notch = throttleNotch(look.throttle);
     setText(this.throttleVal, notch === 0 ? 'Shut' : `Notch ${notch}`);
     setText(this.brakeVal, brakeCaption(look.brake));
-    setClass(this.brakeVal, 'emerg', brakeZone(look.brake) === 'emergency');
+    setClass(this.brakeVal, 'dk-emerg', brakeZone(look.brake) === 'emergency');
     T.hi.canvas.setAttribute('aria-valuenow', String(notch));
     B.hi.canvas.setAttribute('aria-valuenow', String(Math.round(look.brake * 100)));
     B.hi.canvas.setAttribute('aria-valuetext', brakeCaption(look.brake));
@@ -301,12 +301,12 @@ export class CabPanel {
 
   flash(what: 'reverser' | 'fire' | 'whistle' | 'auto' | 'cab'): void {
     const node = what === 'reverser' ? this.reverserRow : what === 'fire' ? this.fireRow : what === 'whistle' ? this.whistleBtn : what === 'auto' ? this.fireAuto : this.el;
-    replay(node, 'flash-refused');
+    replay(node, 'dk-flash-refused');
   }
 
   /** A dead control was tried with a gun in the cab: the banner says why. */
   shakeHandsUp(): void {
-    if (!this.handsup.hidden) replay(this.handsup, 'shake');
+    if (!this.handsup.hidden) replay(this.handsup, 'dk-shake');
   }
 
   /** Lets go of any lever being dragged (paused, or a gun came out). */

@@ -6,6 +6,8 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+    // One bundle for one game (about 180 kB gzipped, PeerJS included): splitting buys nothing.
+    chunkSizeWarningLimit: 800,
   },
   test: {
     include: ['tests/**/*.test.ts'],

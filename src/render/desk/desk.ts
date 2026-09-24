@@ -335,7 +335,7 @@ export class EngineerDesk {
   setEnabled(on: boolean): void {
     if (this.enabled === on) return;
     this.enabled = on;
-    setClass(this.el, 'disabled', !on);
+    setClass(this.el, 'dk-disabled', !on);
     if (!on) {
       this.releaseLevers(performance.now());
       this.whistleKey = false;
@@ -400,13 +400,13 @@ export class EngineerDesk {
     const mapHead = el('div', 'desk-panel-head');
     const n = this.numbers.size;
     const hint = n === 0 ? '' : `Click a switch or press its number${n > 1 ? ` (1–${Math.min(9, n)})` : ' (1)'} to throw it`;
-    const tools = el('div', 'desk-seg map-tools');
+    const tools = el('div', 'desk-seg dk-map-tools');
     const fitBtn = btn('desk-btn', 'Whole line', () => this.setFollow(false));
     fitBtn.setAttribute('aria-pressed', 'true');
     const followBtn = btn('desk-btn', 'Follow train', () => this.setFollow(true));
     followBtn.setAttribute('aria-pressed', 'false');
     tools.append(fitBtn, followBtn);
-    mapHead.append(el('h2', undefined, 'Route map'), el('span', 'hint', hint), el('span', 'spacer'), tools);
+    mapHead.append(el('h2', undefined, 'Route map'), el('span', 'dk-hint', hint), el('span', 'dk-spacer'), tools);
     const mapWrap = el('div', 'desk-canvas-wrap');
     const mapCanvas = el('canvas');
     mapCanvas.setAttribute('role', 'img');
@@ -419,7 +419,7 @@ export class EngineerDesk {
     const chartHead = el('div', 'desk-panel-head');
     const chartBadge = el('span', 'chart-badge');
     chartBadge.hidden = true;
-    chartHead.append(el('h2', undefined, 'Timetable'), el('span', 'spacer'), chartBadge);
+    chartHead.append(el('h2', undefined, 'Timetable'), el('span', 'dk-spacer'), chartBadge);
     const chartWrap = el('div', 'desk-canvas-wrap');
     const chartCanvas = el('canvas');
     chartCanvas.setAttribute('role', 'img');
@@ -432,7 +432,7 @@ export class EngineerDesk {
     // The footer.
     const foot = el('footer', 'desk-foot');
     const book =
-      '<svg class="book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 5.5c3-1.5 6-1.5 9 .5 3-2 6-2 9-.5V19c-3-1.5-6-1.5-9 .5-3-2-6-2-9-.5z"/><path d="M12 6v13.5"/></svg>';
+      '<svg class="dk-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 5.5c3-1.5 6-1.5 9 .5 3-2 6-2 9-.5V19c-3-1.5-6-1.5-9 .5-3-2-6-2-9-.5z"/><path d="M12 6v13.5"/></svg>';
     const rulebookBtn = btn('desk-btn desk-rulebook-btn', `${book}Rulebook ${kbd('Tab')}`, () => this.setRulebook(!this.rulebook.open));
     rulebookBtn.setAttribute('aria-pressed', 'false');
     foot.append(this.logPanel.el, this.telegraph.el, this.rider.el, rulebookBtn);
@@ -451,7 +451,7 @@ export class EngineerDesk {
     const h = this.el.clientHeight || DESIGN_H;
     // Tall or narrow boxes (half the window in local test mode) stack the chart under the map.
     const narrow = w / h < 1.3 && w < 1100;
-    setClass(this.el, 'narrow', narrow);
+    setClass(this.el, 'dk-narrow', narrow);
     // Scale the whole desk from its box: 1280×720 → 14px, growing a little slower than the box so
     // bigger screens also show more map and chart, and shrinking with it below the design size.
     const s = narrow ? Math.min(w / NARROW_W, h / NARROW_H) : Math.min(w / DESIGN_W, h / DESIGN_H);
@@ -552,12 +552,12 @@ export class EngineerDesk {
     const trainName = (id: string): string => this.chartTrains.find((c) => c.id === id)?.name ?? 'A train';
     if (cf) {
       d.chartBadge.hidden = false;
-      d.chartBadge.className = 'chart-badge conflict';
+      d.chartBadge.className = 'chart-badge dk-conflict';
       setText(d.chartBadge, `Conflict: ${trainName(cf.train)} at ${formatClock(cf.t)}`);
     } else if (this.meets.length > 0) {
       const m = this.meets[0];
       d.chartBadge.hidden = false;
-      d.chartBadge.className = 'chart-badge meet';
+      d.chartBadge.className = 'chart-badge dk-meet';
       setText(d.chartBadge, `Meet ${trainName(m.train)} in ${m.band?.name ?? 'the siding'}`);
     } else d.chartBadge.hidden = true;
 
@@ -885,13 +885,13 @@ export class EngineerDesk {
       const id = switchAt(e);
       if (id === this.hoverSwitch) return;
       this.hoverSwitch = id;
-      setClass(mc, 'over-switch', id !== null && this.enabled);
+      setClass(mc, 'dk-over-switch', id !== null && this.enabled);
       this.mapDirty = true;
     });
     mc.addEventListener('pointerleave', () => {
       if (this.hoverSwitch === null) return;
       this.hoverSwitch = null;
-      setClass(mc, 'over-switch', false);
+      setClass(mc, 'dk-over-switch', false);
       this.mapDirty = true;
     });
     mc.addEventListener('pointerdown', (e) => {

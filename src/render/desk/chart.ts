@@ -222,12 +222,18 @@ export class MareyChart {
       const y = Y(first.m);
       const up = second && second.m !== null ? second.m < first.m : false;
       c.textAlign = 'left';
-      c.textBaseline = up ? 'top' : 'bottom';
-      const tx = Math.max(x0 + 3 * u, Math.min(x1 - c.measureText(t.name).width - 3 * u, x + 5 * u));
-      const ty = Math.max(y0 + 2 * u, Math.min(y1 - 2 * u, y + (up ? 4 : -4) * u));
-      c.fillStyle = withAlpha(PAPER, 0.85);
+      c.textBaseline = 'top';
       const tw = c.measureText(t.name).width;
-      c.fillRect(tx - 2 * u, up ? ty - 1 : ty - f * 0.95, tw + 4 * u, f * 0.98);
+      const th = f * 0.98;
+      const tx = Math.max(x0 + 3 * u, Math.min(x1 - tw - 3 * u, x + 5 * u));
+      // Off the side of the line it leaves, and always inside the plot: a train entering at the
+      // top edge would otherwise put its name over the clock labels.
+      let ty = up ? y + 4 * u : y - 4 * u - th;
+      if (ty < y0 + 2 * u) ty = y + 4 * u;
+      if (ty + th > y1 - 2 * u) ty = y - 4 * u - th;
+      ty = Math.max(y0 + 2 * u, Math.min(y1 - 2 * u - th, ty));
+      c.fillStyle = withAlpha(PAPER, 0.85);
+      c.fillRect(tx - 2 * u, ty - 1, tw + 4 * u, th);
       c.fillStyle = t.kind === 'express' ? EXPRESS_INK : BLUE_INK;
       c.fillText(t.name, tx, ty);
     }

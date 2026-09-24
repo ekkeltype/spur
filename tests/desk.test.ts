@@ -584,3 +584,52 @@ describe('describeEvent', () => {
     expect(describeEvent({ type: 'whistle', on: false }, ctx)).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Styles: the desk lives inside the app's page, so its stylesheet and the app's must not overlap.
+// (The app's global .hint rule once turned the map's heading hint into a floating cream box.)
+// ---------------------------------------------------------------------------------------------
+
+/** The bits of node:fs these checks use (the repo has no Node typings; Vitest leaves CSS imports empty). */
+interface Fs {
+  readFileSync(path: URL, encoding: 'utf8'): string;
+  readdirSync(path: URL, options: { recursive: true }): string[];
+}
+
+describe('the desk stylesheet', async () => {
+  const fs = (await import(/* @vite-ignore */ ['node', 'fs'].join(':'))) as Fs;
+  const src = new URL('../src/', import.meta.url);
+  const sheets: Record<string, string> = {};
+  for (const f of fs.readdirSync(src, { recursive: true })) {
+    const path = f.replace(/\\/g, '/');
+    if (path.endsWith('.css')) sheets[path] = fs.readFileSync(new URL(path, src), 'utf8');
+  }
+  const DESK = 'render/desk/desk.css';
+
+  /** Each style rule's selectors (at-rule preludes and keyframe steps left out). */
+  const selectors = (css: string): string[] =>
+    [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)]
+      .map((m) => m[1].trim())
+      .filter((head) => !head.startsWith('@') && !/^(?:from|to|[\d.]+%)(?:\s*,\s*(?:from|to|[\d.]+%))*$/.test(head))
+      .flatMap((head) => head.split(',').map((s) => s.trim()));
+  const classes = (css: string): Set<string> => new Set(selectors(css).flatMap((s) => [...s.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((m) => m[1])));
+
+  it('is found', () => {
+    expect(sheets[DESK]).toContain('.desk');
+  });
+
+  it('scopes every rule under the desk’s root, so nothing leaks into the app', () => {
+    const unscoped = selectors(sheets[DESK]).filter((s) => !/^\.desk(?![\w-])/.test(s));
+    expect(unscoped).toEqual([]);
+  });
+
+  it('shares no class name with the app’s stylesheets, so the app’s rules can’t reach into the desk', () => {
+    const desk = classes(sheets[DESK]);
+    const shared: string[] = [];
+    for (const [path, css] of Object.entries(sheets)) {
+      if (path === DESK) continue;
+      for (const c of classes(css)) if (desk.has(c) && c !== 'desk') shared.push(`${c} (${path})`);
+    }
+    expect(shared).toEqual([]);
+  });
+});

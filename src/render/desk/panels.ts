@@ -61,8 +61,8 @@ export class HeaderPanel {
     this.jobs = el('span', 'dh-jobs');
     const stat = (label: string): { box: HTMLElement; lbl: HTMLElement; val: HTMLElement } => {
       const box = el('div', 'dh-stat');
-      const lbl = el('span', 'lbl', label);
-      const val = el('span', 'val', '—');
+      const lbl = el('span', 'dk-lbl', label);
+      const val = el('span', 'dk-val', '—');
       box.append(lbl, val);
       return { box, lbl, val };
     };
@@ -88,28 +88,28 @@ export class HeaderPanel {
     if (view.phase === 'won') {
       setText(L.lbl, 'Contract');
       setText(L.val, 'Arrived');
-      setClass(L.box, 'overdue', false);
-      setClass(L.box, 'good', true);
+      setClass(L.box, 'dk-overdue', false);
+      setClass(L.box, 'dk-good', true);
     } else if (view.phase === 'lost') {
       setText(L.lbl, 'Run over');
       setText(L.val, view.loss ? lossText(view.loss.reason) : 'Lost');
-      setClass(L.box, 'overdue', true);
-      setClass(L.box, 'good', false);
+      setClass(L.box, 'dk-overdue', true);
+      setClass(L.box, 'dk-good', false);
     } else {
       const r = formatRemaining(this.run.contract.deadline - view.clock);
       setText(L.lbl, r.overdue ? 'Late by' : 'Time left');
       setText(L.val, r.text.split(' ')[0]);
-      setClass(L.box, 'overdue', r.overdue);
-      setClass(L.box, 'good', false);
+      setClass(L.box, 'dk-overdue', r.overdue);
+      setClass(L.box, 'dk-good', false);
     }
     this.updateJobs(view);
     setText(this.fines.val, formatMoney(view.fines));
-    setClass(this.fines.box, 'bad', view.fines > 0);
-    setClass(this.fines.box, 'zero', view.fines === 0);
+    setClass(this.fines.box, 'dk-bad', view.fines > 0);
+    setClass(this.fines.box, 'dk-zero', view.fines === 0);
     const stolen = view.cargo === 'stolen';
     setText(this.cargo.val, stolen ? 'Stolen!' : recovered ? 'Recovered' : 'Aboard');
-    setClass(this.cargo.box, 'bad', stolen);
-    setClass(this.cargo.box, 'good', !stolen && recovered);
+    setClass(this.cargo.box, 'dk-bad', stolen);
+    setClass(this.cargo.box, 'dk-good', !stolen && recovered);
   }
 
   private updateJobs(view: EngineerView): void {
@@ -120,7 +120,7 @@ export class HeaderPanel {
     const name = (id: string): string => this.run.stations.find((x) => x.id === id)?.name ?? id;
     for (const def of this.run.sideJobs) {
       const st = view.sideJobs.find((j) => j.id === def.id)?.state ?? 'pending';
-      const chip = el('span', `dh-job ${st}`);
+      const chip = el('span', `dh-job dk-${st}`);
       chip.title = `${def.title}: ${name(def.from)} → ${name(def.to)}, ${formatMoney(def.pay)}`;
       chip.textContent = `${def.title} · ${st === 'pending' ? `wait at ${name(def.from)}` : st === 'aboard' ? `to ${name(def.to)}` : 'done'}`;
       this.jobs.append(chip);
@@ -193,7 +193,7 @@ export class AheadPanel {
       }
       const inside = it.until !== undefined;
       const secs = speed > 0.3 ? it.dist / speed : Infinity;
-      const urgency = inside ? ' here' : secs <= IMMINENT_S ? ' imminent' : secs <= SOON_S ? ' soon' : '';
+      const urgency = inside ? ' dk-here' : secs <= IMMINENT_S ? ' dk-imminent' : secs <= SOON_S ? ' dk-soon' : '';
       const cls = `ah-row ah-${it.kind}${urgency}`;
       if (row.li.className !== cls) row.li.className = cls;
       setHtml(row.name, this.name(it));
@@ -206,10 +206,10 @@ export class AheadPanel {
   private name(it: AheadItem): string {
     switch (it.kind) {
       case 'curve':
-        return `Curve <span class="plate">${limitMph(it.limit ?? 0)} mph</span>`;
+        return `Curve <span class="dk-plate">${limitMph(it.limit ?? 0)} mph</span>`;
       case 'junction': {
         const n = this.numbers.get(it.id);
-        return `${n ? `<span class="num">${n}</span>` : ''}${escapeHtml(it.name)}`;
+        return `${n ? `<span class="dk-num">${n}</span>` : ''}${escapeHtml(it.name)}`;
       }
       case 'station':
         return `${escapeHtml(it.name)}${it.destination ? ' ★' : ''}`;
@@ -223,21 +223,21 @@ export class AheadPanel {
     const len = it.length !== undefined ? formatDistance(it.length) : '';
     switch (it.kind) {
       case 'tunnel':
-        return `Tunnel, ${len}: <span class="warn">off the roofs</span>`;
+        return `Tunnel, ${len}: <span class="dk-warn">off the roofs</span>`;
       case 'lowBridge':
-        return '<span class="warn">Low beam: duck on the roofs</span>';
+        return '<span class="dk-warn">Low beam: duck on the roofs</span>';
       case 'trestle':
         return it.minSpeed !== undefined
-          ? `<span class="${toMph(speed) < limitMph(it.minSpeed) ? 'bad' : 'warn'}">Burning! Cross at ${limitMph(it.minSpeed)} mph or more</span>`
+          ? `<span class="${toMph(speed) < limitMph(it.minSpeed) ? 'dk-bad' : 'dk-warn'}">Burning! Cross at ${limitMph(it.minSpeed)} mph or more</span>`
           : `Trestle, ${len}`;
       case 'curve':
-        return `${len} long${speed > (it.limit ?? Infinity) * 1.02 ? ' · <span class="bad">slow down</span>' : ''}`;
+        return `${len} long${speed > (it.limit ?? Infinity) * 1.02 ? ' · <span class="dk-bad">slow down</span>' : ''}`;
       case 'signal':
         return 'Ask the Rider what it shows';
       case 'junction': {
         const j = it.junction;
         if (!j) return '';
-        if (!j.facing) return j.against ? '<span class="warn">Trailing: it will spring over</span>' : 'Trailing through';
+        if (!j.facing) return j.against ? '<span class="dk-warn">Trailing: it will spring over</span>' : 'Trailing through';
         const leg = this.ix.edge.get(j.leg);
         const legName = leg?.name ?? leg?.kind ?? '';
         return `Set <b>${j.state}</b>${legName ? ` → ${escapeHtml(legName)}` : ''}`;
@@ -249,9 +249,9 @@ export class AheadPanel {
       case 'water':
         return 'Water tower: hatch to spout';
       case 'end':
-        return `<span class="bad">End of track: under ${Math.max(1, limitMph(BUFFER_SAFE))} mph</span>`;
+        return `<span class="dk-bad">End of track: under ${Math.max(1, limitMph(BUFFER_SAFE))} mph</span>`;
       case 'flag':
-        return '<span class="warn">Something the Rider spotted</span>';
+        return '<span class="dk-warn">Something the Rider spotted</span>';
     }
   }
 }
@@ -265,7 +265,7 @@ export class StopPanel {
   private key = '';
 
   constructor(private readonly run: EngineerRun) {
-    this.el = el('div', 'cab-stop idle');
+    this.el = el('div', 'cab-stop dk-idle');
     this.update(null, null, null);
   }
 
@@ -277,7 +277,7 @@ export class StopPanel {
       const key = `idle|${text}`;
       if (key === this.key) return;
       this.key = key;
-      box.className = 'cab-stop idle';
+      box.className = 'cab-stop dk-idle';
       box.innerHTML = `<div class="st-idle">${text}</div>`;
       return;
     }
@@ -295,7 +295,7 @@ export class StopPanel {
     const key = [kind, tg.name, main, small, Math.round(pct(-tg.dist) * 10), sub].join('|');
     if (key === this.key) return;
     this.key = key;
-    box.className = `cab-stop${inWindow ? ' on-mark' : ''}${past ? ' past' : ''}`;
+    box.className = `cab-stop${inWindow ? ' dk-on-mark' : ''}${past ? ' dk-past' : ''}`;
     box.innerHTML =
       `<div class="st-head"><span class="st-kind">${kind}</span><span class="st-name">${escapeHtml(tg.name)}</span></div>` +
       `<div class="st-dist">${main}<small>${small}</small></div>` +
@@ -310,7 +310,7 @@ export class StopPanel {
     if (tg.kind === 'station') {
       if (stopAt && stopAt.stationId === tg.id) {
         const done = stopAt.progress >= 1;
-        return `${done ? 'Station work done: clear to go' : 'Stand still: station work'}<div class="st-bar${done ? ' done' : ''}"><i style="width:${Math.round(stopAt.progress * 100)}%"></i></div>`;
+        return `${done ? 'Station work done: clear to go' : 'Stand still: station work'}<div class="st-bar${done ? ' dk-done' : ''}"><i style="width:${Math.round(stopAt.progress * 100)}%"></i></div>`;
       }
       if (inWindow) return standing ? 'Hold her here' : 'Stop now';
       return `Stop the loco's front within ${tg.window} m`;
@@ -335,10 +335,10 @@ export class RiderPanel {
   constructor(private readonly consist: readonly CarType[] | undefined) {
     const p = panel('desk-rider', 'The Rider');
     this.el = p.root;
-    const body = el('div', 'rider-body');
-    this.status = el('div', 'rider-status');
-    this.where = el('div', 'rider-where');
-    this.strip = el('div', 'consist');
+    const body = el('div', 'dk-rider-body');
+    this.status = el('div', 'dk-rider-status');
+    this.where = el('div', 'dk-rider-where');
+    this.strip = el('div', 'dk-consist');
     body.append(this.status, this.where, this.strip);
     this.el.append(body);
     this.update(null);
@@ -370,7 +370,7 @@ export class RiderPanel {
       where = `Car ${n}${type ? ` (${type})` : ''}, ${n === 1 ? 'first behind the tender' : `${n} back from the tender`}`;
     }
     setHtml(this.status, `${ICONS.rider}<span>${status}</span>`);
-    setClass(this.status, 'bad', bad);
+    setClass(this.status, 'dk-bad', bad);
     setText(this.where, where);
     this.updateStrip(view);
   }
@@ -388,7 +388,7 @@ export class RiderPanel {
       this.stripCount = n;
       this.strip.innerHTML = '';
       for (let k = n + 1; k >= 0; k--) {
-        const i = el('i', k === 0 ? 'loco' : k === 1 ? 'tender' : '');
+        const i = el('i', k === 0 ? 'dk-loco' : k === 1 ? 'dk-tender' : '');
         i.dataset.car = String(k);
         this.strip.append(i);
       }
@@ -396,9 +396,9 @@ export class RiderPanel {
     const r = view?.rider;
     for (const i of Array.from(this.strip.children) as HTMLElement[]) {
       const here = !!r && r.mode === 'active' && Math.max(0, Math.min(n + 1, r.car)) === Number(i.dataset.car);
-      setClass(i, 'here', here);
-      setClass(i, 'roof', here && !!r?.roof);
-      setClass(i, 'inside', here && !r?.roof);
+      setClass(i, 'dk-here', here);
+      setClass(i, 'dk-roof', here && !!r?.roof);
+      setClass(i, 'dk-inside', here && !r?.roof);
     }
   }
 }
@@ -433,14 +433,14 @@ export class LogPanel {
     if (key && top && top.key === key && clock - top.clock < LOG_MERGE_S) {
       top.count++;
       top.clock = clock;
-      const c = top.el.querySelector('.count');
+      const c = top.el.querySelector('.dk-count');
       if (c) c.textContent = `×${top.count}`;
       return;
     }
-    const li = el('li', `log-line ${tone}`);
-    const txt = el('span', 'txt', text);
-    txt.append(el('span', 'count'));
-    li.append(el('time', undefined, clockParts(clock).hm), el('span', 'dot'), txt);
+    const li = el('li', `log-line dk-${tone}`);
+    const txt = el('span', 'dk-txt', text);
+    txt.append(el('span', 'dk-count'));
+    li.append(el('time', undefined, clockParts(clock).hm), el('span', 'dk-dot'), txt);
     this.list.prepend(li);
     this.list.scrollTop = 0;
     this.entries.unshift({ el: li, key, clock, count: 1 });
@@ -455,17 +455,17 @@ export class TelegraphPanel {
   constructor() {
     const p = panel('desk-telegram', 'Telegraph');
     this.el = p.root;
-    const wrap = el('div', 'tape-wrap');
-    this.tape = el('div', 'tape none', 'No telegrams yet.');
+    const wrap = el('div', 'dk-tape-wrap');
+    this.tape = el('div', 'dk-tape dk-none', 'No telegrams yet.');
     wrap.append(this.tape);
     this.el.append(wrap);
   }
 
   /** The latest telegram, as paper tape, with a little arrival animation. */
   show(text: string): void {
-    this.tape.className = 'tape';
+    this.tape.className = 'dk-tape';
     this.tape.textContent = text;
     void this.tape.offsetWidth;
-    this.tape.classList.add('fresh');
+    this.tape.classList.add('dk-fresh');
   }
 }
