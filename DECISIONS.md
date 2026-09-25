@@ -70,6 +70,8 @@ Tuned against `tests/balance.test.ts`: the autopilot drives while a bot Rider fi
 - **Run 1's mail rides in a boxcar**, since the safe (and the express car) arrive in run 2.
 - **Stations** sit in town terrain. Intermediate stations are checkpoints; the origin and the destination aren't. In runs 4 and 6 the station platform is on the meet siding, so the stop and the wait overlap.
 - **Meets.** Hold points are about 45 m short of the siding's end, 25 m before its exit signal. Each hold's release time is computed from the timetable (the other train clears the siding + 20–30 s), so it stays right if speeds are retuned. Siding junction signals stand 320 m before the switch; route-choice junction signals 400 m before.
+- **Sidings run at 30 mph**, the rulebook's diverging speed, so a train that obeys a diverging-clear signal is always inside the siding's limit (they were 25 mph, which a signal-obeying train overran). Spurs are 15 mph.
+- **Slower track beyond a switch is always announced.** A limit applies the moment the loco crosses onto a siding or cutoff, and entering at 1.7 times it derails the train at once. So the Ahead list gives a switch set onto slower track that track's limit ("slow down", then "brake now!"), and the map puts a speed plate on every slower leg, like the curves' plates.
 - **Cattle and barricades** sit outside every signal's block; otherwise a red signal would hold the train short of something it can't clear.
 - **Deadlines** are whole minutes, 18–27% over a cautious drive of the plan (`builder.estimate()`), and par is about that drive. Water is designed for firebox 2 while moving and 1 while standing.
 - **Run 5** names its bandits' goals (there's no express car to rob, so no "mixed").

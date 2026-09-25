@@ -5,7 +5,7 @@
 import type { NetIndex } from '../../sim/network';
 import { CAR_SPECS, BUFFER_SAFE } from '../../sim/rules';
 import type { CarType, EngineerRun, EngineerView } from '../../sim/types';
-import type { AheadItem, StopTarget } from './ahead';
+import { slowAdvice, type AheadItem, type StopTarget } from './ahead';
 import { btn, capitalise, el, escapeHtml, kbd, setClass, setHtml, setText } from './dom';
 import { lossText, type LogTone } from './events';
 import { clockParts, formatClock, formatDistance, formatEta, formatMoney, formatRemaining, limitMph, toMph } from './format';
@@ -193,7 +193,8 @@ export class AheadPanel {
       }
       const inside = it.until !== undefined;
       const secs = speed > 0.3 ? it.dist / speed : Infinity;
-      const urgency = inside ? ' dk-here' : secs <= IMMINENT_S ? ' dk-imminent' : secs <= SOON_S ? ' dk-soon' : '';
+      const brake = it.limit !== undefined && slowAdvice(it.dist, speed, it.limit) === 'brake';
+      const urgency = inside ? ' dk-here' : brake || secs <= IMMINENT_S ? ' dk-imminent' : secs <= SOON_S ? ' dk-soon' : '';
       const cls = `ah-row ah-${it.kind}${urgency}`;
       if (row.li.className !== cls) row.li.className = cls;
       setHtml(row.name, this.name(it));
@@ -231,7 +232,7 @@ export class AheadPanel {
           ? `<span class="${toMph(speed) < limitMph(it.minSpeed) ? 'dk-bad' : 'dk-warn'}">Burning! Cross at ${limitMph(it.minSpeed)} mph or more</span>`
           : `Trestle, ${len}`;
       case 'curve':
-        return `${len} long${speed > (it.limit ?? Infinity) * 1.02 ? ' · <span class="dk-bad">slow down</span>' : ''}`;
+        return `${len} long${this.advice(it, speed)}`;
       case 'signal':
         return 'Ask the Rider what it shows';
       case 'junction': {
@@ -240,6 +241,9 @@ export class AheadPanel {
         if (!j.facing) return j.against ? '<span class="dk-warn">Trailing: it will spring over</span>' : 'Trailing through';
         const leg = this.ix.edge.get(j.leg);
         const legName = leg?.name ?? leg?.kind ?? '';
+        // Onto slower track (a siding, a cutoff): its limit holds from the moment the loco crosses.
+        // The switch's name already says where it leads, so the limit takes the leg name's place.
+        if (it.limit !== undefined) return `Set <b>${j.state}</b> · <span class="dk-plate">${limitMph(it.limit)} mph</span> beyond${this.advice(it, speed)}`;
         return `Set <b>${j.state}</b>${legName ? ` → ${escapeHtml(legName)}` : ''}`;
       }
       case 'station': {
@@ -253,6 +257,13 @@ export class AheadPanel {
       case 'flag':
         return '<span class="dk-warn">Something the Rider spotted</span>';
     }
+  }
+
+  /** For a slower limit ahead: slow down while there's room, brake now once there isn't. */
+  private advice(it: AheadItem, speed: number): string {
+    if (it.limit === undefined) return '';
+    const a = slowAdvice(it.dist, speed, it.limit);
+    return a === 'brake' ? ' · <span class="dk-bad">brake now!</span>' : a === 'slow' ? ' · <span class="dk-bad">slow down</span>' : '';
   }
 }
 

@@ -484,7 +484,9 @@ The desk is one screen at 1280×720 and up:
   - Zoom: fit the whole run, or follow the train.
 - **Ahead list.** The next 6 items along the current route (following switches): name, distance and
   ETA at the current speed. Covers tunnels, low bridges, trestles, curves (with limits), signals,
-  junctions (with the set leg), stations, water towers, and the end of track.
+  junctions (with the set leg, and that leg's limit when it's slower track), stations, water towers,
+  and the end of track. A slower limit coming up says "slow down", then "brake now!" once service
+  braking only just makes it. The map puts a speed plate on every slower leg beyond a switch.
 - **Timetable (Marey chart).**
   - Axes: clock across (from the run start to the deadline plus 5 minutes), main-line distance down
     (origin at the top), with stations and sidings labelled.

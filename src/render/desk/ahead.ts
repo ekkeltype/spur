@@ -12,7 +12,7 @@ import {
   xOnSpans,
   type NetIndex,
 } from '../../sim/network';
-import { SPOUT_WINDOW, STATION_WINDOW } from '../../sim/rules';
+import { BRAKE_MAX, EMERGENCY_BRAKE, SPOUT_WINDOW, STATION_WINDOW } from '../../sim/rules';
 import type { Dir, FlagState, Span, SwitchState, TrackHead, TrackPoint } from '../../sim/types';
 
 const EPS = 1e-6;
@@ -30,7 +30,7 @@ export interface AheadItem {
   until?: number;
   /** Tunnels, trestles and curves: their length. */
   length?: number;
-  /** Curves: the speed limit (m/s). */
+  /** Curves, and junctions whose switch leads onto slower track (a siding, a cutoff): the speed limit there (m/s). */
   limit?: number;
   /** Burning trestles: cross at no less than this (m/s). */
   minSpeed?: number;
@@ -113,12 +113,15 @@ export function buildAhead(ix: NetIndex, switches: Record<string, SwitchState>, 
     if (nx.junction) {
       const j = ix.junction.get(nx.junction);
       if (j) {
+        // Slower track beyond the switch: its limit applies the moment the loco crosses (spec §5.4).
+        const legLimit = edgeOf(ix, nx.head.edge).speedLimit;
         add(`j:${j.node}:${acc.toFixed(1)}`, {
           kind: 'junction',
           id: j.node,
           name: j.name,
           dist: acc,
           junction: { state: switchOf(ix, switches, j.node), facing: edgeId === j.trunk, leg: nx.head.edge, against: nx.trailing !== null },
+          ...(legLimit < e.speedLimit - EPS ? { limit: legLimit } : {}),
         });
       }
     }
@@ -210,6 +213,25 @@ function scanEdge(
     const d = pointAhead(fl.point.off);
     if (d !== null) add(`f:${fl.id}`, { kind: 'flag', id: String(fl.id), name: "The Rider's flag", dist: d });
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Slower limits coming up (spec §5.4, §11)
+// ---------------------------------------------------------------------------------------------
+
+/** The braking the advice counts on (m/s²): the lever at the top of its service range, no emergency. */
+const ADVICE_DECEL = BRAKE_MAX * EMERGENCY_BRAKE;
+/** Say "brake now" with this much of the braking distance still in hand. */
+const ADVICE_MARGIN = 1.15;
+
+/**
+ * What a slower limit `dist` metres ahead asks of a train at `speed` (m/s): nothing, slow down, or
+ * brake now (service braking only just stops the overspeed in the distance left).
+ */
+export function slowAdvice(dist: number, speed: number, limit: number): 'ok' | 'slow' | 'brake' {
+  if (speed <= limit * 1.02) return 'ok';
+  const need = (speed * speed - limit * limit) / (2 * ADVICE_DECEL);
+  return dist <= need * ADVICE_MARGIN ? 'brake' : 'slow';
 }
 
 // ---------------------------------------------------------------------------------------------

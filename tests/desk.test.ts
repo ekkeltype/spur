@@ -2,7 +2,7 @@
 // exercised by hand and in screenshots through the harness (desk.html).
 
 import { describe, expect, it } from 'vitest';
-import { buildAhead, stopTarget } from '../src/render/desk/ahead';
+import { buildAhead, slowAdvice, stopTarget } from '../src/render/desk/ahead';
 import { describeEvent, type LogContext } from '../src/render/desk/events';
 import { clockParts, formatClock, formatDistance, formatEta, formatMmSs, formatMoney, formatRemaining, junctionNumbers, toMph } from '../src/render/desk/format';
 import {
@@ -278,6 +278,15 @@ describe('buildAhead', () => {
     expect(items.find((i) => i.id === 'Q')?.junction).toEqual({ state: 'normal', facing: false, leg: 'm3', against: true });
   });
 
+  it('gives a junction the speed limit of the slower track its switch leads onto', () => {
+    // The siding is slower than the main line: a switch set onto it must say so before the train gets there.
+    const slow = loopRun({ edges: loopRun().edges.map((e) => (e.id === 's1' ? { ...e, speedLimit: 13.4 } : e)) });
+    const six = netIndex(slow);
+    expect(buildAhead(six, sw(slow, { P: 'reverse' }), { edge: 'm1', off: 300, dir: 1 }, { max: 20 }).find((i) => i.id === 'P')?.limit).toBe(13.4);
+    // Set for the main line (as fast as where the train is), there's nothing to slow down for.
+    expect(buildAhead(six, sw(slow), { edge: 'm1', off: 300, dir: 1 }, { max: 20 }).find((i) => i.id === 'P')?.limit).toBeUndefined();
+  });
+
   it('keeps the nearest items only', () => {
     const items = buildAhead(ix, sw(run), { edge: 'm1', off: 300, dir: 1 });
     expect(items).toHaveLength(6);
@@ -322,6 +331,21 @@ describe('buildAhead', () => {
       ['junction', 'J1', 100],
       ['end', 'S', 700],
     ]);
+  });
+});
+
+describe('slowAdvice (a slower limit coming up)', () => {
+  // 30 mph = 13.4 m/s ahead, the train at 45 mph = 20.1 m/s. Service braking (0.935 m/s²) needs
+  // (20.1² − 13.4²) / (2 × 0.935) ≈ 120 m.
+  it('is quiet at or under the limit', () => {
+    expect(slowAdvice(50, 13.4, 13.4)).toBe('ok');
+    expect(slowAdvice(50, 10, 13.4)).toBe('ok');
+  });
+  it('says slow down with room to spare, and brake now once the braking distance is nearly used up', () => {
+    expect(slowAdvice(400, 20.1, 13.4)).toBe('slow');
+    expect(slowAdvice(160, 20.1, 13.4)).toBe('slow');
+    expect(slowAdvice(130, 20.1, 13.4)).toBe('brake');
+    expect(slowAdvice(20, 20.1, 13.4)).toBe('brake');
   });
 });
 

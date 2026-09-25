@@ -13,6 +13,7 @@ import {
   APPROACH_LIMIT,
   CAR_SPECS,
   DEFAULT_MAX_CARS,
+  DIVERGE_LIMIT,
   DRAG,
   DWELL_SECONDS,
   GRAVITY,
@@ -66,8 +67,11 @@ const MAP_SCALE = 1 / 100;
 const LOOP_OFFSET = 2;
 const CUTOFF_OFFSET = 6;
 const SPUR_OFFSET = 2.5;
-/** Track speeds off the main line, m/s: sidings 25 mph, spurs 15 mph. */
-const SIDING_SPEED = 11;
+/**
+ * Track speeds off the main line, m/s. Sidings run at the rulebook's diverging speed (30 mph), so a
+ * train that obeys a diverging-clear signal is always inside the siding's limit; spurs at 15 mph.
+ */
+const SIDING_SPEED = DIVERGE_LIMIT;
 const SPUR_SPEED = 7;
 /** Edges shorter than this are almost certainly an authoring slip (a terrain break beside a switch). */
 const MIN_EDGE = 40;

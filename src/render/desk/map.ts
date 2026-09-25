@@ -702,6 +702,17 @@ export class RouteMap {
     const stations = [...run.stations].sort((a, b) => (a.id === m.destination ? -1 : b.id === m.destination ? 1 : 0));
     for (const st of stations) this.stationBox(c, st.name, this.pt(st.edge, st.at), st.id === m.destination, st.checkpoint, m);
     for (const cv of run.curves) this.limitPlate(c, cv.edge, (cv.from + cv.to) / 2, limitMph(cv.limit), m);
+    // Slower track beyond a switch (sidings, cutoffs): a plate just past the points, where its limit begins.
+    for (const j of run.junctions) {
+      const trunk = this.ix.edge.get(j.trunk);
+      if (!trunk) continue;
+      for (const id of [j.normal, j.reverse]) {
+        const leg = this.ix.edge.get(id);
+        if (!leg || leg.speedLimit >= trunk.speedLimit) continue;
+        const into = Math.min(120, leg.length / 3);
+        this.limitPlate(c, leg.id, leg.a === j.node ? into : leg.length - into, limitMph(leg.speedLimit), m);
+      }
+    }
     // Dead ends: their names beyond the buffers.
     c.font = `${Math.round(f * 0.72)}px ${SANS}`;
     for (const n of run.nodes) {
