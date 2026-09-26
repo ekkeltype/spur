@@ -1,7 +1,7 @@
 // Signals and the rulebook (spec §9): what each signal shows, worked out from its block along the
-// route the switches set now; the loco passing signals; approach restrictions and fines. Aspects are
-// derived, never stored, so they follow the obstacles, the other trains and the switches the moment
-// those change.
+// route the switches set now; the loco passing signals; approach and diverging restrictions and
+// fines. Aspects are derived, never stored, so they follow the obstacles, the other trains and the
+// switches the moment those change.
 
 import { netIndex, spanDir, spanLength, spansOverlap, switchOf, walk, xOnSpans, type NetIndex } from './network';
 import {
@@ -128,21 +128,36 @@ function signalsPassed(ix: NetIndex, frontPath: readonly Span[]): SignalDef[] {
   return hits.sort((a, b) => a.at - b.at).map((h) => h.sig);
 }
 
-function fine(state: GameState, reason: 'redSignal' | 'speeding', amount: number, events: SimEvent[]): void {
+function fine(state: GameState, reason: 'redSignal' | 'speeding' | 'junction', amount: number, events: SimEvent[]): void {
   state.stats.fines += amount;
   events.push({ type: 'fine', reason, amount });
 }
 
 /**
+ * Track distance from a junction signal to its junction, walking the way the signal faces with the
+ * switches as they are now. If the junction isn't on that walk (a malformed run), the whole walk:
+ * at most BLOCK_MAX, past which the next signal ends the restriction anyway.
+ */
+function distanceToJunction(ix: NetIndex, state: GameState, sig: SignalDef): number {
+  const w = walk(ix, state.switches, { edge: sig.edge, off: sig.at, dir: sig.facing }, BLOCK_MAX);
+  return w.nodes.find((n) => n.node === sig.junction)?.at ?? w.walked;
+}
+
+/**
  * Signals passed and fines (spec §15 step 7). Passing a signal lifts any restriction from the one
- * before; stop is fined at once; approach, divergeApproach and divergeClear restrict the speed until
- * the next signal, and going over the limit (with SPEED_FINE_TOLERANCE) is fined once per signal.
+ * before; stop is fined at once. Approach and divergeApproach restrict the speed until the next
+ * signal; divergeClear until the train's rear has passed the junction beyond it (by the odometer:
+ * the distance to the junction plus the train's length), or the next signal if that comes first.
+ * Going over the limit (with SPEED_FINE_TOLERANCE) is fined once per signal: 'speeding' under a
+ * caution, 'junction' through a diverging junction (only a diverging restriction has a liftAt).
  */
 export function stepSignals(state: GameState, run: RunDef, motion: TickMotion, events: SimEvent[]): void {
   if (state.phase !== 'running') return;
+  const ix = netIndex(run);
+  const t = state.train;
   const memo = state.signals;
   const debounce = secondsToTicks(SIGNAL_DEBOUNCE_SECONDS);
-  for (const sig of signalsPassed(netIndex(run), motion.frontPath)) {
+  for (const sig of signalsPassed(ix, motion.frontPath)) {
     const last = memo.passed[sig.id];
     memo.passed[sig.id] = state.tick;
     if (last !== undefined && state.tick - last < debounce) continue;
@@ -157,13 +172,16 @@ export function stepSignals(state: GameState, run: RunDef, motion: TickMotion, e
     } else if (aspect === 'approach' || aspect === 'divergeApproach') {
       memo.restriction = { signalId: sig.id, limit: APPROACH_LIMIT, fined: false };
     } else if (aspect === 'divergeClear') {
-      memo.restriction = { signalId: sig.id, limit: DIVERGE_LIMIT, fined: false };
+      const liftAt = t.odometer + distanceToJunction(ix, state, sig) + t.length;
+      memo.restriction = { signalId: sig.id, limit: DIVERGE_LIMIT, fined: false, liftAt };
     }
   }
+  // Through the junction, the diverging track's own limit applies (spec §9.3).
+  if (memo.restriction?.liftAt !== undefined && t.odometer >= memo.restriction.liftAt) memo.restriction = null;
   const r = memo.restriction;
-  if (r && !r.fined && Math.abs(state.train.v) > r.limit * SPEED_FINE_TOLERANCE) {
+  if (r && !r.fined && Math.abs(t.v) > r.limit * SPEED_FINE_TOLERANCE) {
     r.fined = true;
     state.stats.speedFines++;
-    fine(state, 'speeding', SPEED_FINE, events);
+    fine(state, r.liftAt === undefined ? 'speeding' : 'junction', SPEED_FINE, events);
   }
 }

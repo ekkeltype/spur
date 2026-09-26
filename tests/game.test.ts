@@ -2,10 +2,10 @@
 // lowers the spout, debug commands, results and payouts, and checkpoints that resume identically.
 
 import { describe, expect, it } from 'vitest';
-import { composeConsist, newGame, runResult, step, variantFor } from '../src/sim/game';
+import { cargoPayFor, composeConsist, hazardsNear, newGame, runResult, step, variantFor } from '../src/sim/game';
 import { pointAt } from '../src/sim/network';
 import { seedRng } from '../src/sim/rng';
-import { TENDER_HATCH_FROM_REAR, TICK_HZ } from '../src/sim/rules';
+import { CARGO_PAY, TENDER_HATCH_FROM_REAR, TICK_HZ } from '../src/sim/rules';
 import { NO_INPUT, type EngineerCmd, type GameState, type RiderInput, type RunDef, type SimEvent } from '../src/sim/types';
 import { BotRider } from './bots';
 import { loopRun } from './fixtures';
@@ -104,6 +104,53 @@ describe('game loop', () => {
     const lost = runResult(s, r);
     expect(lost.total).toBe(0);
     expect(lost.medals).toEqual([]);
+  });
+
+  it('a slammed brake lurches on the tick its command arrives, so the Rider and the bandits see it that step', () => {
+    const r = waveRun();
+    const s = newGame(r, { seed: 1, consist: ['express'], upgrades: [], assists: ASSISTS });
+    s.train.stationStop = null;
+    s.train.v = 12;
+    s.tick = 500;
+    const ev = step(s, r, NO_INPUT, [{ seq: 1, kind: 'brake', value: 1 }]);
+    expect(ev).toContainEqual({ type: 'lurch' });
+    expect(s.train.lurchTick).toBe(500);
+    expect(s.tick).toBe(501);
+  });
+
+  it('pays for the optional cargo cars, but not the contract’s own, the armored car or the caboose', () => {
+    const r: RunDef = { ...waveRun(), requiredCars: ['express'] };
+    expect(cargoPayFor(r, ['loco', 'tender', 'express'])).toBe(0);
+    expect(cargoPayFor(r, ['loco', 'tender', 'express', 'passenger', 'boxcar'])).toBe((CARGO_PAY.passenger ?? 0) + (CARGO_PAY.boxcar ?? 0));
+    expect(cargoPayFor(r, ['loco', 'tender', 'express', 'armored', 'caboose'])).toBe(0);
+    expect(cargoPayFor(waveRun(), ['loco', 'tender', 'express'])).toBe(CARGO_PAY.express);
+    expect(CARGO_PAY).toEqual({ express: 40, passenger: 30, boxcar: 30 });
+  });
+
+  it('adds the cargo pay to a win’s total, and nothing on a loss', () => {
+    const r: RunDef = { ...waveRun(), requiredCars: ['express'] };
+    const s = newGame(r, { seed: 1, consist: composeConsist(r, ['passenger', 'caboose']), upgrades: [], assists: ASSISTS });
+    s.phase = 'won';
+    s.arrivedClock = r.contract.deadline - 60;
+    const res = runResult(s, r);
+    expect(res.cargoPay).toBe(CARGO_PAY.passenger);
+    expect(res.total).toBe(r.contract.pay + res.cargoPay);
+    s.phase = 'lost';
+    expect(runResult(s, r)).toMatchObject({ cargoPay: 0, total: 0 });
+  });
+
+  it('lists the fords near the train among its hazards, in the train frame', () => {
+    const r = loopRun({
+      fords: [{ id: 'f1', edge: 'm1', from: 320, to: 380, name: 'Sage Creek ford' }],
+      tunnels: [{ id: 't1', edge: 'm1', from: 400, to: 450, name: 'Mesa Tunnel' }],
+    });
+    const s = newGame(r, { seed: 1, consist: ['express'], upgrades: [], assists: ASSISTS });
+    const L = s.train.length; // the loco's front at m1 300
+    const near = hazardsNear(s, r, 200);
+    expect(near).toHaveLength(2);
+    expect(near).toContainEqual({ kind: 'ford', id: 'f1', x0: L + 20, x1: L + 80 });
+    expect(near).toContainEqual({ kind: 'tunnel', id: 't1', x0: L + 100, x1: L + 150 });
+    expect(hazardsNear(s, r, 10)).toEqual([]);
   });
 
   it('picks the variant from the seed', () => {

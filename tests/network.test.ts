@@ -54,6 +54,20 @@ describe('netIndex', () => {
     expect(ix.features.get('e1')?.obstacles).toEqual([]);
   });
 
+  it('groups the features by edge, fords included', () => {
+    const ix = netIndex(
+      yRun({
+        fords: [
+          { id: 'f1', edge: 'e2', from: 100, to: 160, name: 'Sage Creek ford' },
+          { id: 'f2', edge: 'e4', from: 300, to: 340, name: 'Dry ford' },
+        ],
+      }),
+    );
+    expect(ix.features.get('e2')?.fords.map((f) => f.id)).toEqual(['f1']);
+    expect(ix.features.get('e4')?.fords.map((f) => f.id)).toEqual(['f2']);
+    expect(ix.features.get('e1')?.fords).toEqual([]);
+  });
+
   it('caches per RunDef object', () => {
     const run = yRun();
     expect(netIndex(run)).toBe(netIndex(run));
@@ -334,11 +348,17 @@ describe('validateRun', () => {
     const bad = yRun({
       junctions: [{ node: 'J1', trunk: 'e1', normal: 'e2', reverse: 'e4', initial: 'normal', name: 'x' }],
       tunnels: [{ id: 't', edge: 'e2', from: 400, to: 700, name: 'T' }],
+      fords: [
+        { id: 'f', edge: 'e4', from: 780, to: 820, name: 'F' },
+        { id: 'g', edge: 'e9', from: 0, to: 10, name: 'G' },
+      ],
       mainLine: ['e1', 'e4'],
     });
     const problems = validateRun(bad).join('\n');
     expect(problems).toMatch(/J1/);
     expect(problems).toMatch(/tunnel t/);
+    expect(problems).toMatch(/ford f at 820 is outside edge e4/);
+    expect(problems).toMatch(/ford g is on unknown edge e9/);
     expect(problems).toMatch(/mainLine/);
   });
 });

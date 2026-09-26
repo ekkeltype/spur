@@ -1,6 +1,7 @@
 // The player's train (spec §5, §8): the consist's layout in the train frame, the Engineer's
-// commands, and one tick of the train — boiler, motion along the track, speed limits, what the
-// loco's front runs into (tunnels, trestles, obstacles), station stops and water.
+// commands (and the lurch of a slammed brake), and one tick of the train — boiler, motion along the
+// track, speed limits, what the loco's front runs into (tunnels, fords, trestles, obstacles), the
+// whistle and the cattle, station stops and water.
 
 import {
   edgeOf,
@@ -28,6 +29,7 @@ import {
   BUFFER_SAFE,
   CAB_LENGTH,
   CAR_SPECS,
+  CATTLE_CALM_SECONDS,
   DERAIL_FACTOR,
   DERAIL_INSTANT,
   DERAIL_SECONDS,
@@ -35,6 +37,7 @@ import {
   DRY_EXPLODE_SECONDS,
   DT,
   DWELL_SECONDS,
+  EMERGENCY_BRAKE,
   FIRE_MAX,
   FULL_POWER_PSI,
   GOVERNOR_GAIN,
@@ -46,6 +49,7 @@ import {
   HOLDUP_EASE,
   LOW_WATER,
   LURCH_COOLDOWN_SECONDS,
+  LURCH_MIN_SPEED,
   MPH,
   OBSTACLE_SAFE,
   OBSTACLE_SCATTER_SECONDS,
@@ -72,9 +76,11 @@ import {
   WATER_CAP,
   WATER_FILL_RATE,
   WATER_PER_PSI,
+  WHISTLE_EARSHOT,
   WHISTLE_SCARE_MAX,
   WHISTLE_SCARE_MIN,
   WHISTLE_SCARE_SECONDS,
+  WHISTLE_STEAM,
 } from './rules';
 import type {
   Assists,
@@ -178,10 +184,13 @@ function carryOut(state: GameState, run: RunDef, cmd: EngineerCmd, events: SimEv
   if (t.heldUp && cmd.kind !== 'whistle') return HELD_UP;
   switch (cmd.kind) {
     case 'throttle':
-    case 'brake':
+    case 'brake': {
       if (!Number.isFinite(cmd.value)) return "That lever doesn't go there.";
+      const was = t[cmd.kind];
       t[cmd.kind] = Math.max(0, Math.min(1, cmd.value));
+      if (cmd.kind === 'brake') lurch(state, was, events);
       return null;
+    }
     case 'fire':
       if (!Number.isFinite(cmd.value)) return "That lever doesn't go there.";
       if (governed(state)) return 'The governor is tending the fire.';
@@ -215,6 +224,23 @@ function carryOut(state: GameState, run: RunDef, cmd: EngineerCmd, events: SimEv
 export function applyEngineerCmd(state: GameState, run: RunDef, cmd: EngineerCmd, events: SimEvent[]): void {
   const refused = carryOut(state, run, cmd, events);
   events.push(refused === null ? { type: 'cmdResult', seq: cmd.seq, ok: true } : { type: 'cmdResult', seq: cmd.seq, ok: false, reason: refused });
+}
+
+/** The brake lever in emergency: above full service, EMERGENCY_BRAKE itself (spec §5.2). */
+const emergency = (brake: number): boolean => brake > EMERGENCY_BRAKE;
+
+/**
+ * Slamming the brakes (spec §5.2): the lever going into emergency (from `was`, out of it) at
+ * LURCH_MIN_SPEED or more lurches the train, at most once per LURCH_COOLDOWN_SECONDS. Holding it
+ * there doesn't lurch again, and full service never does. Commands come first in a tick, so the
+ * Rider and bandit modules see lurchTick === state.tick in the same step and do the rest.
+ */
+function lurch(state: GameState, was: number, events: SimEvent[]): void {
+  const t = state.train;
+  if (emergency(was) || !emergency(t.brake) || Math.abs(t.v) < LURCH_MIN_SPEED) return;
+  if (state.tick - t.lurchTick < secondsToTicks(LURCH_COOLDOWN_SECONDS)) return;
+  t.lurchTick = state.tick;
+  events.push({ type: 'lurch' });
 }
 
 /**
@@ -278,7 +304,9 @@ function boiler(state: GameState, events: SimEvent[]): void {
   const t = state.train;
   if (governed(state) && !t.heldUp) t.fire = governorFire(t);
   const raised = t.water > 0 ? STEAM_PER_FIRE * t.fire : 0;
-  const p = t.pressure + (raised - cylinderDraw(t) - HEAT_LOSS) * DT;
+  // The whistle blows off steam too, so leaning on it costs pressure (spec §5.2).
+  const whistle = t.whistle ? WHISTLE_STEAM : 0;
+  const p = t.pressure + (raised - cylinderDraw(t) - HEAT_LOSS - whistle) * DT;
   // At P_MAX with a surplus the safety valve lifts and the surplus is lost (its water with it).
   const valve = p > P_MAX;
   if (valve !== t.safetyValve) {
@@ -353,7 +381,7 @@ export function stepTrain(state: GameState, run: RunDef, events: SimEvent[]): Ti
   if (state.phase !== 'running') return motion;
   speedLimits(ix, state, events);
   if (state.phase !== 'running') return motion;
-  passTunnelsAndTrestles(ix, state, before, motion, events);
+  passTunnelsFordsAndTrestles(ix, state, before, motion, events);
   if (state.phase !== 'running') return motion;
   obstacles(ix, state, motion, events);
   if (state.phase !== 'running') return motion;
@@ -445,22 +473,38 @@ function speedLimits(ix: NetIndex, state: GameState, events: SimEvent[]): void {
 // What the loco's front passes (spec §4.3, §8)
 // ---------------------------------------------------------------------------------------------
 
+/** A feature covering a stretch of its edge. */
+interface Stretch {
+  edge: string;
+  from: number;
+  to: number;
+}
+
 /** Is a point on a feature's stretch of its edge? */
-const within = (h: TrackHead, f: { edge: string; from: number; to: number }): boolean =>
+const within = (h: TrackHead, f: Stretch): boolean =>
   h.edge === f.edge && h.off >= Math.min(f.from, f.to) - 1e-6 && h.off <= Math.max(f.from, f.to) + 1e-6;
 
+/** The stretches of one kind the loco's front left and entered this tick, going from `before` to `after`. */
+function crossed<F extends Stretch>(of: (h: TrackHead) => readonly F[], before: TrackHead, after: TrackHead): { left: F[]; entered: F[] } {
+  const was = of(before).filter((f) => within(before, f));
+  const now = of(after).filter((f) => within(after, f));
+  return { left: was.filter((f) => !now.includes(f)), entered: now.filter((f) => !was.includes(f)) };
+}
+
 /**
- * Tunnels are entered and left by the loco's front either way (backing out of one leaves it);
- * trestles are announced, and a burning one judged, when the front enters moving forward.
+ * Tunnels and fords are entered and left by the loco's front either way (backing out of one leaves
+ * it); trestles are announced, and a burning one judged, when the front enters moving forward.
  */
-function passTunnelsAndTrestles(ix: NetIndex, state: GameState, before: TrackHead, motion: TickMotion, events: SimEvent[]): void {
+function passTunnelsFordsAndTrestles(ix: NetIndex, state: GameState, before: TrackHead, motion: TickMotion, events: SimEvent[]): void {
   if (motion.moved === 0) return;
   const after = frontHead(state.train.spans);
   const near = (h: TrackHead): EdgeFeatures | undefined => ix.features.get(h.edge);
-  const tunnelsBefore = near(before)?.tunnels.filter((tn) => within(before, tn)) ?? [];
-  const tunnelsAfter = near(after)?.tunnels.filter((tn) => within(after, tn)) ?? [];
-  for (const tn of tunnelsBefore) if (!tunnelsAfter.includes(tn)) events.push({ type: 'tunnelExit', id: tn.id });
-  for (const tn of tunnelsAfter) if (!tunnelsBefore.includes(tn)) events.push({ type: 'tunnelEnter', id: tn.id });
+  const tunnels = crossed((h) => near(h)?.tunnels ?? [], before, after);
+  for (const tn of tunnels.left) events.push({ type: 'tunnelExit', id: tn.id });
+  for (const tn of tunnels.entered) events.push({ type: 'tunnelEnter', id: tn.id });
+  const fords = crossed((h) => near(h)?.fords ?? [], before, after);
+  for (const fd of fords.left) events.push({ type: 'fordExit', id: fd.id });
+  for (const fd of fords.entered) events.push({ type: 'fordEnter', id: fd.id });
   if (motion.moved < 0) return;
   for (const tr of near(after)?.trestles ?? []) {
     if (!within(after, tr) || within(before, tr)) continue;
@@ -479,23 +523,57 @@ const OBSTACLE_LOSS: Record<ObstacleKind, string> = {
 };
 
 /**
- * Cattle scatter from a long enough whistle blown from 40–350 m short of them (a herd still leaving
- * is still on the line); cattle and barricades are judged when the loco's front reaches them moving
- * forward: pushed aside or smashed through at a safe speed, a wreck above it. Rocks stop the train
- * in move().
+ * The herds still on the line ahead of the loco's front, along the route the switches set now,
+ * within `range` metres, with how far ahead each one is (m), nearest first (spec §8).
+ */
+export function herdsAhead(ix: NetIndex, state: GameState, range: number): { herd: ObstacleState; d: number }[] {
+  const herds = state.obstacles.filter((o) => o.kind === 'cattle' && o.state === 'present');
+  if (herds.length === 0) return [];
+  const path = walk(ix, state.switches, frontHead(state.train.spans), range).spans;
+  const out: { herd: ObstacleState; d: number }[] = [];
+  for (const herd of herds) {
+    const d = xOnSpans(path, { edge: herd.edge, off: herd.at });
+    if (d !== null) out.push({ herd, d });
+  }
+  return out.sort((a, b) => a.d - b.d);
+}
+
+/**
+ * Cattle and the whistle (spec §8). A herd hears the whistle from WHISTLE_EARSHOT. Heard from
+ * beyond the scare window it gets used to it: calm, and deaf to it, until CATTLE_CALM_SECONDS after
+ * the last sound it heard. A blast that reaches WHISTLE_SCARE_SECONDS with the herd inside the
+ * window scatters it, unless it's calm. So the blast has to begin inside the window: an early one,
+ * or one held down all the way in, leaves the herd on the line. Herds hit or gone are left alone.
+ */
+function whistleAtCattle(ix: NetIndex, state: GameState, events: SimEvent[]): void {
+  const t = state.train;
+  const heard = t.whistle ? herdsAhead(ix, state, WHISTLE_EARSHOT) : [];
+  const blast = t.whistleTicks === secondsToTicks(WHISTLE_SCARE_SECONDS);
+  for (const o of state.obstacles) {
+    if (o.kind !== 'cattle' || o.state !== 'present') continue;
+    const d = heard.find((h) => h.herd === o)?.d ?? null;
+    if (d !== null && d > WHISTLE_SCARE_MAX) {
+      if (o.calmTicks === 0) events.push({ type: 'cattleCalm', id: o.id });
+      o.calmTicks = secondsToTicks(CATTLE_CALM_SECONDS);
+      continue;
+    }
+    if (o.calmTicks > 0) o.calmTicks--;
+    if (blast && d !== null && d >= WHISTLE_SCARE_MIN && o.calmTicks === 0) {
+      o.state = 'scattering';
+      o.ticks = 0;
+      events.push({ type: 'cattleScatter', id: o.id });
+    }
+  }
+}
+
+/**
+ * The whistle at the cattle (a herd still leaving is still on the line); cattle and barricades are
+ * judged when the loco's front reaches them moving forward: pushed aside or smashed through at a
+ * safe speed, a wreck above it. Rocks stop the train in move().
  */
 function obstacles(ix: NetIndex, state: GameState, motion: TickMotion, events: SimEvent[]): void {
   const t = state.train;
-  if (t.whistleTicks >= secondsToTicks(WHISTLE_SCARE_SECONDS) && state.obstacles.some((o) => o.kind === 'cattle' && o.state === 'present')) {
-    const fp = framePath(ix, state.switches, t.spans, 0, WHISTLE_SCARE_MAX);
-    for (const o of state.obstacles) {
-      if (o.kind !== 'cattle' || o.state !== 'present') continue;
-      const x = frameX(fp, { edge: o.edge, off: o.at });
-      if (x === null || x - t.length < WHISTLE_SCARE_MIN || x - t.length > WHISTLE_SCARE_MAX) continue;
-      o.state = 'scattering';
-      o.ticks = 0;
-    }
-  }
+  whistleAtCattle(ix, state, events);
   for (const o of state.obstacles) {
     const onLine = o.state === 'present' || (o.kind === 'cattle' && o.state === 'scattering');
     if (o.kind === 'rocks' || !onLine || !pathCrosses(motion.frontPath, { edge: o.edge, off: o.at })) continue;

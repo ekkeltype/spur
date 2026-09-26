@@ -522,6 +522,7 @@ export function validateRun(run: RunDef): string[] {
   };
   for (const t of run.tunnels) inEdge(`tunnel ${t.id}`, t.edge, t.from, t.to);
   for (const t of run.trestles) inEdge(`trestle ${t.id}`, t.edge, t.from, t.to);
+  for (const f of run.fords) inEdge(`ford ${f.id}`, f.edge, f.from, f.to);
   for (const b of run.lowBridges) inEdge(`low bridge ${b.id}`, b.edge, b.at);
   for (const s of run.stations) inEdge(`station ${s.id}`, s.edge, s.at);
   for (const w of run.waterTowers) inEdge(`water tower ${w.id}`, w.edge, w.at);
