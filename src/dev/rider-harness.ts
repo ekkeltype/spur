@@ -29,7 +29,7 @@ import { RiderRenderer, type RiderFrame } from '../render/rider/renderer';
 import { trainGeometry } from '../sim/geometry';
 import { spawnWave } from '../sim/bandits';
 import { fightContext, newGame, step } from '../sim/game';
-import { framePath, framePoint, frontHead, mainPos, netIndex, spansFromFront, walk } from '../sim/network';
+import { framePath, framePoint, frontHead, mainPos, netIndex, rearHead, spansFromFront, walk } from '../sim/network';
 import { CAR_SPECS, DT, FLAG_MAX, RIDER_SHOULDER, RIDER_SHOULDER_CROUCH, SCOPE_MAX, SCOPE_MIN, TICK_HZ, WEAPONS } from '../sim/rules';
 import { NO_INPUT } from '../sim/types';
 import type {
@@ -280,6 +280,20 @@ function fordScene(ahead: number, len: number, v: number, frames: number, ex: Ex
   approachPoint(alongMain(run, d), 0, v, frames, 0.7);
 }
 
+/**
+ * A scout-alert scene: cattle standing 400 m past the loco's front when the frame is taken, `frames`
+ * frames in at 12 m/s, and the Rider on the express roof looking ahead (`look` may raise the spyglass).
+ */
+function scoutScene(frames: number, look?: (st: GameState, t: number) => void, ex: Extras = {}): void {
+  fresh(ex);
+  approachPoint(plain(), 0, 12, frames, 0.6);
+  riderAt(carIndex('express'), 'roof', 1.5, { facing: 1, aim: 0.15 });
+  obstacle('herd1', 'cattle', 400 + 12 * (frames / 60));
+  stage([], []);
+  if (look) addHold(look);
+  settle(frames);
+}
+
 /** The train 45 m into a ford at 10 m/s: the Rider dry on a roof, a bandit washed off, a horse wading. */
 function fordInside(ex: Extras = {}): string {
   fordScene(-45, 95, 10, 80, ex);
@@ -422,9 +436,12 @@ function stage(bandits: BanditState[], horsemen: HorsemanState[], anim?: (t: num
   hold?.(state, 0);
 }
 
-/** Another train on our track, `ahead` metres past our front, `len` long, coming at us or going away. */
-function aiOnOurTrack(id: string, kind: AiTrainDef['kind'], ahead: number, len: number, cars: number, oncoming: boolean, v: number): void {
-  const w = walk(netIndex(run), state.switches, frontHead(state.train.spans), ahead + len);
+/**
+ * Another train on our track, `ahead` metres past our front (or behind our rear, `behindUs`), `len`
+ * long, coming at us or going away.
+ */
+function aiOnOurTrack(id: string, kind: AiTrainDef['kind'], ahead: number, len: number, cars: number, oncoming: boolean, v: number, behindUs = false): void {
+  const w = walk(netIndex(run), state.switches, behindUs ? rearHead(state.train.spans) : frontHead(state.train.spans), ahead + len);
   const spans: Span[] = [];
   let acc0 = 0;
   for (const s of w.spans) {
@@ -1186,6 +1203,46 @@ const SCENES: Record<string, () => string> = {
     settle(60);
     return 'A two-head signal sweeping past at night, diverging approach: lamps only';
   },
+  // ---- Round 3: the scout alert (render/rider/scout.ts) ----
+  scout() {
+    scoutScene(90);
+    return 'The scout alert: cattle standing 400 m (435 yd) ahead, beyond the view: the ! at the right edge';
+  },
+  scoutPop() {
+    scoutScene(14);
+    return 'The scout alert popping in, a quarter of a second after the herd came within reach';
+  },
+  scoutSeen() {
+    scoutScene(160, (st, t) => {
+      // A second's look at the herd through the spyglass, then the glass comes down.
+      st.rider.scoped = t > 0.4 && t < 1.4;
+      st.rider.scopeDist = 400 + 12 * (160 / 60 - t);
+    });
+    return 'The same herd after a second’s look through the spyglass: the ! has gone';
+  },
+  scoutNight() {
+    scoutScene(90, undefined, { night: true, hour: 22 });
+    return 'Night, with the headlamp (the spyglass reaches 490 yd): cattle 435 yd ahead, the ! at the right edge';
+  },
+  scoutLookout() {
+    fresh();
+    approachPoint(plain(), 0, 12, 90);
+    riderAt(0, 'roof', 0, { facing: 1, aim: 0.05 });
+    obstacle('herd1', 'cattle', 250 + 12 * (90 / 60));
+    stage([], []);
+    settle(90);
+    return 'On the lookout (the cab roof), cattle 275 yd ahead: the ! at the right edge';
+  },
+  scoutBack() {
+    fresh();
+    placeFront(plain(0, 700));
+    cruise(-4, 0);
+    riderAt(carIndex('caboose'), 'roof', -1, { facing: -1, aim: Math.PI - 0.1 });
+    aiOnOurTrack('runaway', 'runaway', 300, 44, 4, true, 8, true);
+    stage([], []);
+    settle(90);
+    return 'Backing at 4 m/s (9 mph) with the runaway 330 yd behind: the ! at the left edge';
+  },
   play() {
     const r = runFor(params.get('run'));
     fresh({ run: r.id, hour: r.startClock / 3600, night: r.night });
@@ -1240,7 +1297,9 @@ function tick(): void {
 
 function itemsFor(): TracksideItem[] | undefined {
   if (!aspectOverride) return undefined;
-  const items = trackside(state, run, 120, Math.max(200, state.rider.scopeDist + 120));
+  // As far as the scout alert looks (the spyglass's reach the way the train runs), and the spyglass's view.
+  const backing = state.train.v < -0.3;
+  const items = trackside(state, run, backing ? SCOPE_MAX + 60 : 120, Math.max(200, state.rider.scopeDist + 120, backing ? 0 : SCOPE_MAX + 60));
   for (const it of items) if (it.kind === 'signal' && aspectOverride[it.id]) it.aspect = aspectOverride[it.id];
   return items;
 }

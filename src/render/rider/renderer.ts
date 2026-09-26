@@ -11,13 +11,16 @@
 //     facing direction, or panned ahead to the spyglass point (the loco's front + scopeDist). On
 //     the lookout (the cab roof or the tender top, looking ahead) it leads far enough, zooming out a
 //     little if it must, to reach LOOKOUT_REACH past the loco's front.
-//  4. trackside() for everything around the train, then the layers back to front: sky, far mesas,
-//     ground and mid hills, fords' far course and riverbed, the track, structures, other trains,
-//     the train (the Rider's car cut away), smoke, boarded bandits and the Rider, horsemen and dust,
-//     the fords' water over all of those, effects, tunnel rock and bridges, lights, wind, and the HUD.
+//  4. trackside() for everything around the train, as far as the spyglass reaches the way the train
+//     runs (for the scout alert), then the layers back to front: sky, far mesas, ground and mid
+//     hills, fords' far course and riverbed, the track, structures, other trains, the train (the
+//     Rider's car cut away), smoke, boarded bandits and the Rider, horsemen and dust, the fords'
+//     water over all of those, effects, tunnel rock and bridges, lights, wind, and the HUD with the
+//     scout alert's "!" (round 3, ./scout.ts).
 
+import { scopeMaxFor } from '../../sim/game';
 import { framePath, frameX, frontHead, mainPos, netIndex } from '../../sim/network';
-import { BANDIT_TELEGRAPH, CAR_SPECS, FORD_WATER_Y, HORSE_SHY_SECONDS, HORSE_SHY_SECONDS_VETERAN, HORSEMAN_TELEGRAPH, TICK_HZ } from '../../sim/rules';
+import { BANDIT_TELEGRAPH, CAR_SPECS, FORD_WATER_Y, HORSE_SHY_SECONDS, HORSE_SHY_SECONDS_VETERAN, HORSEMAN_TELEGRAPH, SCOPE_MIN, TICK_HZ } from '../../sim/rules';
 import type { GameState, RiderState, RunDef, SimEvent, SurfaceKind, TracksideItem } from '../../sim/types';
 import { trackside } from '../../sim/views';
 import { HiDpiCanvas } from '../canvas';
@@ -27,12 +30,13 @@ import { trainLook, type CarLook } from './cars';
 import { Effects, L_BEHIND, L_FRONT, L_LANE, P_BLOOD, P_CHIP, P_DUST, P_EMBER, P_POWDER, P_SPARK, P_SPLINTER, P_SPRAY, P_STEAM, P_SMOKE, P_WATER } from './effects';
 import { BOSS_HORSE, defaultPose, dollar, drawHorse, FigurePainter, HORSES, rearTransform, type Muzzle, type Pose } from './figures';
 import { bowWaves, FordPainter, locoFaceX, wash, type Wave } from './ford';
-import { Hud } from './hud';
+import { glassHalfWidth, Hud, type ScoutBadge } from './hud';
 import { LitCache } from './materials';
 import { advancePhase, TickInterp } from './motion';
 import { hash01 } from './parallax';
 import { FLOOR_Y, LANE_Y, Scenery } from './scenery';
 import { clamp01, inTunnel, setScreen, setWorld, smoothstep, TAU, TUNNEL_CEILING, type Scene } from './scene';
+import { badgeSide, runDir, scoutThings, ScoutWatch, type ScoutThing } from './scout';
 import { skyAt } from './sky';
 import { clearSprites, glowSprite } from './sprites';
 import { beam, TracksidePainter, type AiDraw } from './trackside';
@@ -52,7 +56,10 @@ export interface RiderFrame {
   prompt: string | null;
   /** The game is paused or counting down: freeze animation clocks that follow the sim. */
   frozen: boolean;
-  /** Optional: this tick's trackside() scan, if the caller already made one (else the renderer does). */
+  /**
+   * Optional: this tick's trackside() scan, if the caller already made one (else the renderer does).
+   * The scout alert looks only as far as it reaches: give it the spyglass's reach the way the train runs.
+   */
   items?: TracksideItem[];
   /** Optional (dev): label bandits and horsemen with their goal and mode. */
   debug?: boolean;
@@ -69,6 +76,13 @@ const LEAD_FRAC = 0.24;
 const LOOKOUT_HOLD = 0.4;
 /** A figure thrown by a lurch staggers for at most this long (s) after the event. */
 const THROWN_SECONDS = 1.4;
+/** The scan reaches this far (m) past the spyglass's reach, for the glass's width and a herd's. */
+const SCOUT_SCAN_PAD = 40;
+/** Of the spyglass's eased raise (0..1): its view has settled above GLASS_UP, and the normal view is on screen below VIEW_OPEN. */
+const GLASS_UP = 0.95;
+const VIEW_OPEN = 0.05;
+/** The scout alert's "!" shows only while the spyglass's vignette is at most this far closed. */
+const BADGE_SCOPE_MAX = 0.25;
 
 interface FigAnim {
   ix: TickInterp;
@@ -201,6 +215,15 @@ export class RiderRenderer {
   /** Burning trestles' stretches in view, like fords (x0, x1 pairs at render time). */
   private readonly fires: number[] = [];
   private readonly waves: Wave[] = [];
+  /** The scout alert (round 3): what's worth a look and what the Rider has seen, and its "!". */
+  private readonly scout = new ScoutWatch();
+  private readonly scoutList: ScoutThing[] = [];
+  private scoutDir: 1 | -1 = 1;
+  private readonly badge: ScoutBadge = { side: 1, alpha: 0, pop: Infinity };
+  private badgePopT = -Infinity;
+  /** Something new came up while the badge couldn't be seen: pop it when it can. */
+  private badgePopDue = false;
+  private badgeShown: -1 | 0 | 1 = 0;
   private readonly s: Scene;
   /** Draw time of the last frame (ms), for the dev harness. */
   lastDrawMs = 0;
@@ -347,9 +370,12 @@ export class RiderRenderer {
     s.left = worldX(this.cam, 0) - 1;
     s.right = worldX(this.cam, W) + 1;
 
-    // 4. Trackside.
-    const ahead = Math.max(60, s.right - L + 40, scoped ? r.scopeDist + half + 40 : 0);
-    const behind = Math.max(BEHIND, -s.left + 40);
+    // 4. Trackside: the view, the spyglass's view, and the scout alert's stretch the way the train
+    //    runs, out to the spyglass's reach.
+    this.scoutDir = runDir(v, this.scoutDir);
+    const reach = scopeMaxFor(st, f.run);
+    const ahead = Math.max(60, s.right - L + 40, scoped ? r.scopeDist + half + 40 : 0, this.scoutDir === 1 ? reach + SCOUT_SCAN_PAD : 0);
+    const behind = Math.max(BEHIND, -s.left + 40, this.scoutDir === -1 ? reach + SCOUT_SCAN_PAD : 0);
     const items = f.items ?? this.scan(st, f.run, behind, ahead);
     this.tunnels.length = 0;
     this.gaps.length = 0;
@@ -443,7 +469,8 @@ export class RiderRenderer {
     }
     const head = r.mode === 'active' && this.scope < 0.5 ? { x: screenX(this.cam, rx), y: screenY(this.cam, ry + (r.crouch ? 1.4 : 2.2)) } : null;
     const wait = r.mode !== 'active' && r.respawnTicks <= 0 ? this.respawnWait(st) : null;
-    if (on('hud')) this.hud.draw(s, { state: st, prompt: f.prompt, riderHead: head, scope: this.scope, viewX0: s.left, viewX1: s.right, offCause: this.offCause, respawnWait: wait });
+    const scout = this.scoutLook(st, items, reach, dt, realDt);
+    if (on('hud')) this.hud.draw(s, { state: st, prompt: f.prompt, riderHead: head, scope: this.scope, viewX0: s.left, viewX1: s.right, offCause: this.offCause, respawnWait: wait, scout });
     this.lastDrawMs = performance.now() - t0;
   }
 
@@ -458,6 +485,45 @@ export class RiderRenderer {
     }
   }
 
+  /**
+   * The scout alert (./scout.ts) for this frame: what's worth a look, what the Rider has seen of it
+   * (in plain view while the view is on screen, or in the glass once the spyglass has settled), and
+   * the "!" to draw, if any. It shows only to a Rider on the train who isn't at the spyglass.
+   */
+  private scoutLook(st: GameState, items: readonly TracksideItem[], reach: number, dt: number, realDt: number): ScoutBadge | null {
+    const cam = this.cam;
+    const r = st.rider;
+    this.scout.forGame(`${st.runId}:${st.seed}`, st.tick);
+    scoutThings(items, st.horsemen, this.scoutDir, this.s.shift, this.scoutList);
+    // The glass is centred on the view; at its shortest reach it shows from `near` past the front.
+    const mid = worldX(cam, cam.w / 2);
+    const half = glassHalfWidth(cam.w, cam.h, cam.zoom);
+    const side = this.scout.update(this.scoutList, {
+      dir: this.scoutDir,
+      length: st.train.length,
+      near: Math.max(0, SCOPE_MIN - glassHalfWidth(cam.w, cam.h)),
+      far: reach,
+      view: this.scope < VIEW_OPEN ? { x0: worldX(cam, 0), x1: worldX(cam, cam.w) } : null,
+      glass: r.mode === 'active' && r.scoped && this.scope > GLASS_UP ? { x0: mid - half, x1: mid + half } : null,
+      dt,
+    });
+    // Something new pops the "!" (when it can be seen); coming back after the spyglass, it only fades in.
+    if (this.scout.fresh) this.badgePopDue = true;
+    if (side === 0) this.badgePopDue = false;
+    const shown = this.scope < BADGE_SCOPE_MAX ? badgeSide(side, r) : 0;
+    const b = this.badge;
+    if (shown !== 0) {
+      if (this.badgePopDue || shown !== b.side) this.badgePopT = this.s.now;
+      this.badgePopDue = false;
+      b.side = shown;
+    }
+    b.alpha = approach(b.alpha, shown !== 0 ? 1 : 0, realDt, shown !== 0 ? 0.06 : 0.1);
+    if (b.alpha < 0.01 && shown === 0) b.alpha = 0;
+    b.pop = this.s.now - this.badgePopT;
+    this.badgeShown = shown;
+    return b.alpha > 0 ? b : null;
+  }
+
   /** A pointer position (CSS px relative to the canvas) in train-frame metres, for aiming. */
   toTrainFrame(px: number, py: number): { x: number; y: number } {
     return { x: worldX(this.cam, px), y: worldY(this.cam, py) };
@@ -466,6 +532,14 @@ export class RiderRenderer {
   /** The camera of the last frame drawn (dev tools, audio panning). */
   get camera(): Readonly<Camera> {
     return this.cam;
+  }
+
+  /**
+   * The scout alert's "!" on screen in the last frame drawn (round 3): 1 at the right edge (something
+   * worth a look ahead of the loco), −1 at the left (behind the rear, backing), 0 none (for the hint).
+   */
+  get scoutBadge(): -1 | 0 | 1 {
+    return this.badgeShown;
   }
 
   /** Live particle count (dev). */
