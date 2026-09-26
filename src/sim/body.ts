@@ -89,6 +89,11 @@ export function bodyHeight(b: Body): number {
 /** Surfaces the wind blows across (spec §6.3: not inside, not in the cab). */
 const WINDY: ReadonlySet<SurfaceKind> = new Set<SurfaceKind>(['roof', 'cupola', 'tenderTop', 'cabRoof', 'platform']);
 
+/** Is this a surface out in the wind: a roof, the cupola, the tender top, the cab roof or a platform? */
+export function windySurface(s: SurfaceKind | null): boolean {
+  return s !== null && WINDY.has(s);
+}
+
 function approach(v: number, target: number, step: number): number {
   return v < target ? Math.min(target, v + step) : Math.max(target, v - step);
 }
@@ -134,7 +139,7 @@ export function stepBody(geo: TrainGeometry, b: Body, inp: BodyInput, walk: numb
   const inside = interiorAt(geo, b.x, b.y) !== null;
   if (b.onGround) {
     let top = b.crouch ? crouchWalk : walk;
-    if (inp.moveX !== 0 && wind.dir !== 0 && !inside && b.surface !== null && WINDY.has(b.surface)) {
+    if (inp.moveX !== 0 && wind.dir !== 0 && !inside && windySurface(b.surface)) {
       top *= inp.moveX === wind.dir ? 1 + WIND_WALK_BACK * wind.w : 1 - WIND_WALK_FWD * wind.w;
     }
     b.vx = approach(b.vx, inp.moveX * top, RIDER_ACCEL * DT);

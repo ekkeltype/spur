@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { hurtRider } from '../src/sim/fight';
 import { newGame } from '../src/sim/game';
+import { trainGeometry } from '../src/sim/geometry';
 import { framePath, framePoint, netIndex } from '../src/sim/network';
 import { initialLoot, initialRider, stepRider, type FightCtx } from '../src/sim/rider';
-import { RESPAWN_DOWN_SECONDS, RESPAWN_OFF_CABOOSE_SECONDS, RESPAWN_OFF_SECONDS, SCOPE_MAX, TICK_HZ } from '../src/sim/rules';
+import { RESPAWN_DOWN_SECONDS, RESPAWN_OFF_CABOOSE_SECONDS, RESPAWN_OFF_SECONDS, SCOPE_MAX, SCOPE_MIN, TICK_HZ } from '../src/sim/rules';
 import {
   NO_INPUT,
   type BanditState,
@@ -273,14 +274,27 @@ describe('ladders, hatches and doorways (spec §6.2, §6.3)', () => {
   });
 });
 
+/** The express's rear end ladder (at x 13.65, from its platform at 1.2 up to its roof at 4.2). */
+function expressLadder(w: World): number {
+  return trainGeometry(w.state.train.cars).ladders.findIndex((l) => l.kind === 'end' && l.car === 2 && l.x < 20);
+}
+
+/** Hangs the Rider on a ladder with the feet at y. */
+function onLadder(w: World, ladder: number, y: number): void {
+  const l = trainGeometry(w.state.train.cars).ladders[ladder];
+  Object.assign(w.state.rider, { x: l.x, y, vx: 0, vy: 0, onGround: false, surface: null, ladder, crouch: false });
+}
+
 describe('tunnels and low bridges (spec §4.3)', () => {
   const tunnel = (x0: number): FrameHazard => ({ kind: 'tunnel', id: 't1', x0, x1: x0 + 300 });
 
-  it('a tunnel portal knocks you off a roof or the cab roof, standing or crouching', () => {
+  it('a tunnel portal knocks you off a roof, the cab roof or the tender top, standing or crouching', () => {
     for (const [x, y, surface, crouch] of [
       [20, 4.2, 'roof', false],
       [20, 4.2, 'roof', true],
       [39, 4, 'cabRoof', false],
+      [32, 2.8, 'tenderTop', false],
+      [32, 2.8, 'tenderTop', true],
     ] as const) {
       const w = world();
       place(w, x, y, surface);
@@ -289,16 +303,16 @@ describe('tunnels and low bridges (spec §4.3)', () => {
       expect(w.state.rider.mode).toBe('active');
       w.ctx.hazards = [tunnel(x - 0.1)];
       const ev = run(w, 1, { down: crouch });
-      expect(w.state.rider.mode).toBe('off');
+      expect(w.state.rider.mode, `${surface}`).toBe('off');
       expect(ev).toContainEqual({ type: 'riderOff', cause: 'tunnel' });
       expect(ev).toContainEqual({ type: 'riderHurt', cause: 'tunnel', hearts: 4 });
     }
   });
 
-  it('the tender top, the platforms, the cab floor and the insides are safe in a tunnel', () => {
+  it('the platforms, the tender deck, the cab floor, the insides and a ladder\'s low rungs are safe in a tunnel', () => {
     for (const [x, y, surface] of [
-      [32, 2.8, 'tenderTop'],
       [13.55, 1.2, 'platform'],
+      [36.5, 1.4, 'tenderDeck'],
       [39, 1.4, 'cabFloor'],
       [20, 1.2, 'floor'],
     ] as const) {
@@ -306,8 +320,17 @@ describe('tunnels and low bridges (spec §4.3)', () => {
       place(w, x, y, surface);
       w.ctx.hazards = [tunnel(-100)];
       run(w, 30);
-      expect(w.state.rider.mode).toBe('active');
+      expect(w.state.rider.mode, `${surface}`).toBe('active');
+      expect(w.state.rider.surface).toBe(surface);
     }
+    const w = world();
+    onLadder(w, expressLadder(w), 2.0);
+    w.ctx.hazards = [tunnel(-100)];
+    run(w, 30);
+    expect(w.state.rider.mode).toBe('active');
+    // Higher up the same ladder, the portal takes you.
+    onLadder(w, expressLadder(w), 2.6);
+    expect(run(w, 1)).toContainEqual({ type: 'riderOff', cause: 'tunnel' });
   });
 
   /** Sweeps a low bridge's beam from ahead of the Rider to behind, at the train's speed. */
@@ -339,19 +362,223 @@ describe('tunnels and low bridges (spec §4.3)', () => {
     expect(r.x).toBeGreaterThan(20.3);
   });
 
-  it('crouching passes under a low bridge, and so does anyone on the tender top or in a car', () => {
+  it('knocks down a Rider standing on the tender top or the cab roof just the same', () => {
+    for (const [x, y, surface] of [
+      [32, 2.8, 'tenderTop'],
+      [39, 4, 'cabRoof'],
+    ] as const) {
+      const w = world();
+      w.state.train.v = 12;
+      place(w, x, y, surface);
+      const ev = sweep(w, x + 2);
+      expect(ev.filter((e) => e.type === 'riderHurt'), `${surface}`).toEqual([{ type: 'riderHurt', cause: 'bridge', hearts: 4 }]);
+      expect([w.state.rider.mode, w.state.rider.surface]).toEqual(['active', surface]);
+    }
+  });
+
+  it('crouching passes under a low bridge, on a roof or the tender top, and so does anyone on a platform or in a car', () => {
     for (const [x, y, surface, crouch] of [
       [20, 4.2, 'roof', true],
-      [32, 2.8, 'tenderTop', false],
+      [32, 2.8, 'tenderTop', true],
+      [39, 4, 'cabRoof', true],
       [20, 1.2, 'floor', false],
+      [13.55, 1.2, 'platform', false],
+      [36.5, 1.4, 'tenderDeck', false],
     ] as const) {
       const w = world();
       w.state.train.v = 12;
       place(w, x, y, surface);
       const ev = sweep(w, x + 2, { down: crouch });
-      expect(ev.some((e) => e.type === 'riderHurt')).toBe(false);
+      expect(ev.some((e) => e.type === 'riderHurt'), `${surface}`).toBe(false);
       expect(w.state.rider.hearts).toBe(5);
     }
+  });
+});
+
+describe('fords (spec §4.3, §6.3)', () => {
+  const ford = (x0: number, x1 = x0 + 60): FrameHazard => ({ kind: 'ford', id: 'f1', x0, x1 });
+
+  it('wash the Rider off a platform, the tender deck, the cab floor, the inside of a car or a ladder\'s low rungs', () => {
+    for (const [x, y, surface] of [
+      [13.55, 1.2, 'platform'],
+      [36.5, 1.4, 'tenderDeck'],
+      [39, 1.4, 'cabFloor'],
+      [20, 1.2, 'floor'],
+    ] as const) {
+      const w = world();
+      place(w, x, y, surface);
+      w.ctx.hazards = [ford(x + 0.5)];
+      run(w, 5);
+      expect(w.state.rider.mode).toBe('active');
+      w.ctx.hazards = [ford(x - 0.1)];
+      const ev = run(w, 1);
+      expect(w.state.rider.mode, `${surface}`).toBe('off');
+      expect(ev).toContainEqual({ type: 'riderOff', cause: 'water' });
+      expect(ev).toContainEqual({ type: 'riderHurt', cause: 'water', hearts: 4 });
+      expect(w.state.stats.timesOff).toBe(1);
+    }
+    const w = world();
+    onLadder(w, expressLadder(w), 1.8);
+    w.ctx.hazards = [ford(0)];
+    expect(run(w, 1)).toContainEqual({ type: 'riderOff', cause: 'water' });
+  });
+
+  it('leave the roofs, the cupola, the cab roof, the tender top and a ladder\'s upper rungs dry', () => {
+    for (const [consist, x, y, surface] of [
+      [['express', 'boxcar'], 20, 4.2, 'roof'],
+      [['express', 'boxcar'], 39, 4, 'cabRoof'],
+      [['express', 'boxcar'], 32, 2.8, 'tenderTop'],
+      [['caboose'], 5, 4.7, 'cupola'],
+    ] as const) {
+      const w = world([...consist]);
+      place(w, x, y, surface);
+      w.ctx.hazards = [ford(-100, 100)];
+      run(w, 30);
+      expect(w.state.rider.mode, `${surface}`).toBe('active');
+      expect(w.state.rider.surface).toBe(surface);
+    }
+    const w = world();
+    onLadder(w, expressLadder(w), 2.2);
+    w.ctx.hazards = [ford(0)];
+    run(w, 30);
+    expect(w.state.rider.mode).toBe('active');
+  });
+
+  it('keep a Rider who is off the train waiting until the rear platform is out of the water', () => {
+    const w = world();
+    const r = w.state.rider;
+    place(w, 0.55, 1.3, 'platform');
+    w.ctx.hazards = [ford(-40, 5)];
+    expect(run(w, 1)).toContainEqual({ type: 'riderOff', cause: 'water' });
+    // Long past the usual 6 s, still waiting.
+    const wait = run(w, (RESPAWN_OFF_SECONDS + 3) * TICK_HZ);
+    expect(wait.some((e) => e.type === 'riderBack')).toBe(false);
+    expect([r.mode, r.respawnTicks]).toEqual(['off', 0]);
+    // The ford has moved on past the rear platform: back at once.
+    w.ctx.hazards = [ford(-80, 0.5)];
+    const back = run(w, 1);
+    expect(back).toContainEqual({ type: 'riderBack' });
+    expect([r.mode, r.x, r.y, r.surface, r.hearts]).toEqual(['active', 0.55, 1.3, 'platform', 4]);
+    run(w, 30);
+    expect(r.mode).toBe('active');
+  });
+
+  it('keep a Rider who is down waiting too, and a bare train\'s Rider out of a tunnel over the tender top', () => {
+    const w = world();
+    w.state.rider.hearts = 1;
+    place(w, 13.55, 1.2, 'platform');
+    w.ctx.hazards = [ford(0, 20)];
+    expect(run(w, 1)).toContainEqual({ type: 'riderDown' });
+    run(w, (RESPAWN_DOWN_SECONDS + 2) * TICK_HZ);
+    expect(w.state.rider.mode).toBe('down');
+    w.ctx.hazards = [];
+    expect(run(w, 1)).toContainEqual({ type: 'riderBack' });
+    expect(w.state.rider.hearts).toBe(5);
+
+    // Nothing behind the tender: the Rider comes back on the tender top (at x 1), so not under a
+    // tunnel.
+    const bare = world([]);
+    const tunnel: FrameHazard = { kind: 'tunnel', id: 't1', x0: -50, x1: 6 };
+    bare.ctx.hazards = [tunnel];
+    run(bare, 1);
+    expect(bare.state.rider.mode).toBe('off');
+    run(bare, (RESPAWN_OFF_SECONDS + 2) * TICK_HZ);
+    expect(bare.state.rider.mode).toBe('off');
+    bare.ctx.hazards = [];
+    expect(run(bare, 1)).toContainEqual({ type: 'riderBack' });
+    expect([bare.state.rider.y, bare.state.rider.surface]).toEqual([2.8, 'tenderTop']);
+  });
+});
+
+describe('the lurch (spec §5.2)', () => {
+  it('throws a Rider standing on a roof toward the loco, staggered for 0.6 s but unhurt', () => {
+    const w = world();
+    const r = w.state.rider;
+    w.state.train.v = 15;
+    place(w, 20, 4.2, 'roof');
+    run(w, 5);
+    w.state.train.lurchTick = w.state.tick;
+    const ev = run(w, 1, { moveX: -1, firing: true, firePressed: true, aim: 0.5 });
+    expect(ev).toContainEqual({ type: 'thrown', who: 'rider' });
+    expect(r.onGround).toBe(false);
+    expect(r.vx).toBeCloseTo(4, 1);
+    expect(r.y).toBeGreaterThan(4.2);
+    expect(shots(ev).length).toBe(0);
+    // Staggered: no control and no shooting, and the hop carries the Rider a metre on.
+    const staggered = run(w, 34, { moveX: -1, firing: true, aim: 0.5 });
+    expect(shots(staggered).length).toBe(0);
+    expect(r.stunTicks).toBeGreaterThan(0);
+    expect([r.onGround, r.surface]).toEqual([true, 'roof']);
+    expect(r.x).toBeGreaterThan(20.8);
+    expect(r.x).toBeLessThan(21.6);
+    expect([r.hearts, r.mode]).toEqual([5, 'active']);
+    expect(staggered.some((e) => e.type === 'riderHurt')).toBe(false);
+    // Then the Rider's own again.
+    const after = run(w, 10, { moveX: -1, firing: true, aim: 0.5 });
+    expect(r.stunTicks).toBe(0);
+    expect(r.vx).toBeLessThan(0);
+    expect(shots(after).length).toBe(1);
+  });
+
+  it('throws toward the rear when reversing, and from a platform too', () => {
+    const w = world();
+    w.state.train.v = -12;
+    place(w, 13.55, 1.2, 'platform');
+    run(w, 5);
+    w.state.train.lurchTick = w.state.tick;
+    expect(run(w, 1)).toContainEqual({ type: 'thrown', who: 'rider' });
+    expect(w.state.rider.vx).toBeCloseTo(-4, 1);
+  });
+
+  it('leaves a crouching Rider, one on a ladder, one inside a car or the cab, and one on the tender deck standing', () => {
+    const cases: [string, (w: World) => void, Partial<RiderInput>][] = [
+      ['crouching on a roof', (w) => place(w, 20, 4.2, 'roof'), { down: true }],
+      ['crouching on the tender top', (w) => place(w, 32, 2.8, 'tenderTop'), { down: true }],
+      ['on a ladder', (w) => onLadder(w, expressLadder(w), 2.5), {}],
+      ['inside the express', (w) => place(w, 20, 1.2, 'floor'), {}],
+      ['in the cab', (w) => place(w, 39, 1.4, 'cabFloor'), {}],
+      ['on the tender deck', (w) => place(w, 36.5, 1.4, 'tenderDeck'), {}],
+    ];
+    for (const [what, put, held] of cases) {
+      const w = world();
+      w.state.train.v = 15;
+      put(w);
+      run(w, 5, held);
+      const before = { x: w.state.rider.x, y: w.state.rider.y };
+      w.state.train.lurchTick = w.state.tick;
+      const ev = run(w, 1, held);
+      expect(ev.some((e) => e.type === 'thrown'), what).toBe(false);
+      expect(w.state.rider.stunTicks, what).toBe(0);
+      expect(w.state.rider.x, what).toBeCloseTo(before.x, 6);
+      expect(w.state.rider.y, what).toBeCloseTo(before.y, 6);
+    }
+  });
+
+  it('shoves a Rider in mid-air forward, without the hop or the stagger', () => {
+    const w = world();
+    const r = w.state.rider;
+    w.state.train.v = 15;
+    place(w, 20, 4.2, 'roof');
+    run(w, 3, { jump: true }, { jumpPressed: true });
+    expect(r.onGround).toBe(false);
+    const { vx, vy } = r;
+    w.state.train.lurchTick = w.state.tick;
+    expect(run(w, 1)).toContainEqual({ type: 'thrown', who: 'rider' });
+    expect(r.vx - vx).toBeCloseTo(4, 1);
+    expect(r.vy).toBeCloseTo(vy - 22 / TICK_HZ, 9);
+    expect(r.stunTicks).toBe(0);
+  });
+
+  it('drops the spyglass, and only on the tick of the lurch', () => {
+    const w = world();
+    w.state.train.v = 15;
+    place(w, 20, 4.2, 'roof');
+    w.state.train.lurchTick = w.state.tick - 1;
+    run(w, 30, { scope: true });
+    expect(w.state.rider.scoped).toBe(true);
+    w.state.train.lurchTick = w.state.tick;
+    expect(run(w, 1, { scope: true })).toContainEqual({ type: 'thrown', who: 'rider' });
+    expect(w.state.rider.scoped).toBe(false);
   });
 });
 
@@ -520,8 +747,10 @@ describe('the spyglass and flags (spec §6.5)', () => {
     run(w, 1, { scope: true, scopeT: 0 });
     expect(w.state.rider.scopeDist).toBeLessThan(SCOPE_MAX - 1);
     expect(w.state.rider.scopeDist).toBeGreaterThan(SCOPE_MAX - 100);
+    // Down to 20 m: close enough to check a signal the train is standing at.
     run(w, 3 * TICK_HZ, { scope: true, scopeT: 0 });
-    expect(w.state.rider.scopeDist).toBeCloseTo(60, 0);
+    expect(w.state.rider.scopeDist).toBeCloseTo(SCOPE_MIN, 0);
+    expect(SCOPE_MIN).toBe(20);
     // At night the glass reaches 300 m.
     w.ctx.scopeMax = 300;
     run(w, 3 * TICK_HZ, { scope: true, scopeT: 1 });
@@ -532,7 +761,7 @@ describe('the spyglass and flags (spec §6.5)', () => {
     expect(w.state.rider.x).toBeGreaterThan(20.5);
   });
 
-  it('places a flag at the middle of the view on a click, instead of shooting; at most 3, each for 90 s', () => {
+  it('places a flag at the middle of the view on a click, instead of shooting; one at a time, for 90 s', () => {
     const w = world();
     place(w, 20, 4.2, 'roof');
     run(w, 3 * TICK_HZ, { scope: true, scopeT: 0.5 });
@@ -545,11 +774,17 @@ describe('the spyglass and flags (spec §6.5)', () => {
     expect(flag.point.edge).toBe('e1');
     expect(flag.point.off).toBeCloseTo(200 + w.state.rider.scopeDist, 1);
     expect(flag.tick).toBe(w.state.tick - 1);
-    for (let i = 0; i < 3; i++) run(w, 1, { scope: true, scopeT: 0.2 + 0.2 * i }, { flagPressed: true });
-    expect(w.state.flags.length).toBe(3);
-    expect(w.state.flags.map((f) => f.id)).not.toContain(flag.id);
+    // A new flag replaces it: one event, and the old flag is gone.
+    run(w, TICK_HZ, { scope: true, scopeT: 0.8 });
+    const again = run(w, 1, { scope: true, scopeT: 0.8 }, { flagPressed: true });
+    expect(again.filter((e) => e.type === 'flagPlaced').length).toBe(1);
+    expect(w.state.flags.length).toBe(1);
+    const second = w.state.flags[0];
+    expect(second.id).not.toBe(flag.id);
+    expect(second.point.off).toBeGreaterThan(flag.point.off + 50);
+    expect(again).toContainEqual({ type: 'flagPlaced', flag: second });
     run(w, 90 * TICK_HZ - 5);
-    expect(w.state.flags.length).toBe(3);
+    expect(w.state.flags).toEqual([second]);
     run(w, 10);
     expect(w.state.flags.length).toBe(0);
   });

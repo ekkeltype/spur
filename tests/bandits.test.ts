@@ -5,7 +5,17 @@ import { newGame } from '../src/sim/game';
 import { trainGeometry } from '../src/sim/geometry';
 import { framePath, framePoint, netIndex } from '../src/sim/network';
 import { initialLoot, initialRider, stepRider, type FightCtx } from '../src/sim/rider';
-import { CAR_SPECS, HORSE_MAX, HORSE_SPRINT, SCOPE_MAX, TICK_HZ } from '../src/sim/rules';
+import {
+  CAR_SPECS,
+  FORD_HORSE_SPEED,
+  HORSE_MAX,
+  HORSE_SHY_SECONDS,
+  HORSE_SHY_SECONDS_VETERAN,
+  HORSE_SPRINT,
+  LURCH_STAGGER_SECONDS,
+  SCOPE_MAX,
+  TICK_HZ,
+} from '../src/sim/rules';
 import {
   NO_INPUT,
   type BanditState,
@@ -299,6 +309,40 @@ describe('horsemen (spec §7.2)', () => {
     expect(tick(w, 5 * TICK_HZ).some((e) => e.type === 'banditBoarded')).toBe(true);
   });
 
+  it('wade through a ford at a walk, fall behind the train, and ride back up beyond it', () => {
+    const w = world();
+    riderAway(w);
+    w.state.train.v = 12;
+    // A full train, so he only paces.
+    w.state.bandits = [1, 2, 3, 4].map((i) => bandit({ id: 100 + i, x: 2 + 2 * i, y: 4, surface: 'roof', cooldownTicks: 1e9 }));
+    w.state.horsemen = [horseman({ x: 13.55, targetX: 13.55, worldV: 12, goal: 'safe' })];
+    const h = w.state.horsemen[0];
+    // A 24 m ford sweeps back along the train at its speed.
+    let fx = 40;
+    let fastest = 0;
+    let wet = 0;
+    let furthest = h.x;
+    for (let i = 0; i < 12 * TICK_HZ; i++) {
+      w.ctx.hazards = [{ kind: 'ford', id: 'f', x0: fx, x1: fx + 24 }];
+      const inside = h.x >= fx && h.x <= fx + 24;
+      tick(w, 1);
+      if (inside) {
+        wet++;
+        fastest = Math.max(fastest, Math.abs(h.worldV));
+      }
+      furthest = Math.min(furthest, h.x);
+      fx -= 12 / TICK_HZ;
+    }
+    // Wading at 5 m/s across 24 m of river takes about 5 s, while the train pulls 35 m ahead.
+    expect(wet / TICK_HZ).toBeGreaterThan(4);
+    expect(fastest).toBeLessThanOrEqual(FORD_HORSE_SPEED + 1e-9);
+    expect(furthest).toBeLessThan(13.55 - 30);
+    expect(h.mode).toBe('approach');
+    tick(w, 20 * TICK_HZ);
+    expect(h.mode).toBe('pace');
+    expect(Math.abs(h.x - 13.55)).toBeLessThan(1.2);
+  });
+
   it('shoot at an exposed Rider within 30 m after a telegraph, never at one inside a car', () => {
     const w = world();
     w.state.train.v = 10;
@@ -455,23 +499,35 @@ describe('boarded bandits (spec §7.3)', () => {
   it('are swept off by tunnels, and knocked down by low bridges just like the Rider', () => {
     const w = world();
     riderAway(w);
-    w.state.bandits = [bandit({ id: 1, x: 20, y: 4.2, surface: 'roof' }), bandit({ id: 2, x: 32, y: 2.8, surface: 'tenderTop' })];
+    w.state.bandits = [
+      bandit({ id: 1, x: 20, y: 4.2, surface: 'roof' }),
+      bandit({ id: 2, x: 32, y: 2.8, surface: 'tenderTop' }),
+      bandit({ id: 3, x: 27.45, y: 1.2, surface: 'platform' }),
+    ];
     w.ctx.hazards = [{ kind: 'tunnel', id: 't', x0: 10, x1: 300 }];
     const ev = tick(w, 1);
     expect(ev).toContainEqual({ type: 'banditKnockedOff', id: 1, cause: 'tunnel' });
+    expect(ev).toContainEqual({ type: 'banditKnockedOff', id: 2, cause: 'tunnel' });
     expect(w.state.bandits.map((b) => [b.id, alive(b)])).toEqual([
       [1, false],
-      [2, true],
+      [2, false],
+      [3, true],
     ]);
-    expect(w.state.stats.banditsDowned).toBe(1);
+    expect(w.state.stats.banditsDowned).toBe(2);
 
+    // Standing on a roof or the tender top, a beam costs a hit point: the last one knocks you off.
     const low = world();
     riderAway(low);
     low.state.train.v = 12;
-    low.state.bandits = [bandit({ id: 3, x: 20, y: 4.2, surface: 'roof', hp: 2, tier: 2 }), bandit({ id: 4, x: 16, y: 4.2, surface: 'roof', hp: 1 })];
-    let bx = 22;
+    low.state.bandits = [
+      bandit({ id: 3, x: 20, y: 4.2, surface: 'roof', hp: 2, tier: 2 }),
+      bandit({ id: 4, x: 16, y: 4.2, surface: 'roof', hp: 1 }),
+      bandit({ id: 5, x: 32, y: 2.8, surface: 'tenderTop', hp: 1 }),
+      bandit({ id: 6, x: 13.55, y: 1.2, surface: 'platform', hp: 1 }),
+    ];
+    let bx = 34;
     const ev2: SimEvent[] = [];
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 2 * TICK_HZ; i++) {
       low.ctx.hazards = [{ kind: 'lowBridge', id: 'b', x0: bx, x1: bx }];
       ev2.push(...tick(low, 1));
       bx -= 12 / TICK_HZ;
@@ -480,6 +536,197 @@ describe('boarded bandits (spec §7.3)', () => {
     expect(b3.hp).toBe(1);
     expect(alive(b3)).toBe(true);
     expect(ev2).toContainEqual({ type: 'banditKnockedOff', id: 4, cause: 'bridge' });
+    expect(ev2).toContainEqual({ type: 'banditKnockedOff', id: 5, cause: 'bridge' });
+    expect(ev2.some((e) => e.type === 'banditKnockedOff' && e.id === 6)).toBe(false);
+  });
+
+  it('are washed off in a ford below the roofs: a looter drops the loot where he stood', () => {
+    const w = world();
+    riderAway(w);
+    Object.assign(w.state.loot, { status: 'carried', carrier: 1, crack: 1, everCracked: true });
+    w.state.bandits = [
+      bandit({ id: 1, x: 13.55, y: 1.2, surface: 'platform', goal: 'safe', hasLoot: true, mode: 'fleeing' }),
+      bandit({ id: 2, x: 20, y: 4.2, surface: 'roof' }),
+      bandit({ id: 3, x: 32, y: 2.8, surface: 'tenderTop' }),
+      bandit({ id: 4, x: 20.5, y: 1.2, surface: 'floor', goal: 'cab' }),
+    ];
+    w.ctx.hazards = [{ kind: 'ford', id: 'f', x0: 0, x1: 40 }];
+    const ev = tick(w, 1);
+    expect(ev).toContainEqual({ type: 'banditKnockedOff', id: 1, cause: 'water' });
+    expect(ev).toContainEqual({ type: 'banditKnockedOff', id: 4, cause: 'water' });
+    expect(ev).toContainEqual({ type: 'lootDropped', x: 13.55, y: 1.2 });
+    expect(w.state.loot).toMatchObject({ status: 'dropped', carrier: null, x: 13.55, y: 1.2 });
+    expect(w.state.bandits.map((b) => [b.id, alive(b)])).toEqual([
+      [1, false],
+      [2, true],
+      [3, true],
+      [4, false],
+    ]);
+    expect(w.state.stats.banditsDowned).toBe(2);
+  });
+
+  it('washes a bandit out of the cab, which ends the hold-up', () => {
+    const w = world();
+    riderAway(w);
+    w.state.train.v = 10;
+    w.state.bandits = [bandit({ id: 7, x: 39, y: 1.4, surface: 'cabFloor', goal: 'cab' })];
+    tick(w, 1);
+    expect([w.state.train.heldUp, w.state.bandits[0].mode]).toEqual([true, 'holdup']);
+    w.ctx.hazards = [{ kind: 'ford', id: 'f', x0: 30, x1: 90 }];
+    const ev = tick(w, 1);
+    expect(ev).toContainEqual({ type: 'banditKnockedOff', id: 7, cause: 'water' });
+    expect(ev).toContainEqual({ type: 'holdupEnded' });
+    expect(w.state.train.heldUp).toBe(false);
+  });
+});
+
+describe('the lurch (spec §5.2)', () => {
+  /** Four bandits aboard who never shoot, so nobody else can board. */
+  const fullTrain = (): BanditState[] => [1, 2, 3, 4].map((i) => bandit({ id: 100 + i, x: 1 + 2 * i, y: 4, surface: 'roof', crouch: true, stunTicks: 1e9, cooldownTicks: 1e9, hp: 99 }));
+
+  it('makes a boarding horse shy: boarding abandoned, dropping back along the train, then back at it', () => {
+    const w = world();
+    riderAway(w);
+    w.state.train.v = 12;
+    w.state.horsemen = [horseman({ x: 13.55, targetX: 13.55, worldV: 12, goal: 'safe' })];
+    const h = w.state.horsemen[0];
+    tick(w, TICK_HZ);
+    expect(h.mode).toBe('boarding');
+    w.state.train.lurchTick = w.state.tick;
+    const ev = tick(w, 1);
+    expect(ev).toContainEqual({ type: 'horseShy', id: 80 });
+    expect(h.mode).toBe('pace');
+    expect(h.shyTicks).toBe(Math.round(HORSE_SHY_SECONDS * TICK_HZ) - 1);
+    // Shying: no boarding, and reined back toward 8 m/s below the train.
+    const during = tick(w, Math.round(HORSE_SHY_SECONDS * TICK_HZ) - 1);
+    expect(during.some((e) => e.type === 'banditBoarded')).toBe(false);
+    expect(h.shyTicks).toBe(0);
+    expect(h.worldV).toBeLessThan(12 - 7);
+    expect(h.x).toBeLessThan(13.55 - 8);
+    // Then he comes on again, and boards.
+    const after = tick(w, 15 * TICK_HZ);
+    expect(after).toContainEqual(expect.objectContaining({ type: 'banditBoarded', id: 80 }));
+  });
+
+  it('spoils a horseman\'s aim: no shot until his horse settles', () => {
+    const w = world();
+    w.state.train.v = 12;
+    placeRider(w, 20, 4.2, 'roof');
+    w.state.rider.invulnTicks = 1e9;
+    w.state.bandits = fullTrain();
+    w.state.horsemen = [horseman({ x: 24, targetX: 24, worldV: 12, goal: 'hunt', cooldownTicks: 0 })];
+    const h = w.state.horsemen[0];
+    expect(tick(w, 1, { down: true })).toContainEqual({ type: 'aim', by: 'horseman', id: 80 });
+    expect(h.aimTicks).toBeGreaterThan(0);
+    w.state.train.lurchTick = w.state.tick;
+    const ev = tick(w, 1, { down: true });
+    expect(ev).toContainEqual({ type: 'horseShy', id: 80 });
+    expect(h.aimTicks).toBe(0);
+    const during = tick(w, Math.round(HORSE_SHY_SECONDS * TICK_HZ) - 1, { down: true });
+    expect(during.some((e) => (e.type === 'shot' || e.type === 'aim') && e.by === 'horseman')).toBe(false);
+    const after = tick(w, 2 * TICK_HZ, { down: true });
+    expect(after).toContainEqual({ type: 'aim', by: 'horseman', id: 80 });
+    expect(after.some((e) => e.type === 'shot' && e.by === 'horseman')).toBe(true);
+  });
+
+  it('settles veterans and the boss sooner, and leaves waiting ambushers, retreating riders and far-off ones alone', () => {
+    const w = world();
+    riderAway(w);
+    w.state.train.v = 12;
+    w.state.bandits = fullTrain();
+    w.state.horsemen = [
+      horseman({ id: 1, x: 5, targetX: 5, worldV: 12, tier: 3, hp: 2 }),
+      horseman({ id: 2, x: 8, targetX: 8, worldV: 12, tier: 2, hp: 8, boss: true, goal: 'safe' }),
+      horseman({ id: 3, x: 53 + 450, worldV: 0, mode: 'waiting' }),
+      horseman({ id: 4, x: -20, worldV: 6, mode: 'retreat' }),
+      horseman({ id: 5, x: -45, worldV: 12, mode: 'approach' }),
+      horseman({ id: 6, x: 53 + 35, worldV: 12, mode: 'approach' }),
+      horseman({ id: 7, x: 20, worldV: 12, targetX: 20, tier: 1 }),
+    ];
+    w.state.train.lurchTick = w.state.tick;
+    const ev = tick(w, 1);
+    expect(ev.filter((e) => e.type === 'horseShy').map((e) => e.type === 'horseShy' && e.id)).toEqual([1, 2, 6, 7]);
+    const shy = (id: number): number => w.state.horsemen.find((q) => q.id === id)?.shyTicks ?? -1;
+    expect([shy(1), shy(2), shy(6), shy(7)]).toEqual([
+      Math.round(HORSE_SHY_SECONDS_VETERAN * TICK_HZ) - 1,
+      Math.round(HORSE_SHY_SECONDS_VETERAN * TICK_HZ) - 1,
+      Math.round(HORSE_SHY_SECONDS * TICK_HZ) - 1,
+      Math.round(HORSE_SHY_SECONDS * TICK_HZ) - 1,
+    ]);
+    expect([shy(3), shy(4), shy(5)]).toEqual([0, 0, 0]);
+    // Only on the lurch's own tick.
+    expect(tick(w, 1).some((e) => e.type === 'horseShy')).toBe(false);
+  });
+
+  it('keeps the getaway horse from a looter jumping for it until it is back alongside', () => {
+    const setup = (): World => {
+      const w = world(['express', 'boxcar'], { critical: true });
+      riderAway(w);
+      w.state.train.v = 10;
+      Object.assign(w.state.loot, { status: 'carried', carrier: 7, crack: 1, everCracked: true });
+      w.state.bandits = [bandit({ id: 7, x: 13.55, y: 1.2, surface: 'platform', goal: 'safe', hasLoot: true, mode: 'fleeing' })];
+      w.state.horsemen = [horseman({ id: 2, x: 13.55, targetX: 13.55, worldV: 10, goal: 'safe', pickup: true })];
+      return w;
+    };
+    // Without the lurch he's away at once.
+    expect(tick(setup(), 1)).toContainEqual({ type: 'lootStolen' });
+    const w = setup();
+    w.state.train.lurchTick = w.state.tick;
+    const ev = tick(w, 1);
+    expect(ev).toContainEqual({ type: 'horseShy', id: 2 });
+    const during = tick(w, Math.round(HORSE_SHY_SECONDS * TICK_HZ));
+    expect([...ev, ...during].some((e) => e.type === 'lootStolen')).toBe(false);
+    expect(w.state.horsemen[0].x).toBeLessThan(13.55 - 5);
+    // The Rider has a few seconds to shoot him; left alone, he gets away once the horse is back.
+    const after = tick(w, 20 * TICK_HZ);
+    expect(after).toContainEqual({ type: 'lootStolen' });
+    expect(w.state.phase).toBe('lost');
+
+    // A horse still shying when he reaches his platform won't take him, even right alongside.
+    const late = setup();
+    late.state.horsemen[0].shyTicks = 30;
+    expect(tick(late, 29).some((e) => e.type === 'lootStolen')).toBe(false);
+    expect(Math.abs(late.state.horsemen[0].x - 13.55)).toBeLessThan(1.2);
+    expect(tick(late, 2)).toContainEqual({ type: 'lootStolen' });
+  });
+
+  it('throws standing bandits toward the loco and spoils their aim; crouching, laddered and inside ones are braced', () => {
+    const w = world();
+    w.state.train.v = 15;
+    placeRider(w, 16, 4.2, 'roof');
+    w.state.rider.invulnTicks = 1e9;
+    const geo = trainGeometry(w.state.train.cars);
+    const ladder = geo.ladders.findIndex((l) => l.kind === 'end' && l.car === 2 && l.x < 20);
+    w.state.bandits = [
+      bandit({ id: 1, x: 22, y: 4.2, surface: 'roof', cooldownTicks: 0 }),
+      // Taking a long aim, so standing still on the express's front platform.
+      bandit({ id: 2, x: 27.45, y: 1.2, surface: 'platform', aimTicks: 1e9, cooldownTicks: 1e9 }),
+      bandit({ id: 3, x: 20.5, y: 1.2, surface: 'floor', goal: 'safe', cooldownTicks: 1e9 }),
+      bandit({ id: 4, x: geo.ladders[ladder].x, y: 2.5, surface: null, onGround: false, ladder, goal: 'safe', cooldownTicks: 1e9 }),
+      bandit({ id: 5, x: 39, y: 1.4, surface: 'cabFloor', goal: 'cab', cooldownTicks: 1e9 }),
+      bandit({ id: 6, x: 32, y: 2.8, surface: 'tenderTop', crouch: true, stunTicks: 30, cooldownTicks: 1e9 }),
+    ];
+    expect(tick(w, 1, { down: true })).toContainEqual({ type: 'aim', by: 'bandit', id: 1 });
+    w.state.train.lurchTick = w.state.tick;
+    const ev = tick(w, 1, { down: true });
+    const thrown = ev.filter((e) => e.type === 'thrown');
+    expect(thrown).toEqual([
+      { type: 'thrown', who: 'bandit', id: 1 },
+      { type: 'thrown', who: 'bandit', id: 2 },
+    ]);
+    const [b1, b2] = w.state.bandits;
+    for (const b of [b1, b2]) {
+      expect(b.onGround).toBe(false);
+      expect(b.vx).toBeCloseTo(4, 1);
+      expect(b.stunTicks).toBe(Math.round(LURCH_STAGGER_SECONDS * TICK_HZ));
+    }
+    expect(b1.aimTicks).toBe(0);
+    // Staggered: the shot he was taking never comes.
+    const staggered = tick(w, Math.round(LURCH_STAGGER_SECONDS * TICK_HZ) - 1, { down: true });
+    expect(staggered.some((e) => e.type === 'shot')).toBe(false);
+    expect(b1.x).toBeGreaterThan(22.8);
+    expect([b1.onGround, b1.surface]).toEqual([true, 'roof']);
+    expect(w.state.rider.hearts).toBe(5);
   });
 });
 
