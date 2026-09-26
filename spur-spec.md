@@ -226,6 +226,10 @@ slower train is easier to board.
 - `F = TRACTIVE_MAX (60 kN) × throttle × min(1, pressure / FULL_POWER_PSI (160)) × reverser`
 - `resist = ROLL (0.02) + DRAG (0.0007) × v²`, opposing motion. A light train tops out near
   27 m/s (60 mph), and a heavy one near 20 m/s (45 mph), which is slow enough for horsemen to board.
+- The loco's tiers (§12) change both: the power tiers multiply `TRACTIVE_MAX` by 1.15, 1.3 or 1.5,
+  and the speed tiers multiply `DRAG` by 0.9, 0.8 or 0.7 (top speed goes as 1/√ of it: +5, +12,
+  +20%). Each factor is the whole gain over stock; the highest tier owned in a line counts
+  (`tractiveMax()`, `dragCoef()` in `rules.ts`).
 - `grade = GRAVITY × grade × (direction of travel on that edge)`, using the grade under the loco.
 - `brake = brake × BRAKE_MAX (1.1 m/s²)`, opposing motion. The `airBrakes` upgrade multiplies it by 1.35.
 - The train can't reverse through zero by braking. When `|v| < 0.05`, with no net force to overcome
@@ -613,8 +617,14 @@ In local test mode, only the arrows, H, 1–9 and Tab work, since the Rider has 
   | headlamp | 90 |
   | armored car | 220 |
   | caboose | 160 |
+  | power1 (Bored-out cylinders), power2 (Balanced slide valves), power3 (Vauclain compound) | 120, 240, 400 |
+  | speed1 (Babbitt bearings), speed2 (Balanced drivers), speed3 (Tall drivers) | 100, 200, 350 |
 
   Express, passenger and boxcar are always available.
+- **The loco's tiers** come in two lines, power and speed (§5.3), and each tier needs the one below
+  it: the depot sells them in order and refuses a tier out of order by naming the lowest one
+  missing. The shop shows a line as one row: a pip per tier, filled when owned, and the next tier to
+  buy. A save never keeps a tier without the one below it. The depot's top speed counts the tiers.
 - **Consist:** the run's `requiredCars` are always included. Optional cars you own can be added up to
   `maxCars`. Heavier trains are slower (§5.3), which is the trade-off.
 - **Assists** (per seat, in the depot, on or off):
@@ -711,9 +721,13 @@ around the train in train-frame coordinates, plus the tick's events (for effects
 
 ### 16.1 Topology and rates
 
-The Rider hosts (Clew's `PeerHost`, room id `spur-<CODE>`). The sim runs at 60 Hz. The host sends the
-Engineer:
-- `EngineerView` snapshots at 15 Hz;
+The Rider hosts (Clew's `PeerHost`, room id `spur-<CODE>`). The sim runs at 60 ticks to a second of
+the world, and the world runs `TIME_SCALE` (1.25) times the wall clock, so the host steps 75 ticks a
+real second. The sim never sees the scale: what shows a player a duration counts wall-clock seconds
+(the Ahead list's ETAs and when a row turns urgent, a flag's age, the respawn count), and the
+engine's beats and rail clicks keep the pace the drivers turn on screen. The game clock (the
+timetable, the deadline) is the world's. The host sends the Engineer:
+- `EngineerView` snapshots at 15 a real second (every 5 ticks);
 - filtered events as they happen;
 - acks for commands.
 

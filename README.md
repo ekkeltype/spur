@@ -29,7 +29,7 @@ A run is lost by:
 
 After a loss you can retry from the last station.
 
-The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, *Signal Country*, *Single Track*, *Night Freight* and *The Blackwater Line*. Contracts and cargo pay money, which buys guns, gear, cars and upgrades.
+The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, *Signal Country*, *Single Track*, *Night Freight* and *The Blackwater Line*. Contracts and cargo pay money, which buys guns, gear, cars and upgrades, among them two lines of locomotive tiers: power (pulls harder) and speed (runs faster), each tier bought after the one below it.
 
 Nowhere on the train is safe from everything. Tunnels sweep everyone above the car floors off the train, fords wash off everyone below the roofs, low bridges knock down anyone standing on a roof or the tender top, and a burning trestle burns anyone outside the cars. The Engineer sees them coming and calls them; the Rider gets down, gets up or crouches. Speeds are in mph and distances in yards and miles.
 
@@ -140,4 +140,4 @@ src/
 tests/               Vitest suites
 ```
 
-The Rider's browser is the host. It runs the authoritative simulation at 60 Hz and sends the Engineer only their view: 15 snapshots a second, plus filtered events. `toEngineerView()` and `filterForEngineer()` are the only producers of what the Engineer receives, and `tests/views.test.ts` checks that bandits, obstacles, signal aspects and the runaway never leak into it.
+The Rider's browser is the host. It runs the authoritative simulation at 60 ticks to a second of the world, and the world runs a quarter faster than the wall clock (`TIME_SCALE`); what shows a player a duration counts real seconds. It sends the Engineer only their view: 15 snapshots a second, plus filtered events. `toEngineerView()` and `filterForEngineer()` are the only producers of what the Engineer receives, and `tests/views.test.ts` checks that bandits, obstacles, signal aspects and the runaway never leak into it.
