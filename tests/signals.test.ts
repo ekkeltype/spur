@@ -75,6 +75,7 @@ function drive(s: GameState, run: RunDef, d: number): TickMotion {
   const frontPath = walk(ix, s.switches, frontHead(s.train.spans), d).spans;
   const m = moveSpans(ix, s.switches, s.train.spans, d);
   s.train.spans = m.spans;
+  s.train.odometer += m.moved;
   return { frontPath, moved: m.moved };
 }
 
@@ -82,6 +83,7 @@ function drive(s: GameState, run: RunDef, d: number): TickMotion {
 function reverse(s: GameState, run: RunDef, d: number): TickMotion {
   const m = moveSpans(netIndex(run), s.switches, s.train.spans, -d);
   s.train.spans = m.spans;
+  s.train.odometer += m.moved;
   return { frontPath: [], moved: m.moved };
 }
 
@@ -96,6 +98,7 @@ function cruise(s: GameState, run: RunDef, v: number, seconds: number): SimEvent
 const passed = (id: string, aspect: Aspect): SimEvent => ({ type: 'signalPassed', id, aspect });
 const RED_FINE: SimEvent = { type: 'fine', reason: 'redSignal', amount: RED_SIGNAL_FINE };
 const SPEEDING: SimEvent = { type: 'fine', reason: 'speeding', amount: SPEED_FINE };
+const JUNCTION: SimEvent = { type: 'fine', reason: 'junction', amount: SPEED_FINE };
 
 describe('blocks', () => {
   it('run from a signal to the next one facing the same way, along the route the switches set', () => {
@@ -331,23 +334,64 @@ describe('fines and restrictions', () => {
     expect(s.stats).toMatchObject({ fines: 2 * SPEED_FINE, speedFines: 2 });
   });
 
-  it('divergeClear limits the speed through the junction; divergeApproach like approach', () => {
+  it('divergeClear limits the speed to 30 mph through the junction, and speeding there is a junction fine, once', () => {
     const run = signalRun();
+    const s = game(run); // loco and tender: 25 m
+    s.switches.J1 = 'reverse';
+    tick(s, run, drive(s, run, 740)); // → 940
+    s.train.v = 12;
+    expect(tick(s, run, drive(s, run, 20))).toEqual([passed('j1', 'divergeClear')]); // → 960
+    // j1 stands 50 m short of J1: in force until the odometer has run that far past it, and the train's length.
+    expect(s.signals.restriction).toEqual({ signalId: 'j1', limit: DIVERGE_LIMIT, fined: false, liftAt: 760 + 50 + 25 });
+    expect(restrictionLimit(s)).toBe(DIVERGE_LIMIT);
+    expect(cruise(s, run, DIVERGE_LIMIT * SPEED_FINE_TOLERANCE, 1)).toEqual([]); // within the tolerance
+    expect(cruise(s, run, 15, 2)).toEqual([JUNCTION]);
+    expect(s.stats).toMatchObject({ fines: SPEED_FINE, speedFines: 1, redSignals: 0 });
+  });
+
+  it('the diverging restriction lifts once the rear is through the junction; no fine after', () => {
+    const run = signalRun();
+    const s = game(run);
+    s.switches.J1 = 'reverse';
+    tick(s, run, drive(s, run, 749)); // → 949
+    s.train.v = 12;
+    expect(tick(s, run, drive(s, run, 1.2))).toEqual([passed('j1', 'divergeClear')]); // → 950.2
+    expect(s.signals.restriction?.liftAt).toBeCloseTo(750.2 + 50 + 25, 9);
+    // The rear reaches J1 with the front 25 m into the spur (e3 25): still restricted just short of it.
+    expect(cruise(s, run, 12, 6)).toEqual([]); // → e3 22.2
+    expect(s.signals.restriction?.signalId).toBe('j1');
+    expect(cruise(s, run, 12, 0.5)).toEqual([]); // → e3 28.2: through
+    expect(s.signals.restriction).toBeNull();
+    expect(restrictionLimit(s)).toBe(Infinity);
+    // Past the junction the spur's own limit is the Engineer's business: no signal fine for 45 mph.
+    expect(cruise(s, run, 20, 5)).toEqual([]);
+    expect(s.stats.fines).toBe(0);
+  });
+
+  it('the next signal still lifts a diverging restriction, if it comes before the rear is through', () => {
+    const run = yRun({ signals: [...SIGNALS, { id: 'b4', edge: 'e3', at: 10, facing: 1, kind: 'block' }] });
     const s = game(run);
     s.switches.J1 = 'reverse';
     tick(s, run, drive(s, run, 740)); // → 940
     s.train.v = 12;
-    expect(tick(s, run, drive(s, run, 20))).toEqual([passed('j1', 'divergeClear')]);
-    expect(s.signals.restriction).toEqual({ signalId: 'j1', limit: DIVERGE_LIMIT, fined: false });
-    expect(cruise(s, run, 15, 1)).toEqual([SPEEDING]);
+    expect(cruise(s, run, 12, 2)).toEqual([passed('j1', 'divergeClear')]); // → 964
+    expect(cruise(s, run, 12, 4)).toEqual([passed('b4', 'clear')]); // → e3 12, 13 m short of lifting
+    expect(s.signals.restriction).toBeNull();
+    expect(cruise(s, run, 20, 1)).toEqual([]);
+  });
 
-    const t = game(run);
-    t.switches.J1 = 'reverse';
-    addObstacle(t, 'e3', 450); // b3 shows stop
-    tick(t, run, drive(t, run, 740));
-    t.train.v = 8;
-    expect(tick(t, run, drive(t, run, 20))).toEqual([passed('j1', 'divergeApproach')]);
-    expect(restrictionLimit(t)).toBe(APPROACH_LIMIT);
+  it('divergeApproach restricts to 20 mph like approach, until the next signal: past the junction too', () => {
+    const run = signalRun();
+    const s = game(run);
+    s.switches.J1 = 'reverse';
+    addObstacle(s, 'e3', 450); // b3 shows stop
+    tick(s, run, drive(s, run, 740));
+    s.train.v = 8;
+    expect(tick(s, run, drive(s, run, 20))).toEqual([passed('j1', 'divergeApproach')]);
+    expect(s.signals.restriction).toEqual({ signalId: 'j1', limit: APPROACH_LIMIT, fined: false });
+    expect(cruise(s, run, 8, 20)).toEqual([]); // → e3 120: the whole train is through J1
+    expect(restrictionLimit(s)).toBe(APPROACH_LIMIT);
+    expect(cruise(s, run, 12, 1)).toEqual([SPEEDING]);
   });
 });
 

@@ -44,7 +44,10 @@ const runaway: AiTrainDef = {
 function hiddenRun(): RunDef {
   return loopRun({
     aiTrains: [freight, runaway],
-    obstacles: [{ id: 'rocks1', kind: 'rocks', edge: 'm2', at: 200 }],
+    obstacles: [
+      { id: 'rocks1', kind: 'rocks', edge: 'm2', at: 200 },
+      { id: 'herd', kind: 'cattle', edge: 'm1', at: 800 },
+    ],
     waves: [{ id: 'w1', trigger: { edge: 'm1', off: 400 }, count: 3, from: 'rear', goal: 'mixed', tier: 1 }],
     variants: ['A', 'B'],
     plan: {
@@ -77,7 +80,7 @@ describe('toEngineerView leaks nothing hidden', () => {
     const r = b.rider;
     b.horsemen.push({
       id: 9, x: -20, worldV: 12, hp: 2, tier: 2, boss: false, goal: 'safe', mode: 'approach', modeTicks: 5,
-      stamina: 8, targetX: 40, aimTicks: 10, cooldownTicks: 0, behindTicks: 0, pickup: false, shyTicks: 0,
+      stamina: 8, targetX: 40, aimTicks: 10, cooldownTicks: 0, behindTicks: 0, pickup: false, shyTicks: 90,
     });
     b.bandits.push({
       id: 10, x: 30, y: 4.2, vx: 1, vy: 0, onGround: true, surface: 'roof', ladder: null, crouch: false, facing: 1,
@@ -85,6 +88,7 @@ describe('toEngineerView leaks nothing hidden', () => {
       cooldownTicks: 0, stunTicks: 0, navTarget: null,
     });
     b.obstacles[0].state = 'hit';
+    b.obstacles[1].calmTicks = 200; // cattle used to the whistle
     b.loot.status = 'cracking';
     b.loot.crack = 0.6;
     b.loot.everCracked = true;
@@ -136,6 +140,11 @@ describe('filterForEngineer', () => {
       { type: 'heldUp' },
       { type: 'lootStolen' },
       { type: 'stationDone', stationId: 'dest' },
+      { type: 'fordEnter', id: 'f1' },
+      { type: 'fordExit', id: 'f1' },
+      // The Engineer learns why a fine was given, a diverging junction's included.
+      { type: 'fine', reason: 'junction', amount: 10 },
+      { type: 'fine', reason: 'speeding', amount: 10 },
       { type: 'won' },
     ];
     for (const e of keep) expect(filterForEngineer(e)).toEqual(e);
@@ -151,6 +160,13 @@ describe('filterForEngineer', () => {
       { type: 'waveSpawned', id: 'w1', count: 3, from: 'rear' },
       { type: 'riderHurt', cause: 'bullet', hearts: 2 },
       { type: 'horsemanDown', id: 3, x: 1, boss: false },
+      // The herds, the lurch's effects and the horses are for the Rider's view and sounds.
+      { type: 'cattleCalm', id: 'c' },
+      { type: 'cattleScatter', id: 'c' },
+      { type: 'lurch' },
+      { type: 'thrown', who: 'rider' },
+      { type: 'thrown', who: 'bandit', id: 4 },
+      { type: 'horseShy', id: 3 },
     ];
     for (const e of drop) expect(filterForEngineer(e)).toBeNull();
   });
@@ -168,6 +184,7 @@ describe('trackside', () => {
   it('places features ahead, under and behind the train in the train frame', () => {
     const run = yRun({
       tunnels: [{ id: 't1', edge: 'e1', from: 400, to: 600, name: 'Juniper Tunnel' }],
+      fords: [{ id: 'f1', edge: 'e2', from: 250, to: 310, name: 'Sage Creek ford' }],
       lowBridges: [{ id: 'b1', edge: 'e1', at: 150 }],
       trestles: [{ id: 'r1', edge: 'e2', from: 100, to: 200, name: 'Sage Creek', burning: { minSpeed: 13.4 } }],
       waterTowers: [{ id: 'w1', edge: 'e1', at: 700 }],
@@ -192,9 +209,21 @@ describe('trackside', () => {
     expect(find('curve', 'c1')).toMatchObject({ x0: L + 600, x1: L + 700, limit: 11 });
     expect(find('junction', 'J1')).toMatchObject({ x: L + 800, state: 'normal' });
     expect(find('trestle', 'r1')).toMatchObject({ x0: L + 900, x1: L + 1000, burning: true });
+    expect(find('ford', 'f1')).toMatchObject({ x0: L + 1050, x1: L + 1110, name: 'Sage Creek ford' });
     expect(find('station', 'orig')).toMatchObject({ x: L });
     const terrain = items.filter((i) => i.kind === 'terrain');
     expect(terrain[0]).toMatchObject({ x0: -100 });
+  });
+
+  it('shows cattle that got used to the whistle as calm, while they stand on the line', () => {
+    const run = yRun({ obstacles: [{ id: 'herd', kind: 'cattle', edge: 'e1', at: 700 }] });
+    const s = newGame(run, { seed: 1, consist: [], upgrades: [], assists: ASSISTS });
+    const herd = () => trackside(s, run, 50, 1000).find((i) => i.kind === 'obstacle');
+    expect(herd()).toMatchObject({ id: 'herd', x: s.train.length + 500, obstacle: 'cattle', state: 'present', calm: false });
+    s.obstacles[0].calmTicks = 60;
+    expect(herd()).toMatchObject({ state: 'present', calm: true });
+    s.obstacles[0].state = 'hit';
+    expect(herd()).toMatchObject({ state: 'hit', calm: false });
   });
 
   it('shows another train on our own track ahead, and one on the parallel track beside us', () => {

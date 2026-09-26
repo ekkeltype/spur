@@ -1,18 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
-import { autopilotStep, newAutopilot, type AutopilotState } from '../src/sim/autopilot';
-import { newGame } from '../src/sim/game';
+import { RUNS } from '../src/content/runs';
+import { AP_CATTLE_WHISTLE, AP_WHISTLE_SECONDS, autopilotStep, newAutopilot, type AutopilotState } from '../src/sim/autopilot';
+import { composeConsist, newGame, step } from '../src/sim/game';
 import { framePath, frameX, frontHead, netIndex, spansFromFront, xOnSpans } from '../src/sim/network';
-import { TICK_HZ } from '../src/sim/rules';
-import { applyEngineerCmd, hatchX, initialTrain, stepTrain, tryLowerSpout } from '../src/sim/train';
-import type { Aspect, CarType, EngineerCmd, GameState, RunDef, RunPlan, SimEvent, UpgradeId } from '../src/sim/types';
+import { TICK_HZ, WHISTLE_EARSHOT, WHISTLE_SCARE_MAX, WHISTLE_SCARE_MIN, WHISTLE_SCARE_SECONDS, secondsToTicks } from '../src/sim/rules';
+import { applyEngineerCmd, hatchX, herdsAhead, initialTrain, stepTrain, tryLowerSpout } from '../src/sim/train';
+import { NO_INPUT, type Aspect, type CarType, type EngineerCmd, type GameState, type RunDef, type RunPlan, type SimEvent, type UpgradeId } from '../src/sim/types';
 import { EMPTY_PLAN, baseRun, yRun } from './fixtures';
 
 // The signals module decides aspects; here a test sets them directly (anything unset shows clear).
+// The drives through the campaign's own runs read the real ones.
 const aspects = vi.hoisted(() => ({}) as Record<string, Aspect>);
-vi.mock('../src/sim/signals', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/sim/signals')>()),
-  aspectOf: (_state: GameState, _run: RunDef, id: string): Aspect => aspects[id] ?? 'clear',
-}));
+const realAspects = vi.hoisted(() => ({ on: false }));
+vi.mock('../src/sim/signals', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/sim/signals')>();
+  return {
+    ...actual,
+    aspectOf: (state: GameState, run: RunDef, id: string): Aspect => aspects[id] ?? (realAspects.on ? actual.aspectOf(state, run, id) : 'clear'),
+  };
+});
 
 const plan = (p: Partial<RunPlan>): Record<string, RunPlan> => ({ main: { ...EMPTY_PLAN, ...p } });
 
@@ -56,6 +62,27 @@ function frontPast(s: GameState, run: RunDef, edge: string, off: number): number
   const x = frameX(framePath(netIndex(run), s.switches, s.train.spans, 100, 2000), { edge, off });
   if (x === null) throw new Error(`${edge} ${off} isn't on the train's line`);
   return s.train.length - x;
+}
+
+/** A whistle blast as it began: its first tick, and how far ahead each herd within earshot was (m). */
+interface Blast {
+  tick: number;
+  herds: Record<string, number>;
+}
+
+/** Records each blast as it begins, from a tick's events (after the tick). */
+function recordBlast(run: RunDef, s: GameState, events: SimEvent[], blasts: Blast[]): void {
+  if (!events.some((e) => e.type === 'whistle' && e.on)) return;
+  const herds: Record<string, number> = {};
+  for (const h of herdsAhead(netIndex(run), s, WHISTLE_EARSHOT + 100)) herds[h.herd.id] = h.d;
+  blasts.push({ tick: s.tick - 1, herds });
+}
+
+/** No blast began with a herd ahead that would hear it from beyond the scare window: that only calms them. */
+function expectNoneCalming(blasts: readonly Blast[]): void {
+  for (const b of blasts) {
+    for (const [id, d] of Object.entries(b.herds)) expect(d <= WHISTLE_SCARE_MAX || d > WHISTLE_EARSHOT, `blew with ${id} ${d.toFixed(0)} m ahead`).toBe(true);
+  }
 }
 
 describe('the autopilot', () => {
@@ -240,36 +267,98 @@ describe('the autopilot', () => {
     expect(s.stats.maxSpeed).toBeGreaterThan(18);
   });
 
-  it('whistles ahead of a whistle point and gets the cattle off the line', () => {
-    const run = yRun({
-      obstacles: [{ id: 'herd', kind: 'cattle', edge: 'e2', at: 300 }],
-      plan: plan({ cruise: 20, whistles: [{ edge: 'e2', off: 300 }] }),
-    });
+  it('whistles once at cattle the Rider would call, well inside the scare window, and gets them off the line', () => {
+    const run = yRun({ obstacles: [{ id: 'herd', kind: 'cattle', edge: 'e2', at: 300 }], plan: plan({ cruise: 20 }) });
     const { s, ap } = start(run);
-    let firstBlast: number | null = null;
-    const events = drive(s, ap, run, 400, (st, ev) => {
-      if (firstBlast === null && ev.some((e) => e.type === 'whistle' && e.on)) firstBlast = -frontPast(st, run, 'e2', 300);
-    });
+    const blasts: Blast[] = [];
+    const events = drive(s, ap, run, 400, (st, ev) => recordBlast(run, st, ev, blasts));
     expect(s.phase, ap.note).toBe('won');
-    expect(firstBlast).toBeGreaterThan(250);
-    expect(firstBlast).toBeLessThanOrEqual(305);
+    expect(blasts).toHaveLength(1);
+    expect(blasts[0].herds.herd).toBeGreaterThanOrEqual(AP_CATTLE_WHISTLE[0]);
+    expect(blasts[0].herds.herd).toBeLessThanOrEqual(AP_CATTLE_WHISTLE[1]);
+    expect(ofType(events, 'cattleCalm')).toEqual([]);
+    expect(ofType(events, 'cattleScatter')).toEqual([{ type: 'cattleScatter', id: 'herd' }]);
     expect(ofType(events, 'obstacleCleared')).toEqual([{ type: 'obstacleCleared', id: 'herd', kind: 'cattle' }]);
     expect(ofType(events, 'obstacleHit')).toEqual([]);
+    expect(ap.herds).toEqual(['herd']);
   });
 
-  it('blows each plan whistle point on the approach and again passing it', () => {
-    const run = yRun({ plan: plan({ whistles: [{ edge: 'e2', off: 300 }] }) });
+  it('blows one blast of AP_WHISTLE_SECONDS as the loco’s front passes each plan whistle point', () => {
+    const points = [
+      { edge: 'e2', off: 300 },
+      { edge: 'e4', off: 200 },
+    ];
+    const run = yRun({ plan: plan({ whistles: points }) });
     const { s, ap } = start(run);
-    const blasts: number[] = [];
+    const blasts: { past: number; ticks: number }[] = [];
     drive(s, ap, run, 400, (st, ev) => {
-      if (ev.some((e) => e.type === 'whistle' && e.on)) blasts.push(-frontPast(st, run, 'e2', 300));
+      if (ev.some((e) => e.type === 'whistle' && e.on)) {
+        const p = points[blasts.length];
+        blasts.push({ past: frontPast(st, run, p.edge, p.off), ticks: 0 });
+      }
+      if (st.train.whistle) blasts[blasts.length - 1].ticks++;
     });
     expect(s.phase, ap.note).toBe('won');
     expect(blasts).toHaveLength(2);
-    expect(blasts[0]).toBeGreaterThan(290);
-    expect(blasts[0]).toBeLessThanOrEqual(300);
-    expect(blasts[1]).toBeLessThanOrEqual(0);
-    expect(blasts[1]).toBeGreaterThan(-1);
+    for (const b of blasts) {
+      expect(b.past).toBeGreaterThanOrEqual(0);
+      expect(b.past).toBeLessThan(1);
+      expect(b.ticks).toBe(secondsToTicks(AP_WHISTLE_SECONDS));
+    }
+  });
+
+  it('never begins a blast a herd ahead would hear from beyond the scare window, plan point or not', () => {
+    // Plan points 800 m short of the herd (out of earshot: blown) and 400 m short (it would only calm them: skipped).
+    const run = yRun({
+      obstacles: [{ id: 'herd', kind: 'cattle', edge: 'e2', at: 300 }],
+      plan: plan({ cruise: 20, whistles: [{ edge: 'e1', off: 500 }, { edge: 'e1', off: 900 }] }),
+    });
+    const { s, ap } = start(run);
+    const blasts: Blast[] = [];
+    const events = drive(s, ap, run, 400, (st, ev) => recordBlast(run, st, ev, blasts));
+    expect(s.phase, ap.note).toBe('won');
+    expectNoneCalming(blasts);
+    expect(blasts).toHaveLength(2);
+    expect(blasts[0].herds.herd).toBeGreaterThan(WHISTLE_EARSHOT);
+    expect(blasts[1].herds.herd).toBeLessThanOrEqual(AP_CATTLE_WHISTLE[1]);
+    expect(ap.whistles).toEqual([2, 2]);
+    expect(ofType(events, 'cattleCalm')).toEqual([]);
+    expect(ofType(events, 'cattleScatter')).toEqual([{ type: 'cattleScatter', id: 'herd' }]);
+  });
+
+  it('holds its blast for a herd while another stands within earshot beyond the window, and eases through it instead', () => {
+    // 300 m apart: when the first is in reach, the second would only get used to the whistle.
+    const run = yRun({
+      obstacles: [
+        { id: 'near', kind: 'cattle', edge: 'e2', at: 300 },
+        { id: 'far', kind: 'cattle', edge: 'e4', at: 100 },
+      ],
+      plan: plan({ cruise: 20 }),
+    });
+    const { s, ap } = start(run);
+    const blasts: Blast[] = [];
+    const events = drive(s, ap, run, 400, (st, ev) => recordBlast(run, st, ev, blasts));
+    expect(s.phase, ap.note).toBe('won');
+    expectNoneCalming(blasts);
+    expect(ofType(events, 'cattleCalm')).toEqual([]);
+    expect(ofType(events, 'obstacleHit')).toEqual([{ type: 'obstacleHit', id: 'near', kind: 'cattle', severe: false }]);
+    expect(ofType(events, 'cattleScatter')).toEqual([{ type: 'cattleScatter', id: 'far' }]);
+  });
+
+  it('leaves the blowing to a plan point just ahead that suits the herd: one blast, at the point', () => {
+    const run = yRun({
+      obstacles: [{ id: 'herd', kind: 'cattle', edge: 'e2', at: 300 }],
+      plan: plan({ cruise: 20, whistles: [{ edge: 'e2', off: 130 }] }), // 170 m short of the herd
+    });
+    const { s, ap } = start(run);
+    const blasts: Blast[] = [];
+    const events = drive(s, ap, run, 400, (st, ev) => recordBlast(run, st, ev, blasts));
+    expect(s.phase, ap.note).toBe('won');
+    expect(blasts).toHaveLength(1);
+    expect(blasts[0].herds.herd).toBeGreaterThan(169);
+    expect(blasts[0].herds.herd).toBeLessThanOrEqual(170);
+    expect(ofType(events, 'cattleScatter')).toEqual([{ type: 'cattleScatter', id: 'herd' }]);
+    expect(ofType(events, 'obstacleHit')).toEqual([]);
   });
 
   it('holds at least a plan minimum speed from its point on', () => {
@@ -407,4 +496,58 @@ describe('the autopilot', () => {
     expect(stopShort).toBeGreaterThan(1);
     expect(stopShort).toBeLessThan(30);
   });
+});
+
+describe('the autopilot at the campaign’s cattle', () => {
+  // Runs 3 and 6 put a herd on the line. The autopilot must get each off it with one blast begun
+  // inside the scare window, never calming it first, wherever the plan's whistle point stands.
+  const herdRuns = RUNS.filter((r) => r.obstacles.some((o) => o.kind === 'cattle'));
+
+  it('finds herds in runs 3 and 6', () => {
+    expect(herdRuns.map((r) => r.index + 1)).toEqual(expect.arrayContaining([3, 6]));
+  });
+
+  for (const run of herdRuns) {
+    run.variants.forEach((variant, vi) => {
+      it(`${run.index + 1}. ${run.name} (${variant}): one timed blast scatters the herd`, () => {
+        realAspects.on = true;
+        try {
+          // Bandits off, as in the campaign test; the game loop proper, up to the last herd.
+          const peaceful: RunDef = { ...run, waves: [] };
+          const s = newGame(peaceful, { seed: vi, consist: composeConsist(peaceful, []), upgrades: [], assists: { rider: false, engineer: false } });
+          expect(s.variant).toBe(variant);
+          const ap = newAutopilot(peaceful, s.variant);
+          const herds = s.obstacles.filter((o) => o.kind === 'cattle');
+          const blasts: Blast[] = [];
+          const scattered: Record<string, number> = {};
+          const events: SimEvent[] = [];
+          const onLine = (): boolean => herds.some((h) => h.state === 'present' || h.state === 'scattering');
+          for (let k = 0; k < 15 * 60 * TICK_HZ && s.phase === 'running' && onLine(); k++) {
+            const out = autopilotStep(ap, s, peaceful);
+            if (out.lowerSpout) tryLowerSpout(s, peaceful, [], { force: true });
+            const ev = step(s, peaceful, NO_INPUT, out.cmds.map((c) => ({ ...c, seq: ++seq }) as EngineerCmd));
+            recordBlast(peaceful, s, ev, blasts);
+            for (const e of ev) if (e.type === 'cattleScatter') scattered[e.id] = s.tick - 1;
+            events.push(...ev);
+          }
+          expect(s.phase, s.loss ? `${s.loss.reason}: ${s.loss.detail}` : ap.note).not.toBe('lost');
+          expectNoneCalming(blasts);
+          expect(ofType(events, 'cattleCalm')).toEqual([]);
+          expect(ofType(events, 'obstacleHit').filter((e) => e.kind === 'cattle')).toEqual([]);
+          for (const h of herds) {
+            expect(scattered[h.id], `${h.id} scattered`).toBeDefined();
+            // The blasts it heard while on the line: one, begun inside the window, which scattered it
+            // on reaching WHISTLE_SCARE_SECONDS.
+            const heard = blasts.filter((b) => b.herds[h.id] !== undefined && b.tick <= scattered[h.id]);
+            expect(heard, h.id).toHaveLength(1);
+            expect(heard[0].herds[h.id]).toBeGreaterThanOrEqual(WHISTLE_SCARE_MIN);
+            expect(heard[0].herds[h.id]).toBeLessThanOrEqual(WHISTLE_SCARE_MAX);
+            expect(scattered[h.id] - heard[0].tick).toBe(secondsToTicks(WHISTLE_SCARE_SECONDS) - 1);
+          }
+        } finally {
+          realAspects.on = false;
+        }
+      });
+    });
+  }
 });

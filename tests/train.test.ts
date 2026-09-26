@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { newGame } from '../src/sim/game';
 import { frontHead, netIndex, spansFromFront, spansLength } from '../src/sim/network';
-import { BIG_TENDER_CAP, CAR_SPECS, DWELL_SECONDS, P_START, TICK_HZ, WATER_CAP } from '../src/sim/rules';
+import {
+  BIG_TENDER_CAP,
+  CAR_SPECS,
+  CATTLE_CALM_SECONDS,
+  DWELL_SECONDS,
+  EMERGENCY_BRAKE,
+  LURCH_COOLDOWN_SECONDS,
+  LURCH_MIN_SPEED,
+  OBSTACLE_SCATTER_SECONDS,
+  P_START,
+  TICK_HZ,
+  WATER_CAP,
+  WHISTLE_EARSHOT,
+  WHISTLE_SCARE_MAX,
+  WHISTLE_SCARE_MIN,
+  WHISTLE_SCARE_SECONDS,
+  WHISTLE_STEAM,
+} from '../src/sim/rules';
 import { applyEngineerCmd, initialTrain, layoutConsist, limitHere, spoutPrompt, stepTrain, tryLowerSpout } from '../src/sim/train';
 import type { Assists, CarType, EngineerCmd, EngineerCmdBody, GameState, ObstacleKind, RunDef, SimEvent, TickMotion, UpgradeId } from '../src/sim/types';
 import { baseRun, yRun } from './fixtures';
@@ -313,6 +330,25 @@ describe('boiler and water (spec §5.5)', () => {
     expect(rolling.train.pressure).toBeCloseTo(100 - (0.5 * (3 + 0.5 * v) + 0.5) / TICK_HZ, 3);
   });
 
+  it('the whistle draws WHISTLE_STEAM while it blows, and the pressure never goes below 0', () => {
+    const s = game(run);
+    s.train.pressure = 100;
+    s.train.fire = 0;
+    tick(s, run, [{ kind: 'whistle', on: true }]);
+    runFor(s, run, 1 - 1 / TICK_HZ);
+    expect(s.train.pressure).toBeCloseTo(100 - WHISTLE_STEAM - 0.5, 6);
+    tick(s, run, [{ kind: 'whistle', on: false }]);
+    runFor(s, run, 1 - 1 / TICK_HZ);
+    expect(s.train.pressure).toBeCloseTo(100 - WHISTLE_STEAM - 0.5 - 0.5, 6);
+
+    const low = game(run);
+    low.train.pressure = 2;
+    low.train.fire = 0;
+    tick(low, run, [{ kind: 'whistle', on: true }]);
+    runFor(low, run, 2);
+    expect(low.train.pressure).toBe(0);
+  });
+
   it('boiling uses water in proportion to the steam raised', () => {
     const s = game(run);
     s.train.pressure = 100;
@@ -575,6 +611,74 @@ describe('the hold-up override (spec §5.2)', () => {
   });
 });
 
+describe('slamming the brakes: the lurch (spec §5.2)', () => {
+  const run = straight();
+  /** A train running at `v` m/s (backing when negative) on the straight. */
+  const running = (v: number): GameState => {
+    const s = game(run);
+    s.train.v = v;
+    if (v < 0) s.train.reverser = -1;
+    return s;
+  };
+  /** Holds the speed at `v` for a tick, the way the tests below keep a train running. */
+  const at = (v: number) => (s: GameState): void => {
+    steady(s);
+    s.train.v = v;
+  };
+  const brake = (s: GameState, value: number): SimEvent[] => tick(s, run, [{ kind: 'brake', value }]).events;
+  const lurches = (events: SimEvent[]): SimEvent[] => ofType(events, 'lurch');
+  const COOLDOWN = LURCH_COOLDOWN_SECONDS * TICK_HZ;
+
+  it('lurches as the lever goes into emergency at LURCH_MIN_SPEED or more, on the tick of the command', () => {
+    const s = running(LURCH_MIN_SPEED);
+    const now = s.tick;
+    expect(lurches(brake(s, 1))).toEqual([{ type: 'lurch' }]);
+    expect(s.train.lurchTick).toBe(now);
+    // Exactly at EMERGENCY_BRAKE is emergency, and backing at speed counts too.
+    expect(lurches(brake(running(15), EMERGENCY_BRAKE))).toHaveLength(1);
+    expect(lurches(brake(running(-LURCH_MIN_SPEED - 1), 1))).toHaveLength(1);
+  });
+
+  it('not below LURCH_MIN_SPEED, nor with the brake short of emergency', () => {
+    const slow = running(LURCH_MIN_SPEED - 0.1);
+    expect(lurches(brake(slow, 1))).toEqual([]);
+    expect(slow.train.lurchTick).toBe(-COOLDOWN);
+    expect(lurches(brake(running(15), EMERGENCY_BRAKE - 0.01))).toEqual([]);
+  });
+
+  it('not again while the lever stays in emergency, nor within the cooldown; again after it', () => {
+    const s = running(15);
+    const first = s.tick;
+    const events = brake(s, 0.9);
+    events.push(...runFor(s, run, 1, at(15)));
+    events.push(...brake(s, 1)); // still in emergency: no new lurch
+    s.train.v = 15;
+    events.push(...brake(s, 0.86));
+    expect(lurches(events)).toHaveLength(1);
+    // Released and slammed again a tick short of the cooldown: nothing.
+    brake(s, 0.3);
+    while (s.tick < first + COOLDOWN - 1) {
+      at(15)(s);
+      tick(s, run);
+    }
+    expect(lurches(brake(s, 1))).toEqual([]);
+    // Released and slammed once the cooldown has run: it lurches again.
+    brake(s, 0.3);
+    at(15)(s);
+    expect(lurches(brake(s, 1))).toHaveLength(1);
+    expect(s.train.lurchTick).toBe(first + COOLDOWN + 1);
+  });
+
+  it("can't happen while held up: the brake command is refused", () => {
+    const s = running(15);
+    s.train.heldUp = true;
+    const events = brake(s, 1);
+    expect(ofType(events, 'cmdResult')[0].ok).toBe(false);
+    expect(lurches(events)).toEqual([]);
+    expect(s.train.lurchTick).toBe(-COOLDOWN);
+  });
+});
+
 describe('switches and buffers under the train (spec §4.1)', () => {
   it('springs a switch set against a trailing move, with an event', () => {
     const run = yRun();
@@ -687,7 +791,34 @@ function placeAt(s: GameState, run: RunDef, off: number): void {
   s.train.spans = spansFromFront(netIndex(run), s.switches, { edge: 'x', off, dir: 1 }, s.train.length);
 }
 
-describe('tunnels and trestles (spec §4.3)', () => {
+describe('tunnels, fords and trestles (spec §4.3)', () => {
+  it('announces the water as the loco front enters and leaves a ford, either way', () => {
+    const run = straight({ fords: [{ id: 'f1', edge: 'x', from: 2000, to: 2060, name: 'Sage Creek ford' }] });
+    const s = game(run);
+    placeAt(s, run, 1990);
+    const water = (events: SimEvent[]): SimEvent[] => events.filter((e) => e.type === 'fordEnter' || e.type === 'fordExit');
+    const forward = runFor(s, run, 10, (st) => {
+      steady(st);
+      st.train.v = 10;
+    });
+    expect(frontHead(s.train.spans).off).toBeGreaterThan(2060);
+    expect(water(forward)).toEqual([
+      { type: 'fordEnter', id: 'f1' },
+      { type: 'fordExit', id: 'f1' },
+    ]);
+    // Backing through it: the front goes in at its far end and out at the near one.
+    s.train.reverser = -1;
+    const back = runFor(s, run, 10, (st) => {
+      steady(st);
+      st.train.v = -10;
+    });
+    expect(frontHead(s.train.spans).off).toBeLessThan(2000);
+    expect(water(back)).toEqual([
+      { type: 'fordEnter', id: 'f1' },
+      { type: 'fordExit', id: 'f1' },
+    ]);
+  });
+
   it('announces entering and leaving a tunnel, as the loco front passes its portals', () => {
     const run = straight({ tunnels: [{ id: 't1', edge: 'x', from: 2000, to: 2100, name: 'Juniper Tunnel' }] });
     const s = game(run);
@@ -842,38 +973,128 @@ describe('obstacles (spec §8)', () => {
     expect(b.phase).toBe('running');
   });
 
-  describe('the whistle scatters cattle', () => {
-    /** Stands `ahead` metres short of cattle and holds the whistle for `seconds`, then waits. */
-    const whistleAt = (ahead: number, seconds: number): { s: GameState; events: SimEvent[] } => {
-      const run = withObstacle('cattle');
-      const s = game(run);
+  describe('the whistle and the cattle: a matter of timing', () => {
+    const run = withObstacle('cattle');
+    /** One blast of `seconds`, begun with the loco's front standing `ahead` metres short of the herd. */
+    const blast = (s: GameState, ahead: number, seconds: number): SimEvent[] => {
       placeAt(s, run, 2000 - ahead);
       const events = tick(s, run, [{ kind: 'whistle', on: true }]).events;
       events.push(...runFor(s, run, seconds - 1 / TICK_HZ));
       events.push(...tick(s, run, [{ kind: 'whistle', on: false }]).events);
+      return events;
+    };
+    /** A fresh herd, one blast at it, then 5 s for it to leave. */
+    const whistleAt = (ahead: number, seconds: number): { s: GameState; events: SimEvent[] } => {
+      const s = game(run);
+      const events = blast(s, ahead, seconds);
       events.push(...runFor(s, run, 5));
       return { s, events };
     };
+    const herdEvents = (events: SimEvent[]): SimEvent[] => events.filter((e) => e.type === 'cattleCalm' || e.type === 'cattleScatter');
 
-    it('held for WHISTLE_SCARE_SECONDS within 40–350 m, over OBSTACLE_SCATTER_SECONDS', () => {
-      const run = withObstacle('cattle');
+    it('one blast begun inside the window scatters them as it reaches WHISTLE_SCARE_SECONDS, over OBSTACLE_SCATTER_SECONDS', () => {
       const s = game(run);
       placeAt(s, run, 1800);
-      tick(s, run, [{ kind: 'whistle', on: true }]);
-      runFor(s, run, 0.5);
+      const events = tick(s, run, [{ kind: 'whistle', on: true }]).events;
+      events.push(...runFor(s, run, WHISTLE_SCARE_SECONDS - 2 / TICK_HZ));
+      expect(s.obstacles[0].state).toBe('present');
+      events.push(...tick(s, run).events); // the blast's 30th tick
       expect(s.obstacles[0].state).toBe('scattering');
-      const events = runFor(s, run, 3.9);
+      expect(herdEvents(events)).toEqual([{ type: 'cattleScatter', id: 'o1' }]);
+      const leaving = runFor(s, run, OBSTACLE_SCATTER_SECONDS - 0.1);
       expect(s.obstacles[0].state).toBe('scattering');
-      events.push(...runFor(s, run, 0.2));
+      leaving.push(...runFor(s, run, 0.2));
       expect(s.obstacles[0].state).toBe('gone');
-      expect(ofType(events, 'obstacleCleared')).toEqual([{ type: 'obstacleCleared', id: 'o1', kind: 'cattle' }]);
+      expect(ofType(leaving, 'obstacleCleared')).toEqual([{ type: 'obstacleCleared', id: 'o1', kind: 'cattle' }]);
     });
 
-    it('not by a short toot, nor too close, nor too far away', () => {
-      expect(whistleAt(200, 0.4).s.obstacles[0].state).toBe('present');
-      expect(whistleAt(30, 1).s.obstacles[0].state).toBe('present');
-      expect(whistleAt(400, 1).s.obstacles[0].state).toBe('present');
-      expect(whistleAt(345, 1).s.obstacles[0].state).toBe('gone');
+    it('anywhere in 70–270 yards, but not by a short toot, nor begun too close or too far', () => {
+      expect(whistleAt(WHISTLE_SCARE_MIN + 1, 1).s.obstacles[0].state).toBe('gone');
+      expect(whistleAt(WHISTLE_SCARE_MAX - 1, 1).s.obstacles[0].state).toBe('gone');
+      const toot = whistleAt(200, WHISTLE_SCARE_SECONDS - 0.1);
+      expect(toot.s.obstacles[0].state).toBe('present');
+      expect(herdEvents(toot.events)).toEqual([]);
+      // Begun under 70 yards: they don't budge (brake to 22 mph and push through).
+      const close = whistleAt(WHISTLE_SCARE_MIN - 1, 1);
+      expect(close.s.obstacles[0].state).toBe('present');
+      expect(herdEvents(close.events)).toEqual([]);
+      // Begun over 270 yards: they hear it and get used to it.
+      const far = whistleAt(WHISTLE_SCARE_MAX + 1, 1);
+      expect(far.s.obstacles[0]).toMatchObject({ state: 'present' });
+      expect(far.s.obstacles[0].calmTicks).toBeGreaterThan(0);
+      expect(herdEvents(far.events)).toEqual([{ type: 'cattleCalm', id: 'o1' }]);
+      // Beyond earshot they don't hear it at all.
+      const unheard = whistleAt(WHISTLE_EARSHOT + 1, 1);
+      expect(herdEvents(unheard.events)).toEqual([]);
+      expect(unheard.s.obstacles[0].calmTicks).toBe(0);
+    });
+
+    it('the blast has to begin inside the window: begun just short of it at speed, its half second ends inside but only calms them', () => {
+      const s = game(run);
+      placeAt(s, run, 2000 - WHISTLE_SCARE_MAX - 3);
+      const keep = (st: GameState): void => {
+        steady(st);
+        st.train.v = 15;
+      };
+      keep(s);
+      const events = tick(s, run, [{ kind: 'whistle', on: true }]).events;
+      events.push(...runFor(s, run, 1, keep));
+      expect(2000 - frontHead(s.train.spans).off).toBeLessThan(WHISTLE_SCARE_MAX - 10);
+      expect(herdEvents(events)).toEqual([{ type: 'cattleCalm', id: 'o1' }]);
+      expect(s.obstacles[0].state).toBe('present');
+    });
+
+    it('heard from beyond the window, they ignore the whistle until CATTLE_CALM_SECONDS after it stops', () => {
+      const s = game(run);
+      const early = blast(s, 400, 1);
+      expect(herdEvents(early)).toEqual([{ type: 'cattleCalm', id: 'o1' }]);
+      expect(s.obstacles[0].calmTicks).toBe(CATTLE_CALM_SECONDS * TICK_HZ - 1); // a tick since it last heard it
+      // Five seconds on, a good blast well inside the window: ignored, and it doesn't renew the calm.
+      runFor(s, run, 5);
+      expect(herdEvents(blast(s, 150, 1))).toEqual([]);
+      expect(s.obstacles[0].state).toBe('present');
+      expect(s.obstacles[0].calmTicks).toBe(CATTLE_CALM_SECONDS * TICK_HZ - 1 - 5 * TICK_HZ - TICK_HZ - 1);
+      // Once the calm has run out, the same blast works.
+      runFor(s, run, 2);
+      expect(s.obstacles[0].calmTicks).toBe(0);
+      expect(herdEvents(blast(s, 150, 1))).toEqual([{ type: 'cattleScatter', id: 'o1' }]);
+    });
+
+    it('a herd that still hears it from afar stays calm: each tick of the whistle there renews it', () => {
+      const s = game(run);
+      blast(s, 400, 1);
+      runFor(s, run, 6);
+      expect(herdEvents(blast(s, 500, 0.2))).toEqual([]); // already calm: no new event
+      expect(s.obstacles[0].calmTicks).toBe(CATTLE_CALM_SECONDS * TICK_HZ - 1);
+    });
+
+    it('held down all the way in from 700 m, it never scatters them', () => {
+      const s = game(run);
+      placeAt(s, run, 2000 - WHISTLE_EARSHOT);
+      let calmInWindow = false;
+      const events = tick(s, run, [{ kind: 'whistle', on: true }]).events;
+      events.push(
+        ...runFor(s, run, 90, (st) => {
+          steady(st);
+          st.train.v = 9; // under the cattle's safe speed, to push through them in the end
+          const d = 2000 - frontHead(st.train.spans).off;
+          if (d < WHISTLE_SCARE_MAX - 20 && d > WHISTLE_SCARE_MAX - 30) calmInWindow ||= st.obstacles[0].calmTicks > 0;
+        }),
+      );
+      expect(s.train.whistle).toBe(true);
+      expect(calmInWindow).toBe(true);
+      expect(herdEvents(events)).toEqual([{ type: 'cattleCalm', id: 'o1' }]);
+      expect(ofType(events, 'obstacleHit')).toEqual([{ type: 'obstacleHit', id: 'o1', kind: 'cattle', severe: false }]);
+    });
+
+    it('a blast leaves herds that are hit or gone alone', () => {
+      const s = game(run);
+      s.obstacles[0].state = 'hit';
+      expect(herdEvents(blast(s, 400, 1))).toEqual([]);
+      expect(s.obstacles[0].calmTicks).toBe(0);
+      s.obstacles[0].state = 'gone';
+      expect(herdEvents(blast(s, 150, 1))).toEqual([]);
+      expect(s.obstacles[0].state).toBe('gone');
     });
 
     it('a herd still scattering is still on the line', () => {

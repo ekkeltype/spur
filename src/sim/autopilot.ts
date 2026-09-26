@@ -13,13 +13,16 @@
 //   already full on coming within AP_TOWER_DECIDE of the tower).
 // - holds: in order. Stop the loco's front at `at` and wait until the clock reaches `until`; a hold
 //   whose time has passed is dropped.
-// - whistles: a blast of AP_WHISTLE_SECONDS starting AP_WHISTLE_LEAD before each point, and another
-//   as the loco's front passes it (so a point at the cattle or one where to blow both work).
+// - whistles: one blast of AP_WHISTLE_SECONDS, begun as the loco's front passes each point (for
+//   cattle, about 170 m short of the herd, inside the scare window: spec §8).
 // - minSpeeds: from the moment the train is over `from`, for AP_MIN_SPEED_SPAN metres, it holds at
 //   least that speed (plus a margin), even a little over a limit, never near a derail.
 // Beyond the plan it keeps under the track limits and signal restrictions, stops short of signals
 // at stop, the buffers, other trains and rockslides, runs at burning trestles fast enough, slows for
-// cattle and barricades and whistles cattle off the line, and fires the boiler unless a governor does.
+// cattle and barricades, whistles cattle off the line with one blast begun well inside the scare
+// window (unless a plan point just ahead will do it), and fires the boiler unless a governor does.
+// It never begins a blast that a herd ahead would hear from beyond the scare window, plan point or
+// not: that would only calm the herd.
 
 import { edgeOf, framePath, frontHead, gradeAt, limitAt, netIndex, spanDir, spanLength, spansLength, switchOf, xOnSpans, type FramePath, type NetIndex } from './network';
 import {
@@ -28,6 +31,7 @@ import {
   BRAKE_MAX,
   DIVERGE_LIMIT,
   DRAG,
+  DT,
   FULL_POWER_PSI,
   GRAVITY,
   OBSTACLE_SAFE,
@@ -38,10 +42,12 @@ import {
   STATION_WINDOW,
   TICK_HZ,
   TRACTIVE_MAX,
+  WHISTLE_EARSHOT,
+  WHISTLE_SCARE_MAX,
   secondsToTicks,
 } from './rules';
 import { aspectOf } from './signals';
-import { governed, governorFire, hatchX, switchFouled } from './train';
+import { governed, governorFire, hatchX, herdsAhead, switchFouled } from './train';
 import type { Aspect, Dir, EngineerCmdBody, GameState, RunDef, RunPlan, SignalDef, SwitchState, TrackPoint } from './types';
 
 // ---- Tunables (the autopilot's own; not game rules) --------------------------------------------
@@ -76,8 +82,11 @@ export const AP_TRAIN_MARGIN = 80;
 export const AP_ROCKS_MARGIN = 20;
 /** Passes cattle and barricades at this fraction of their safe speed. */
 export const AP_OBSTACLE_MARGIN = 0.8;
-/** Whistles at cattle between these distances ahead (m), inside the scare window. */
-export const AP_CATTLE_WHISTLE: readonly [number, number] = [60, 300];
+/**
+ * Begins its one blast at a herd between these distances ahead (m): well inside the scare window
+ * (WHISTLE_SCARE_MIN–MAX, 64–247 m), so the blast's WHISTLE_SCARE_SECONDS mark falls inside it too.
+ */
+export const AP_CATTLE_WHISTLE: readonly [number, number] = [140, 210];
 /** Within this distance of a burning trestle it holds the trestle's minimum speed plus a margin. */
 export const AP_TRESTLE_RUNUP = 600;
 export const AP_TRESTLE_MARGIN = 0.6;
@@ -94,9 +103,8 @@ export const AP_BACK_SPEED = 1.5;
 export const AP_HOLD_BRAKE = 0.6;
 /** Moves a lever only when it's this far off (or to an end stop), as a person would, not every tick. */
 export const AP_LEVER_STEP = 0.02;
-/** A whistle blast: this long, starting this far ahead of a whistle point. */
+/** A whistle blast lasts this long. */
 export const AP_WHISTLE_SECONDS = 1.2;
-export const AP_WHISTLE_LEAD = 300;
 /** Gives up on a water tower whose spout nobody lowers after this long. */
 export const AP_SPOUT_WAIT_SECONDS = 45;
 /**
@@ -120,10 +128,12 @@ export interface AutopilotState {
   nextStop: number;
   /** The next of the plan's holds. */
   nextHold: number;
-  /** Per plan whistle point: 0 = blow on the approach, 1 = blow passing it, 2 = done. */
+  /** Per plan whistle point: 0 = not seen ahead yet, 1 = ahead, 2 = passed (blown, or not if it would calm a herd). */
   whistles: number[];
   /** The tick the current blast ends. */
   whistleUntil: number;
+  /** The herds (obstacle ids) it has blown its one blast for. */
+  herds: string[];
   /** Per plan min speed: 0 = not reached, 1 = in force since odometer `at`, 2 = done. */
   minSpeeds: { state: 0 | 1 | 2; at: number }[];
   /** A signal restriction (m/s) carried from the last signal passed until the next one. */
@@ -156,6 +166,7 @@ export function newAutopilot(run: RunDef, variant: string): AutopilotState {
     nextHold: 0,
     whistles: plan.whistles.map(() => 0),
     whistleUntil: 0,
+    herds: [],
     minSpeeds: plan.minSpeeds.map(() => ({ state: 0 as const, at: 0 })),
     restriction: null,
     signalAhead: null,
@@ -540,24 +551,36 @@ export function autopilotStep(ap: AutopilotState, state: GameState, run: RunDef)
     }
   }
 
-  // The whistle: plan points, and cattle the Rider would point out.
+  // The whistle (spec §8): a blast for each plan point as the loco's front passes it, and one for
+  // each herd the Rider would call, begun well inside the scare window. Nothing is begun while a
+  // herd ahead would hear it from beyond the window (it would only get used to the whistle), and a
+  // herd's blast waits for the whistle to fall quiet: only a fresh blast scatters them.
+  const herds = herdsAhead(ix, state, WHISTLE_EARSHOT + Math.abs(t.v) * (AP_WHISTLE_SECONDS + 2 * DT));
+  const hush = herds.some((h) => h.d > WHISTLE_SCARE_MAX);
   let blow = false;
+  const pointsAhead: number[] = [];
   plan.whistles.forEach((p, i) => {
     const w = ap.whistles[i];
     const x = w === undefined || w >= 2 ? null : xOf(path, p);
     if (x === null) return;
-    if (w === 0 && x - L <= AP_WHISTLE_LEAD) {
-      blow = true;
-      ap.whistles[i] = x - L > 0 ? 1 : 2;
-    } else if (w === 1 && x - L <= 0) {
-      blow = true;
-      ap.whistles[i] = 2;
+    if (x > L + EPS) {
+      ap.whistles[i] = 1;
+      pointsAhead.push(x - L);
+      return;
     }
+    // Passing it: blow, unless that would calm a herd. A point first seen already behind the front
+    // was passed before the autopilot took over.
+    if (w === 1 && !hush) blow = true;
+    ap.whistles[i] = 2;
   });
-  for (const o of state.obstacles) {
-    if (o.kind !== 'cattle' || o.state !== 'present') continue;
-    const x = xOf(onward, { edge: o.edge, off: o.at });
-    if (x !== null && x - L >= AP_CATTLE_WHISTLE[0] && x - L <= AP_CATTLE_WHISTLE[1]) blow = true;
+  const inBand = (d: number): boolean => d >= AP_CATTLE_WHISTLE[0] && d <= AP_CATTLE_WHISTLE[1];
+  for (const { herd, d } of herds) {
+    if (herd.calmTicks > 0 || ap.herds.includes(herd.id) || !inBand(d)) continue;
+    // A plan point just ahead that puts the herd in the band too: the plan's blast will do.
+    if (pointsAhead.some((a) => inBand(d - a))) continue;
+    if (hush || t.whistle) continue;
+    blow = true;
+    ap.herds.push(herd.id);
   }
   if (blow) ap.whistleUntil = Math.max(ap.whistleUntil, state.tick + secondsToTicks(AP_WHISTLE_SECONDS));
   const whistle = state.tick < ap.whistleUntil;
