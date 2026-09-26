@@ -8,11 +8,13 @@ import {
   chestY,
   damageBandit,
   damageHorseman,
+  fordHits,
   horsemanAlive,
   horsemanBox,
   hurtRider,
   inTunnel,
   riderOff,
+  throwFigure,
   tunnelHits,
   type FightCtx,
 } from './fight';
@@ -107,11 +109,18 @@ export function stepRider(ctx: FightCtx, input: RiderInput, events: SimEvent[]):
   const geo = trainGeometry(state.train.cars);
   expireFlags(state);
   if (r.mode !== 'active') {
-    if (--r.respawnTicks <= 0) respawn(ctx, geo, events);
+    // Back at the rear once the time is up, but not into the river (spec §6.3).
+    if (r.respawnTicks > 0) r.respawnTicks--;
+    if (r.respawnTicks <= 0 && !respawnBlocked(ctx, geo)) respawn(ctx, geo, events);
     return;
   }
   if (r.invulnTicks > 0) r.invulnTicks--;
   if (r.stunTicks > 0) r.stunTicks--;
+  // The brakes slammed on (spec §5.2): thrown forward, unless braced; the spyglass drops.
+  if (state.train.lurchTick === state.tick && throwFigure(geo, r, state.train.v)) {
+    r.scoped = false;
+    events.push({ type: 'thrown', who: 'rider' });
+  }
 
   // The spyglass (spec §6.5): the Rider stands still while looking.
   r.scoped = input.scope && canScope(ctx, geo);
@@ -130,13 +139,18 @@ export function stepRider(ctx: FightCtx, input: RiderInput, events: SimEvent[]):
   if (res.jumped) events.push({ type: 'jump' });
   if (res.landed) events.push({ type: 'land', hard: res.hard });
 
-  // Off the train, or swept off it by a tunnel; knocked flat by a low bridge (spec §4.3, §6.3).
+  // Off the train, swept off it by a tunnel or washed off in a ford; knocked flat by a low bridge
+  // (spec §4.3, §6.3).
   if (r.y < FALL_OFF_Y) {
     riderOff(ctx, 'fall', events);
     return;
   }
   if (tunnelHits(ctx.hazards, r.x, r.y)) {
     riderOff(ctx, 'tunnel', events);
+    return;
+  }
+  if (fordHits(ctx.hazards, r.x, r.y)) {
+    riderOff(ctx, 'water', events);
     return;
   }
   if (bridgeHits(geo, ctx.hazards, state.train.v, prevX, r.x, r.y, bodyHeight(r)) && !state.godMode) {
@@ -195,7 +209,10 @@ function canScope(ctx: FightCtx, geo: TrainGeometry): boolean {
   );
 }
 
-/** A flag on the Engineer's map at the middle of the view: the look-ahead point past the loco. */
+/**
+ * A flag on the Engineer's map at the middle of the view: the look-ahead point past the loco. There
+ * are at most FLAG_MAX (one): a new flag replaces the oldest.
+ */
 function placeFlag(ctx: FightCtx, events: SimEvent[]): void {
   const { state } = ctx;
   const p = ctx.trackPointAt(state.train.length + state.rider.scopeDist);
@@ -341,6 +358,15 @@ function track(ctx: FightCtx, geo: TrainGeometry): void {
   const r = ctx.state.rider;
   r.car = carAt(ctx.state.train.cars, r.x);
   r.inside = interiorAt(geo, r.x, r.y)?.car ?? null;
+}
+
+/**
+ * A respawn waits while the rear platform is in a ford (spec §6.3), or, on a train with nothing
+ * behind the tender, while a tunnel is over the tender top it would put the Rider on.
+ */
+function respawnBlocked(ctx: FightCtx, geo: TrainGeometry): boolean {
+  const { x, y } = geo.respawn;
+  return fordHits(ctx.hazards, x, y) || tunnelHits(ctx.hazards, x, y);
 }
 
 function respawn(ctx: FightCtx, geo: TrainGeometry, events: SimEvent[]): void {

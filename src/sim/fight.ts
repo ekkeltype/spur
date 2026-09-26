@@ -1,30 +1,34 @@
 // What the Rider and the bandits share each tick (spec §6, §7): the context game.ts builds for them,
 // and the track hazards that hit anyone on the train "exactly as they hit the Rider" (spec §7.3).
 
-import { bodyHeight, HALF_W, type Body } from './body';
-import { groundBelow, trainGeometry, type Rect, type TrainGeometry } from './geometry';
+import { bodyHeight, HALF_W, windySurface, type Body } from './body';
+import { groundBelow, interiorAt, trainGeometry, type Rect, type TrainGeometry } from './geometry';
 import {
   BOARD_KNOCKBACK,
   DT,
+  FORD_WATER_Y,
   HORSEMAN_HALF_W,
   HORSEMAN_Y0,
   HORSEMAN_Y1,
   INVULN_SECONDS,
   LOW_BRIDGE_CLEARANCE,
+  LURCH_HOP_VX,
+  LURCH_HOP_VY,
+  LURCH_STAGGER_SECONDS,
   RESPAWN_DOWN_SECONDS,
   RESPAWN_OFF_CABOOSE_SECONDS,
   RESPAWN_OFF_SECONDS,
   secondsToTicks,
   TUNNEL_FEET_Y,
 } from './rules';
-import type { BanditState, FrameHazard, GameState, HorsemanState, HurtCause, RunDef, SimEvent, TrackPoint } from './types';
+import type { BanditState, FrameHazard, GameState, HorsemanState, HurtCause, RunDef, SimEvent, SurfaceKind, TrackPoint } from './types';
 
 // ---- Tunables (candidates for rules.ts) ---------------------------------------------------------
 
 export interface FightCtx {
   state: GameState;
   run: RunDef;
-  /** Tunnels, low bridges and trestles near the train, in the train frame (lowBridge: x0 = x1). */
+  /** Tunnels, low bridges, trestles and fords near the train, in the train frame (lowBridge: x0 = x1). */
   hazards: FrameHazard[];
   /** Train-frame x → track point (for spyglass flags), or null beyond the known track. */
   trackPointAt(x: number): TrackPoint | null;
@@ -37,9 +41,26 @@ export function inTunnel(hazards: readonly FrameHazard[], x: number): boolean {
   return hazards.some((h) => h.kind === 'tunnel' && x >= h.x0 && x <= h.x1);
 }
 
-/** Does a tunnel's roof sweep a figure off the train (spec §4.3)? */
+/**
+ * Does a tunnel's roof sweep a figure off the train (spec §4.3)? Anyone with their feet above
+ * TUNNEL_FEET_Y: on a roof, the cab roof, the tender top, or a ladder's upper rungs.
+ */
 export function tunnelHits(hazards: readonly FrameHazard[], x: number, y: number): boolean {
   return y > TUNNEL_FEET_Y && inTunnel(hazards, x);
+}
+
+/** Is train-frame x in a ford, where the river runs over the line? */
+export function inFord(hazards: readonly FrameHazard[], x: number): boolean {
+  return hazards.some((h) => h.kind === 'ford' && x >= h.x0 && x <= h.x1);
+}
+
+/**
+ * Does a ford wash a figure off the train (spec §4.3)? Anyone with their feet below FORD_WATER_Y:
+ * on a platform, the tender deck, in the cab or a car, or on a ladder's low rungs. Only the roofs,
+ * the cab roof and the tender top are dry.
+ */
+export function fordHits(hazards: readonly FrameHazard[], x: number, y: number): boolean {
+  return y < FORD_WATER_Y && inFord(hazards, x);
 }
 
 /** Is train-frame x over a trestle (a fall from here is a long one)? */
@@ -49,8 +70,8 @@ export function overTrestle(hazards: readonly FrameHazard[], x: number): boolean
 
 /**
  * Did a low bridge's beam sweep across a figure this tick, too low for it (spec §4.3)? The beam
- * sits LOW_BRIDGE_CLEARANCE above the roof under the figure: standing on a roof hits it,
- * crouching passes. Over the tender, a gap or a platform it's above the highest roof.
+ * sits LOW_BRIDGE_CLEARANCE above the roof or tender top under the figure: standing there hits
+ * it, crouching passes. Over a gap or a platform it's above the highest roof.
  * `prevX` is where the figure was before this tick's move; the beam was v·DT further ahead.
  */
 export function bridgeHits(geo: TrainGeometry, hazards: readonly FrameHazard[], trainV: number, prevX: number, x: number, y: number, height: number): boolean {
@@ -86,11 +107,11 @@ export function hurtRider(ctx: FightCtx, cause: HurtCause, events: SimEvent[]): 
 }
 
 /**
- * Off the train (a fall, or swept off by a tunnel): a heart, then back at the rear after
- * RESPAWN_OFF (sooner with a caboose). A fall from a trestle, or losing the last heart, puts the
- * Rider down instead.
+ * Off the train (a fall, swept off by a tunnel or washed off in a ford): a heart, then back at the
+ * rear after RESPAWN_OFF (sooner with a caboose). A fall from a trestle, or losing the last heart,
+ * puts the Rider down instead.
  */
-export function riderOff(ctx: FightCtx, cause: 'tunnel' | 'fall', events: SimEvent[]): void {
+export function riderOff(ctx: FightCtx, cause: 'tunnel' | 'water' | 'fall', events: SimEvent[]): void {
   const { state } = ctx;
   const r = state.rider;
   const longFall = overTrestle(ctx.hazards, r.x);
@@ -119,6 +140,28 @@ export function riderDown(ctx: FightCtx, events: SimEvent[]): void {
   state.rider.respawnTicks = secondsToTicks(RESPAWN_DOWN_SECONDS);
   state.stats.timesDown++;
   events.push({ type: 'riderDown' });
+}
+
+// ---- The lurch (spec §5.2) ----------------------------------------------------------------------
+
+/**
+ * The brakes slammed on: the train slows hard and anyone standing outside keeps going. A figure
+ * upright on a windy surface (a roof, the cupola, the tender top, the cab roof, a platform) is
+ * thrown toward the loco (toward the rear when reversing): a hop forward and up, then staggered
+ * like a knockdown, but unhurt. One already in the air is only shoved forward. Crouching, ladders,
+ * the cab and the insides of cars brace you. Returns whether the figure was thrown.
+ */
+export function throwFigure(geo: TrainGeometry, f: Body & { stunTicks: number }, trainV: number): boolean {
+  if (f.ladder !== null || interiorAt(geo, f.x, f.y) !== null) return false;
+  const shove = Math.sign(trainV) * LURCH_HOP_VX;
+  if (!f.onGround) {
+    f.vx += shove;
+    return true;
+  }
+  if (f.crouch || !windySurface(f.surface)) return false;
+  Object.assign(f, { vx: f.vx + shove, vy: LURCH_HOP_VY, onGround: false, surface: null, crouch: false });
+  f.stunTicks = Math.max(f.stunTicks, secondsToTicks(LURCH_STAGGER_SECONDS));
+  return true;
 }
 
 // ---- Targets (spec §6.4, §7) ------------------------------------------------------------------
@@ -173,6 +216,7 @@ export function damageHorseman(ctx: FightCtx, h: HorsemanState, damage: number, 
     h.mode = 'falling';
     h.modeTicks = 0;
     h.aimTicks = 0;
+    h.shyTicks = 0;
     return true;
   }
   if (h.mode === 'boarding') {
@@ -198,10 +242,13 @@ function leaveTrain(state: GameState): void {
   Object.assign(state.rider, { vx: 0, vy: 0, onGround: false, surface: null, ladder: null, crouch: false, scoped: false, stunTicks: 0, inside: null });
 }
 
+/** Surfaces a low bridge's beam clears by LOW_BRIDGE_CLEARANCE (spec §4.3). */
+const UNDER_BEAM: ReadonlySet<SurfaceKind> = new Set<SurfaceKind>(['roof', 'cupola', 'cabRoof', 'tenderTop']);
+
 function beamY(geo: TrainGeometry, x: number): number {
   let top = -Infinity;
   for (const s of geo.surfaces) {
-    if (s.kind !== 'roof' && s.kind !== 'cupola' && s.kind !== 'cabRoof') continue;
+    if (!UNDER_BEAM.has(s.kind)) continue;
     if (x + HALF_W > s.x0 && x - HALF_W < s.x1) top = Math.max(top, s.y);
   }
   return (top === -Infinity ? geo.maxRoofY : top) + LOW_BRIDGE_CLEARANCE;

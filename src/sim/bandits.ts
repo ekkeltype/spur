@@ -9,9 +9,12 @@ import {
   banditAlive,
   bridgeHits,
   chestY,
+  fordHits,
   horsemanAlive,
   hurtRider,
+  inFord,
   removeBandit,
+  throwFigure,
   tunnelHits,
   type FightCtx,
 } from './fight';
@@ -35,6 +38,7 @@ import {
   FALL_OFF_Y,
   FALL_SECONDS,
   FAST_MOVE_WINDOW,
+  FORD_HORSE_SPEED,
   HORSE_ACCEL,
   HORSE_AMBUSH_AHEAD,
   HORSE_AMBUSH_WAKE,
@@ -43,6 +47,10 @@ import {
   HORSE_GIVE_UP_BEHIND,
   HORSE_GIVE_UP_SECONDS,
   HORSE_MAX,
+  HORSE_SHY_RANGE,
+  HORSE_SHY_REL,
+  HORSE_SHY_SECONDS,
+  HORSE_SHY_SECONDS_VETERAN,
   HORSE_SPAWN_BEHIND,
   HORSE_SPRINT,
   HORSE_STAMINA_REGEN,
@@ -234,6 +242,7 @@ function setHorseMode(h: HorsemanState, mode: HorsemanState['mode']): void {
 function retreat(h: HorsemanState): void {
   h.pickup = false;
   h.aimTicks = 0;
+  h.shyTicks = 0;
   setHorseMode(h, 'retreat');
 }
 
@@ -241,23 +250,46 @@ function approach(v: number, target: number, step: number): number {
   return v < target ? Math.min(target, v + step) : Math.max(target, v - step);
 }
 
-/** Rides toward a world speed: HORSE_MAX, or HORSE_SPRINT while stamina lasts (spec §7.2). */
-function ride(h: HorsemanState, desired: number): void {
+/** A horse in a ford wades, no faster than FORD_HORSE_SPEED (spec §4.3): the water holds it back at once. */
+function wade(worldV: number): number {
+  return Math.max(-FORD_HORSE_SPEED, Math.min(FORD_HORSE_SPEED, worldV));
+}
+
+/** Rides toward a world speed: HORSE_MAX, or HORSE_SPRINT while stamina lasts (spec §7.2); wading in a ford. */
+function ride(h: HorsemanState, desired: number, wading: boolean): void {
   const cap = h.stamina > 0 ? HORSE_SPRINT : HORSE_MAX;
   h.worldV = approach(h.worldV, Math.max(-cap, Math.min(cap, desired)), HORSE_ACCEL * DT);
+  if (wading) h.worldV = wade(h.worldV);
   if (Math.abs(h.worldV) > HORSE_MAX + 1e-9) h.stamina = Math.max(0, h.stamina - DT);
   else h.stamina = Math.min(HORSE_STAMINA_SECONDS, h.stamina + HORSE_STAMINA_REGEN * DT);
+}
+
+/**
+ * A lurch's squeal (spec §5.2): a horse riding alongside, within HORSE_SHY_RANGE of either end of
+ * the train, shies. Its rider loses his aim and any boarding he'd started (veterans settle theirs
+ * sooner). Ambushers still waiting, and riders retreating or falling, pay it no mind.
+ */
+function shy(state: GameState, h: HorsemanState, events: SimEvent[]): void {
+  const riding = h.mode === 'approach' || h.mode === 'pace' || h.mode === 'boarding';
+  if (!riding || h.x < -HORSE_SHY_RANGE || h.x > state.train.length + HORSE_SHY_RANGE) return;
+  h.shyTicks = Math.max(h.shyTicks, secondsToTicks(h.tier === 3 || h.boss ? HORSE_SHY_SECONDS_VETERAN : HORSE_SHY_SECONDS));
+  h.aimTicks = 0;
+  if (h.mode === 'boarding') setHorseMode(h, 'pace');
+  events.push({ type: 'horseShy', id: h.id });
 }
 
 function stepHorseman(ctx: FightCtx, geo: TrainGeometry, h: HorsemanState, events: SimEvent[]): void {
   const { state } = ctx;
   const v = state.train.v;
   h.modeTicks++;
+  if (state.train.lurchTick === state.tick) shy(state, h, events);
+  const wading = inFord(ctx.hazards, h.x);
   switch (h.mode) {
     case 'gone':
       return;
     case 'falling':
       h.worldV = approach(h.worldV, 0, HORSE_ACCEL * DT);
+      if (wading) h.worldV = wade(h.worldV);
       h.x += (h.worldV - v) * DT;
       if (h.modeTicks >= secondsToTicks(FALL_SECONDS)) h.mode = 'gone';
       return;
@@ -267,7 +299,7 @@ function stepHorseman(ctx: FightCtx, geo: TrainGeometry, h: HorsemanState, event
       if (h.x - state.train.length <= HORSE_AMBUSH_WAKE) setHorseMode(h, 'approach');
       return;
     case 'retreat':
-      ride(h, v - (v >= 0 ? RETREAT_REL : -RETREAT_REL));
+      ride(h, v - (v >= 0 ? RETREAT_REL : -RETREAT_REL), wading);
       h.x += (h.worldV - v) * DT;
       if (h.modeTicks >= secondsToTicks(RETREAT_SECONDS) || h.x < -HORSE_GIVE_UP_BEHIND - 30) h.mode = 'gone';
       return;
@@ -275,11 +307,16 @@ function stepHorseman(ctx: FightCtx, geo: TrainGeometry, h: HorsemanState, event
       break;
   }
 
-  // Approach, pace, board: ride to the mark and hold it, braking in time.
+  // Approach, pace, board: ride to the mark and hold it, braking in time. A shying horse is reined
+  // back below the train's speed instead, like a rider giving up, and falls back along the train.
   h.targetX = markFor(ctx, geo, h);
   const e = h.targetX - h.x;
-  const closing = Math.min(HORSE_CLOSE, Math.sqrt(2 * HORSE_BRAKE * HORSE_ACCEL * Math.abs(e)), 2 * Math.abs(e));
-  ride(h, v + Math.sign(e) * closing);
+  if (h.shyTicks > 0) {
+    ride(h, v - (v >= 0 ? HORSE_SHY_REL : -HORSE_SHY_REL), wading);
+  } else {
+    const closing = Math.min(HORSE_CLOSE, Math.sqrt(2 * HORSE_BRAKE * HORSE_ACCEL * Math.abs(e)), 2 * Math.abs(e));
+    ride(h, v + Math.sign(e) * closing, wading);
+  }
   h.x += (h.worldV - v) * DT;
 
   // Giving up: the train outruns a horse's gallop for 12 s, or he's 70 m behind (spec §7.2).
@@ -290,9 +327,10 @@ function stepHorseman(ctx: FightCtx, geo: TrainGeometry, h: HorsemanState, event
     return;
   }
 
-  // Boarding: alongside the point for BOARD_SECONDS with the train slow enough (spec §7.2).
+  // Boarding: alongside the point for BOARD_SECONDS with the train slow enough (spec §7.2), and
+  // never on a shying horse (spec §5.2).
   const aligned = Math.abs(h.targetX - h.x) <= BOARD_TOLERANCE;
-  const canBoard = !h.pickup && h.goal !== 'powder' && Math.abs(v) <= HORSE_MAX + 0.5 && banditsAboard(state) < MAX_BANDITS_ABOARD;
+  const canBoard = !h.pickup && h.goal !== 'powder' && h.shyTicks === 0 && Math.abs(v) <= HORSE_MAX + 0.5 && banditsAboard(state) < MAX_BANDITS_ABOARD;
   if (h.mode === 'boarding') {
     if (!aligned || !canBoard) setHorseMode(h, 'pace');
     else if (h.modeTicks >= secondsToTicks(BOARD_SECONDS)) {
@@ -306,6 +344,8 @@ function stepHorseman(ctx: FightCtx, geo: TrainGeometry, h: HorsemanState, event
     setHorseMode(h, 'pace');
   }
   horsemanShoots(ctx, h, events);
+  // The horse settles: a full HORSE_SHY_SECONDS of shying from the lurch's own tick.
+  if (h.shyTicks > 0) h.shyTicks--;
 }
 
 /** Where a horseman rides alongside (spec §7.2), in the train frame. */
@@ -390,10 +430,13 @@ function exposed(ctx: FightCtx): boolean {
   return r.mode === 'active' && r.inside === null;
 }
 
-/** Every 2.5–4 s (tier 3: 1.8–3 s), after a telegraph: the 'aim' event, a glint and a raised gun. */
+/**
+ * Every 2.5–4 s (tier 3: 1.8–3 s), after a telegraph: the 'aim' event, a glint and a raised gun.
+ * Not while holding a getaway horse, boarding or on a shying horse.
+ */
 function horsemanShoots(ctx: FightCtx, h: HorsemanState, events: SimEvent[]): void {
   const { state } = ctx;
-  if (state.godMode || h.pickup || h.mode === 'boarding') {
+  if (state.godMode || h.pickup || h.mode === 'boarding' || h.shyTicks > 0) {
     h.aimTicks = 0;
     return;
   }
@@ -495,6 +538,11 @@ function stepBandit(ctx: FightCtx, geo: TrainGeometry, b: BanditState, events: S
     return;
   }
   if (b.stunTicks > 0) b.stunTicks--;
+  // The brakes slammed on: thrown like the Rider, and his aim spoiled (spec §5.2, §7.3).
+  if (state.train.lurchTick === state.tick && throwFigure(geo, b, state.train.v)) {
+    b.aimTicks = 0;
+    events.push({ type: 'thrown', who: 'bandit', id: b.id });
+  }
   const wind = windOf(state.train.v);
   const prevX = b.x;
   // Knocked flat: no control. Taking aim: standing still. Otherwise, the goal decides.
@@ -509,9 +557,14 @@ function stepBandit(ctx: FightCtx, geo: TrainGeometry, b: BanditState, events: S
     removeBandit(ctx, b, events);
     return;
   }
-  // Tunnels and low bridges hit them exactly as they hit the Rider (spec §7.3).
+  // Tunnels, fords and low bridges hit them exactly as they hit the Rider (spec §7.3). One washed
+  // off drops any loot where he stood; one holding up the cab lets the Engineer go.
   if (tunnelHits(ctx.hazards, b.x, b.y)) {
     knockOff(ctx, b, 'tunnel', events);
+    return;
+  }
+  if (fordHits(ctx.hazards, b.x, b.y)) {
+    knockOff(ctx, b, 'water', events);
     return;
   }
   if (bridgeHits(geo, ctx.hazards, state.train.v, prevX, b.x, b.y, bodyHeight(b))) {
@@ -525,7 +578,7 @@ function stepBandit(ctx: FightCtx, geo: TrainGeometry, b: BanditState, events: S
   banditShoots(ctx, geo, b, events);
 }
 
-function knockOff(ctx: FightCtx, b: BanditState, cause: 'tunnel' | 'bridge', events: SimEvent[]): void {
+function knockOff(ctx: FightCtx, b: BanditState, cause: 'tunnel' | 'bridge' | 'water', events: SimEvent[]): void {
   ctx.state.stats.banditsDowned++;
   events.push({ type: 'banditKnockedOff', id: b.id, cause });
   removeBandit(ctx, b, events);
@@ -602,7 +655,8 @@ function flee(ctx: FightCtx, geo: TrainGeometry, b: BanditState, wind: Wind, eve
   if (b.navTarget === null) return hunt(ctx, geo, b, wind);
   const node = placeOf(geo, b.navTarget);
   if (!at(geo, b, node.region, node.x)) return steerTo(geo, b, node, wind);
-  const horse = state.horsemen.find((h) => h.pickup && horsemanAlive(h) && h.mode !== 'retreat' && Math.abs(h.x - b.x) <= BOARD_TOLERANCE);
+  // A shying horse can't take him until it's back alongside (spec §5.2).
+  const horse = state.horsemen.find((h) => h.pickup && horsemanAlive(h) && h.mode !== 'retreat' && h.shyTicks === 0 && Math.abs(h.x - b.x) <= BOARD_TOLERANCE);
   if (horse && Math.abs(state.train.v) <= HORSE_MAX + 0.5) escape(ctx, b, horse, events);
   return IDLE;
 }

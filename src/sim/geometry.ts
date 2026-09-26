@@ -426,7 +426,9 @@ function buildNav(geo: TrainGeometry, cars: readonly CarState[]): NavGraph {
   const cab = node((geo.cab.x0 + geo.cab.x1) / 2, geo.cab.floorY, 'cab');
   const boarding = geo.boarding.map((b, k) => node(b.x, b.y, `board${k}`));
 
-  // Take-offs at the ends of each car's roof, dropping to the platform below.
+  // Take-offs at the ends of each car's roof, dropping to the platform below. Not off the last
+  // car's rear: nothing stands behind its platform to stop you, so walking off that end carries
+  // you over the platform and off the train. The way down there is the ladder.
   const rearTakeoff: number[] = [];
   const frontTakeoff: number[] = [];
   for (let i = 2; i < cars.length; i++) {
@@ -434,11 +436,13 @@ function buildNav(geo: TrainGeometry, cars: readonly CarState[]): NavGraph {
     const rearRoof = tops.reduce((a, b) => (b.x0 < a.x0 ? b : a));
     const frontRoof = tops.reduce((a, b) => (b.x1 > a.x1 ? b : a));
     const floorY = CAR_SPECS[cars[i].kind].floorY;
-    const rr = node(rearRoof.x0 - TAKEOFF_OVER, rearRoof.y, `car${i}:rearEdge`);
+    if (i < cars.length - 1) {
+      const rr = node(rearRoof.x0 - TAKEOFF_OVER, rearRoof.y, `car${i}:rearEdge`);
+      rearTakeoff[i] = rr;
+      edge(rr, nearestIn(regionAt(geo, rearRoof.x0 - HALF_W - 0.1, floorY), rearRoof.x0), 'drop', dropCost(rearRoof.y - floorY), -1);
+    }
     const fr = node(frontRoof.x1 + TAKEOFF_OVER, frontRoof.y, `car${i}:frontEdge`);
-    rearTakeoff[i] = rr;
     frontTakeoff[i] = fr;
-    edge(rr, nearestIn(regionAt(geo, rearRoof.x0 - HALF_W - 0.1, floorY), rearRoof.x0), 'drop', dropCost(rearRoof.y - floorY), -1);
     edge(fr, nearestIn(regionAt(geo, frontRoof.x1 + HALF_W + 0.1, floorY), frontRoof.x1), 'drop', dropCost(frontRoof.y - floorY), 1);
     // Off either end of the cupola, down onto the roof beside it.
     for (const cu of geo.surfaces.filter((s) => s.car === i && s.kind === 'cupola')) {
