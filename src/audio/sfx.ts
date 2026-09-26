@@ -8,7 +8,7 @@
 //
 // Signal chain:
 //
-//   one-shots, whistle, brakes, valve, water, horses ─► effects bus (effects volume) ─┐
+//   one-shots, whistle, brakes, valve, water, ford, horses ─► effects bus (effects volume) ─┐
 //   the locomotive, the wind ─────────────────────────► world bus ─────────────────────┴─► environment ─┐
 //   UI sounds and stingers ───────────────────────────► dry effects bus (effects volume) ───────────────┤
 //                                                                                                        │
@@ -22,10 +22,14 @@
 // after it is transparent below −2 dBFS and never lets a sample reach full scale; no single sound is loud
 // enough to touch it.
 //
-// Continuous layers (engine, wind, brakes, valve, water, horses, whistle) are driven every frame with the
-// current values. Every parameter glides toward its target (setTargetAtTime), so a jump in speed or a lever
-// slammed over can't click. Things with a rhythm (exhaust beats, rod knocks, rail clicks, hoofbeats,
-// bubbles) are queued a little ahead of the audio clock, by the calls themselves and by a timer.
+// Continuous layers (engine, wind, brakes, valve, water, the ford's river, horses, whistle) are driven every
+// frame with the current values. Every parameter glides toward its target (setTargetAtTime), so a jump in
+// speed or a lever slammed over can't click. Things with a rhythm (exhaust beats, rod knocks, rail clicks,
+// hoofbeats, bubbles) are queued a little ahead of the audio clock, by the calls themselves and by a timer.
+//
+// Round 2 (spec §18.3): the river rushing round the train in a ford (panned to where the train is wet, or
+// muffled under the footplate in the cab), splashes, the lurch's clank of slack running in with the brakes
+// biting, a horse whinnying as it shies, cattle lowing and bellowing, and the Rider's grunt when thrown.
 
 import { EMERGENCY_BRAKE, WEAPONS } from '../sim/rules';
 import type { Weapon } from '../sim/types';
@@ -81,6 +85,11 @@ const WHISTLE_HOLD = 1;
 const WHISTLE_BEND = 0.93;
 /** Base pitch (Hz) of the shared Karplus–Strong pluck; other notes replay it faster or slower. */
 const PLUCK_HZ = 196;
+/** The ford's river heard in the open, and under the footplate in the cab (the cab passes little above this). */
+const FORD_OPEN_HZ = 16000;
+const FORD_CAB_HZ = 650;
+/** A splash heard from the cab, through its floor and walls. */
+const SPLASH_MUFFLED_HZ = 700;
 
 /** Output level of each sound, balanced against the others by offline measurement (see /sfx.html). */
 const LEVEL = {
@@ -115,6 +124,15 @@ const LEVEL = {
   win: 0.4,
   lose: 0.42,
   click: 0.22,
+  ford: 0.07,
+  /** The ford under the cab's footplate: its low-pass takes most of the rush, so it's driven harder. */
+  fordCab: 0.16,
+  splash: 0.36,
+  splashBig: 0.24,
+  lurch: 0.19,
+  whinny: 0.14,
+  cattle: 0.14,
+  grunt: 0.26,
 } as const;
 
 /** Inner balance of the locomotive's parts (before LEVEL.engine), measured like LEVEL. */
@@ -620,6 +638,16 @@ export function windMix(level: number): { buffet: number; rush: number; hiss: nu
 }
 
 /**
+ * The river in a ford, 0..1 (0 silences it): the whole layer's gain, and its parts' balance. A slow river
+ * round a standing train is mostly its rush and low wash; ploughed through at speed it throws spray and
+ * patters with drops.
+ */
+export function fordMix(level: number): { gain: number; rush: number; wash: number; spray: number; drops: number; bubbles: number } {
+  const l = clamp(level, 0, 1, 0);
+  return { gain: l > 0 ? l ** 0.6 : 0, rush: 0.6 + 0.4 * l, wash: 0.8, spray: smoothstep(0.3, 1, l), drops: 0.3 + 0.7 * l, bubbles: 8 + 30 * l };
+}
+
+/**
  * Where a shot is heard: stereo pan (−1 left .. 1 right, narrowed slightly), amplitude, and the cutoff of a
  * low-pass that dulls distant ones. Muffled shots (the Engineer, through the cab's walls) are centred and
  * dark. Missing or non-finite inputs mean centred and full.
@@ -822,10 +850,10 @@ interface Loop {
   sources: Voice[];
 }
 
-type LayerName = 'wind' | 'brakes' | 'valve' | 'water';
-const LAYER_NAMES: readonly LayerName[] = ['wind', 'brakes', 'valve', 'water'];
+type LayerName = 'wind' | 'brakes' | 'valve' | 'water' | 'ford';
+const LAYER_NAMES: readonly LayerName[] = ['wind', 'brakes', 'valve', 'water', 'ford'];
 
-/** A level-driven continuous layer (wind, brakes, valve, water). */
+/** A level-driven continuous layer (wind, brakes, valve, water, the ford's river). */
 interface Layer {
   loop: Loop;
   /** Glides the layer's parameters to a level; 0 silences it. */
@@ -1140,9 +1168,14 @@ export class Sfx {
   /** End times of the gunshots still sounding, to cap how many overlap. */
   private shotEnds: number[] = [];
   private bellSwing = false;
+  /** Whinnies started at the same moment, so a string of shying horses doesn't neigh in unison. */
+  private whinnies = 0;
+  private lastWhinnyT = -Infinity;
   // What the game last asked for.
   private engineWant: EngineInput | null = null;
-  private readonly want: Record<LayerName, number> = { wind: 0, brakes: 0, valve: 0, water: 0 };
+  private readonly want: Record<LayerName, number> = { wind: 0, brakes: 0, valve: 0, water: 0, ford: 0 };
+  /** Where the ford's river is heard: its pan, and the listener (the cab hears it muffled). */
+  private readonly fordPlace: { pan: number; listener: Listener } = { pan: 0, listener: 'rider' };
   private horsesWant: { pan: number; gain: number }[] = [];
   private whistleWant = false;
   private whistleListener: Listener = 'rider';
@@ -1263,6 +1296,17 @@ export class Sfx {
   /** The water column pouring into the tender. */
   water(on: boolean): void {
     this.setLayer('water', on === true ? 1 : 0);
+  }
+
+  /**
+   * The river rushing round the train in a ford, 0..1 (0 silences it): louder and churning with spray as
+   * the train ploughs through. The Rider hears it at `pan` (where the train is wet, nearest them); in the
+   * cab ('cab') it's under the footplate: centred and muffled.
+   */
+  fordWater(level: number, opts?: { pan?: number; listener?: Listener }): void {
+    this.fordPlace.listener = listenerOf(opts?.listener);
+    this.fordPlace.pan = this.fordPlace.listener === 'cab' ? 0 : clamp(opts?.pan, -1, 1, 0);
+    this.setLayer('ford', clamp(level, 0, 1, 0));
   }
 
   /**
@@ -1658,6 +1702,266 @@ export class Sfx {
             ],
       );
       swell(noiseLayer(ctx, g.white, band, t, t + 1, out).gain, t, 0.3 * bandNorm(ctx, 2500), into ? 0.06 : 0.2, into ? 0.1 : 0.25, 0.85);
+    });
+  }
+
+  /**
+   * A splash in a ford. `big`: the loco ploughing in, a mass of water struck and thrown up as a sheet of
+   * spray that patters back down; otherwise a body falling in, a plunge and a gulp. Pass `pan` and `gain`
+   * by where it is; `muffled` for the cab (heard through the floor, centred).
+   */
+  splash(big: boolean, opts?: { pan?: number; gain?: number; muffled?: boolean }): void {
+    const huge = big === true;
+    this.oneShot(huge ? 'splash:big' : 'splash', huge ? 0.4 : 0.2, (g, t) => {
+      const { ctx } = g;
+      const muffled = opts?.muffled === true;
+      const place = shotPlacement(opts?.pan, opts?.gain, muffled);
+      if (place.gain < 0.003) return;
+      const out = amp(ctx, (huge ? LEVEL.splashBig : LEVEL.splash) * place.gain);
+      if (muffled) out.connect(lowpass(ctx, SPLASH_MUFFLED_HZ)).connect(g.fx);
+      else out.connect(lowpass(ctx, 2500 + 15500 * place.gain)).connect(panner(ctx, place.pan)).connect(g.fx);
+      const sat = ctx.createWaveShaper();
+      sat.curve = CURVE_GROWL;
+      const body = amp(ctx, 0);
+      const o = tone(ctx, 'sine', huge ? 62 : 170, t, perc(body.gain, t, huge ? 0.85 : 0.6, 0.004, huge ? 0.32 : 0.14));
+      glide(o.frequency, t, [
+        [0, huge ? 62 : 170],
+        [huge ? 0.3 : 0.12, huge ? 30 : 68],
+      ]);
+      o.connect(amp(ctx, 0.8)).connect(sat).connect(body).connect(out);
+      if (!huge) {
+        // The gulp: the cavity closing behind the body.
+        const gulp = amp(ctx, 0);
+        const b = tone(ctx, 'sine', 320, t + 0.035, perc(gulp.gain, t + 0.035, 0.35, 0.002, 0.09));
+        glide(b.frequency, t + 0.035, [
+          [0, 320],
+          [0.06, 1050],
+        ]);
+        b.connect(gulp).connect(out);
+      }
+      // The crash of water, falling in pitch as the wave collapses.
+      const band = bandpass(ctx, huge ? 2200 : 1500, huge ? 0.9 : 0.8);
+      glide(band.frequency, t, [
+        [0, huge ? 2400 : 1600],
+        [huge ? 0.6 : 0.3, huge ? 650 : 800],
+      ]);
+      swell(noiseLayer(ctx, g.white, band, t, t + (huge ? 1.1 : 0.5), out).gain, t, (huge ? 0.8 : 0.6) * bandNorm(ctx, 2000), 0.012, huge ? 0.08 : 0.03, huge ? 0.95 : 0.4);
+      if (huge) perc(noiseLayer(ctx, g.white, highpass(ctx, 3500), t, t + 1.3, out).gain, t + 0.02, 0.35 * bandNorm(ctx, 8000), 0.02, 1.1);
+      // Drops pattering back, and bubbles.
+      swell(noiseLayer(ctx, g.grit, bandpass(ctx, 2800, 0.9), t + 0.1, t + (huge ? 1.6 : 0.8), out).gain, t + 0.1, huge ? 0.55 : 0.4, 0.15, huge ? 0.45 : 0.2, huge ? 1.4 : 0.65);
+      const bubbles = amp(ctx, 0.3);
+      bubbles.connect(out);
+      for (let i = 0; i < (huge ? 14 : 7); i++) {
+        const at = t + 0.05 + rnd(0, huge ? 0.9 : 0.5);
+        const f = rnd(350, 1300);
+        const dur = rnd(0.02, 0.06);
+        const vca = amp(ctx, 0);
+        const b = tone(ctx, 'sine', f, at, perc(vca.gain, at, rnd(0.2, 0.55), 0.002, dur));
+        glide(b.frequency, at, [
+          [0, f],
+          [dur, f * rnd(1.3, 1.8)],
+        ]);
+        b.connect(vca).connect(bubbles);
+      }
+    });
+  }
+
+  /**
+   * The lurch (spec §5.2): the brake slammed into emergency, the slack in every coupling running in with a
+   * clank after clank down the train, the whole train's weight shoved forward, the shoes biting. For the
+   * Rider the clanks run from the loco (right) toward the rear; in the cab they come from behind.
+   */
+  lurch(listener: Listener): void {
+    const cab = listenerOf(listener) === 'cab';
+    this.oneShot('lurch', 1, (g, t) => {
+      const { ctx } = g;
+      const out = amp(ctx, LEVEL.lurch);
+      out.connect(g.fx);
+      // The shove: the whole train's weight going forward at once.
+      const sat = ctx.createWaveShaper();
+      sat.curve = CURVE_GROWL;
+      const shove = amp(ctx, 0);
+      const o = tone(ctx, 'sine', 52, t, perc(shove.gain, t, 0.55, 0.006, 0.45));
+      glide(o.frequency, t, [
+        [0, 52],
+        [0.4, 28],
+      ]);
+      o.connect(amp(ctx, 0.8)).connect(sat).connect(shove).connect(out);
+      // The slack running in: coupling after coupling taking up, fading down the train.
+      let at = t + 0.03;
+      const n = 6;
+      for (let i = 0; i < n; i++) {
+        const u = i / (n - 1);
+        const clank = amp(ctx, (cab ? 0.9 * (1 - 0.8 * u) : 0.85 * (1 - 0.55 * u)) * rnd(0.85, 1.1));
+        if (cab) clank.connect(lowpass(ctx, 2200 - 1200 * u)).connect(out);
+        else clank.connect(panner(ctx, (0.55 - 1.1 * u) * PAN_WIDTH)).connect(out);
+        modal(ctx, clank, at, rnd(110, 190), GRILLE_MODES, rnd(0.45, 0.7));
+        perc(noiseLayer(ctx, g.white, lowpass(ctx, 420), at, at + 0.12, clank).gain, at, 0.5 * bandNorm(ctx, 460), 0.002, 0.06);
+        at += rnd(0.07, 0.11);
+      }
+      // The shoes biting: a grinding squeal of the wheels' rings, and sparks.
+      const bite = amp(ctx, 0);
+      swell(bite.gain, t, 0.22, 0.03, 0.2, 0.9);
+      bite.connect(out);
+      for (const [f, q] of [
+        [2380, 30],
+        [3170, 36],
+      ] as const) {
+        noise(ctx, g.white, t, t + 0.95)
+          .connect(bandpass(ctx, f * rnd(0.98, 1.02), q))
+          .connect(amp(ctx, bandNorm(ctx, f / q)))
+          .connect(bite);
+      }
+      swell(noiseLayer(ctx, g.brown, bandpass(ctx, 500, 1), t, t + 0.9, out).gain, t, 0.3, 0.02, 0.15, 0.8);
+      perc(noiseLayer(ctx, g.grit, highpass(ctx, 3500), t, t + 0.7, out).gain, t + 0.02, 0.45, 0.01, 0.55);
+    });
+  }
+
+  /**
+   * A horse shying at the brake's squeal (spec §5.2): a whinny, rising steeply then shuddering down, and a
+   * snort. Pass `pan` and `gain` by where the horse is. Several at once start a moment apart.
+   */
+  whinny(pan?: number, gain?: number): void {
+    this.oneShot(`whinny:${this.whinnies++ % 3}`, 0.3, (g, t0) => {
+      const { ctx } = g;
+      const place = shotPlacement(pan, gain);
+      if (place.gain < 0.003) return;
+      // Horses shying together don't neigh in unison.
+      const t = t0 - this.lastWhinnyT < 0.05 ? t0 + rnd(0.08, 0.22) : t0;
+      this.lastWhinnyT = t0;
+      const out = amp(ctx, LEVEL.whinny * place.gain);
+      out.connect(lowpass(ctx, place.cutoffHz)).connect(panner(ctx, place.pan)).connect(g.fx);
+      const r = rnd(0.88, 1.12);
+      const len = rnd(0.8, 1);
+      const env = amp(ctx, 0);
+      const end = swell(env.gain, t, 1, 0.05, len * 0.6, len);
+      // The voice: bright and nasal, its pitch leaping up and then shuddering down.
+      const voice = tone(ctx, 'sawtooth', 700 * r, t, end + 0.02);
+      glide(voice.frequency, t, [
+        [0, 700 * r],
+        [0.1, 1150 * r],
+        [len, 520 * r],
+      ]);
+      const shudder = tone(ctx, 'sine', rnd(11, 14), t, end + 0.02);
+      shudder.connect(amp(ctx, 70)).connect(voice.detune);
+      const trem = amp(ctx, 0.7);
+      shudder.connect(amp(ctx, 0.3)).connect(trem.gain);
+      const mouth = amp(ctx, 1);
+      voice.connect(trem).connect(mouth);
+      mouth.connect(bandpass(ctx, 950, 4)).connect(amp(ctx, 1.4)).connect(env);
+      mouth.connect(bandpass(ctx, 2300, 5)).connect(amp(ctx, 0.9)).connect(env);
+      env.connect(lowpass(ctx, 3800)).connect(out);
+      // Breath through it, and a snort after.
+      const breath = amp(ctx, 0);
+      swell(breath.gain, t, 0.25 * bandNorm(ctx, 1500), 0.05, len * 0.5, len);
+      noise(ctx, g.white, t, end + 0.02).connect(bandpass(ctx, 1800, 1.2)).connect(breath).connect(out);
+      const snort = t + len + 0.08;
+      perc(noiseLayer(ctx, g.white, lowpass(ctx, 900), snort, snort + 0.25, out).gain, snort, 0.9 * bandNorm(ctx, 1000), 0.01, 0.16);
+    });
+  }
+
+  /**
+   * Cattle on the line (spec §8), far ahead: `scatter` false, one lows, a long questioning "moo?" rising at
+   * the end (the herd heard the whistle too soon and has got used to it); true, a bellow and the herd's
+   * hooves as it bolts off the line. Pass `pan` and `gain` by where the herd is.
+   */
+  cattle(scatter: boolean, pan?: number, gain?: number): void {
+    const bolt = scatter === true;
+    this.oneShot(bolt ? 'cattle:scatter' : 'cattle:calm', 0.6, (g, t) => {
+      const { ctx } = g;
+      const place = shotPlacement(pan, gain);
+      if (place.gain < 0.003) return;
+      const out = amp(ctx, LEVEL.cattle * place.gain * (bolt ? 1.25 : 1));
+      out.connect(lowpass(ctx, Math.min(place.cutoffHz, 6000))).connect(panner(ctx, place.pan)).connect(g.fx);
+      const f0 = bolt ? rnd(150, 180) : rnd(105, 125);
+      const len = bolt ? rnd(0.85, 1) : rnd(1.3, 1.5);
+      const env = amp(ctx, 0);
+      const end = swell(env.gain, t, 1, bolt ? 0.08 : 0.25, len * 0.75, len);
+      const voice = tone(ctx, 'sawtooth', f0, t, end + 0.02);
+      glide(
+        voice.frequency,
+        t,
+        bolt
+          ? [
+              [0, f0],
+              [0.18, f0 * 1.25],
+              [len, f0 * 0.8],
+            ]
+          : [
+              [0, f0],
+              [len * 0.62, f0 * 1.02],
+              [len * 0.93, f0 * 1.35],
+            ],
+      );
+      tone(ctx, 'sine', rnd(4.5, 5.5), t, end + 0.02)
+        .connect(amp(ctx, 8))
+        .connect(voice.detune);
+      // The mouth: closed ("mm") opening to "oo"; a bellow is rough and wide open.
+      const mouth = lowpass(ctx, 350, 2);
+      glide(mouth.frequency, t, [
+        [0, bolt ? 700 : 330],
+        [bolt ? 0.1 : 0.4, bolt ? 1500 : 900],
+        [len, bolt ? 900 : 1000],
+      ]);
+      if (bolt) {
+        const rough = ctx.createWaveShaper();
+        rough.curve = CURVE_GROWL;
+        voice.connect(amp(ctx, 0.9)).connect(rough).connect(mouth);
+      } else voice.connect(mouth);
+      mouth.connect(bandpass(ctx, bolt ? 620 : 700, 3)).connect(amp(ctx, 1.6)).connect(env);
+      mouth.connect(amp(ctx, 0.5)).connect(env);
+      env.connect(out);
+      const breath = amp(ctx, 0);
+      swell(breath.gain, t, 0.3 * bandNorm(ctx, 600), 0.1, len * 0.6, len);
+      noise(ctx, g.brown, t, end + 0.02).connect(bandpass(ctx, 600, 1.4)).connect(breath).connect(out);
+      if (!bolt) return;
+      // The herd bolting: hooves drumming off into the distance, a low rumble under them.
+      const hooves = amp(ctx, 1.9);
+      hooves.connect(out);
+      for (let i = 0; i < 22; i++) {
+        const u = (i + rnd(0, 0.8)) / 22;
+        const at = t + 0.2 + u * 2.3;
+        const thud = amp(ctx, 0);
+        perc(thud.gain, at, (1 - 0.6 * u) * rnd(0.6, 1), 0.003, rnd(0.05, 0.08));
+        noise(ctx, g.brown, at, at + 0.12)
+          .connect(lowpass(ctx, 320))
+          .connect(amp(ctx, 1.4))
+          .connect(thud)
+          .connect(hooves);
+      }
+      swell(noiseLayer(ctx, g.brown, lowpass(ctx, 150), t + 0.2, t + 2.8, out).gain, t + 0.2, 0.25, 0.3, 0.5, 2.5);
+    });
+  }
+
+  /** The Rider thrown by a lurch: a grunt knocked out of them, boots skidding on the roof, a stamp as they catch themselves. */
+  grunt(): void {
+    this.oneShot('grunt', 0.5, (g, t) => {
+      const { ctx } = g;
+      const out = amp(ctx, LEVEL.grunt);
+      out.connect(g.fx);
+      const env = amp(ctx, 0);
+      const end = perc(env.gain, t, 1, 0.012, 0.16);
+      const voice = tone(ctx, 'sawtooth', 165, t, end);
+      glide(voice.frequency, t, [
+        [0, 165],
+        [0.14, 105],
+      ]);
+      voice.connect(bandpass(ctx, 650, 2)).connect(amp(ctx, 1.4)).connect(env);
+      voice.connect(bandpass(ctx, 1300, 3)).connect(amp(ctx, 0.6)).connect(env);
+      env.connect(out);
+      perc(noiseLayer(ctx, g.white, bandpass(ctx, 1500, 1), t, t + 0.15, out).gain, t, 0.45 * bandNorm(ctx, 1500), 0.005, 0.1);
+      // Boots skidding, then the stamp.
+      swell(noiseLayer(ctx, g.white, bandpass(ctx, 1200, 1.5), t + 0.05, t + 0.5, out).gain, t + 0.05, 0.3 * bandNorm(ctx, 800), 0.04, 0.15, 0.4);
+      perc(noiseLayer(ctx, g.grit, bandpass(ctx, 2400, 0.9), t + 0.05, t + 0.45, out).gain, t + 0.05, 0.35, 0.01, 0.3);
+      const stamp = t + 0.34;
+      const thump = amp(ctx, 0);
+      const s = tone(ctx, 'sine', 95, stamp, perc(thump.gain, stamp, 0.7, 0.002, 0.1));
+      glide(s.frequency, stamp, [
+        [0, 95],
+        [0.08, 55],
+      ]);
+      s.connect(thump).connect(out);
+      perc(noiseLayer(ctx, g.white, bandpass(ctx, 380, 1.6), stamp, stamp + 0.12, out).gain, stamp, 0.5 * bandNorm(ctx, 380), 0.001, 0.06);
     });
   }
 
@@ -2318,6 +2622,8 @@ export class Sfx {
         return this.buildValve(g);
       case 'water':
         return this.buildWater(g);
+      case 'ford':
+        return this.buildFord(g);
     }
   }
 
@@ -2554,6 +2860,91 @@ export class Sfx {
           o.connect(vca).connect(bubbles);
         }
         if (on <= 0) schedT = Math.max(schedT, horizon);
+      },
+    };
+  }
+
+  /**
+   * The river in a ford: a broad rush of surf heaving in slow surges, a low wash piling against the
+   * wheels, the hiss of spray and drops pattering back, and gurgles. Panned to where the train is wet;
+   * muffled for the cab, where it's under the footplate.
+   */
+  private buildFord(g: Graph): Layer {
+    const { ctx } = g;
+    const t = ctx.currentTime + START_DELAY;
+    const out = amp(ctx, 1);
+    out.connect(g.fx);
+    const cab = this.fordPlace.listener === 'cab';
+    const pan = panner(ctx, this.fordPlace.pan * PAN_WIDTH);
+    pan.connect(out);
+    const muffle = lowpass(ctx, cab ? FORD_CAB_HZ : FORD_OPEN_HZ);
+    muffle.connect(pan);
+    const level = amp(ctx, 0);
+    level.connect(muffle);
+    const sources: Voice[] = [];
+    const white = noise(ctx, g.white, t, undefined, sources);
+    const brown = noise(ctx, g.brown, t, undefined, sources);
+    const grit = noise(ctx, g.grit, t, undefined, sources);
+    // Surges: the river heaving against the cars.
+    const surge = amp(ctx, 0.75);
+    surge.connect(level);
+    tone(ctx, 'sine', rnd(0.18, 0.26), t, undefined, sources).connect(amp(ctx, 0.2)).connect(surge.gain);
+    tone(ctx, 'sine', rnd(0.6, 0.85), t, undefined, sources).connect(amp(ctx, 0.1)).connect(surge.gain);
+    const rush = amp(ctx, 0);
+    white.connect(bandpass(ctx, 1100, 0.55)).connect(amp(ctx, bandNorm(ctx, 2000))).connect(rush).connect(surge);
+    const wash = amp(ctx, 0);
+    brown.connect(lowpass(ctx, 320)).connect(amp(ctx, 1.1)).connect(wash).connect(surge);
+    const spray = amp(ctx, 0);
+    white.connect(highpass(ctx, 3800)).connect(amp(ctx, bandNorm(ctx, 8000))).connect(spray).connect(level);
+    const drops = amp(ctx, 0);
+    grit.connect(bandpass(ctx, 2600, 0.9)).connect(drops).connect(level);
+    const bubbles = amp(ctx, 0.45);
+    bubbles.connect(level);
+    const k = {
+      level: new Knob(level.gain, 0.15),
+      rush: new Knob(rush.gain, 0.2),
+      wash: new Knob(wash.gain, 0.2),
+      spray: new Knob(spray.gain, 0.2),
+      drops: new Knob(drops.gain, 0.2),
+      pan: new Knob(pan.pan, 0.1),
+      muffle: new Knob(muffle.frequency, 0.12),
+    };
+    let rate = 0;
+    let schedT = t;
+    const loop: Loop = { out, sources };
+    return {
+      loop,
+      idleSince: null,
+      set: (lv, now) => {
+        const m = fordMix(lv);
+        const inCab = this.fordPlace.listener === 'cab';
+        k.level.set((inCab ? LEVEL.fordCab : LEVEL.ford) * m.gain, now, lv > 0 ? 0.15 : 0.2);
+        k.rush.set(m.rush, now);
+        k.wash.set(m.wash, now);
+        k.spray.set(0.6 * m.spray, now);
+        k.drops.set(0.5 * m.drops, now);
+        k.pan.set(this.fordPlace.pan * PAN_WIDTH, now);
+        k.muffle.set(inCab ? FORD_CAB_HZ : FORD_OPEN_HZ, now);
+        rate = lv > 0 ? m.bubbles : 0;
+      },
+      pump: (horizon) => {
+        const now = ctx.currentTime;
+        if (schedT < now) schedT = now + START_DELAY;
+        loop.sources = loop.sources.filter((s) => s.end > now);
+        // Gurgles: sine blips rising as the bubbles shrink, at random (Poisson) times.
+        while (rate > 0 && schedT < horizon) {
+          schedT += -Math.log(1 - Math.random()) / rate;
+          const f = rnd(300, 1300);
+          const dur = rnd(0.02, 0.07);
+          const vca = amp(ctx, 0);
+          const o = tone(ctx, 'sine', f, schedT, perc(vca.gain, schedT, rnd(0.15, 0.5), 0.002, dur), loop.sources);
+          glide(o.frequency, schedT, [
+            [0, f],
+            [dur, f * rnd(1.3, 1.9)],
+          ]);
+          o.connect(vca).connect(bubbles);
+        }
+        if (rate <= 0) schedT = Math.max(schedT, horizon);
       },
     };
   }

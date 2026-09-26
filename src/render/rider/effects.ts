@@ -2,16 +2,19 @@
 // the whistle and the safety valve, dust from hooves, sparks, splinters, embers, tracers, muzzle
 // flashes that light the scene, aim glints (the telegraph players dodge by, spec §7.2), hit puffs
 // (kept small and tasteful), explosions, figures tumbling off the train, and screen shake.
+// Round 2: spray and droplets where the train cuts through a ford, figures washed off and carried
+// away by the river, and the lurch's jolt along the train.
 //
 // Particles live in the world, not the train frame: x is a track position (train-frame x plus the
 // odometer) and velocities are relative to still air. Smoke leaves the stack at the train's speed
 // and drags to rest, so it streams back over the cars as the train runs on; dust kicked up by a
 // horse stays behind it. A fixed pool, no allocation per particle.
 
+import { FORD_WATER_Y } from '../../sim/rules';
 import type { Weapon } from '../../sim/types';
 import { defaultPose, FigurePainter, drawHorse, type FigureKind, type HorseLook, type Pose } from './figures';
 import { LANE_Y } from './scenery';
-import { clamp01, inTunnel, setWorld, TAU, type Scene } from './scene';
+import { clamp01, inTunnel, setWorld, smoothstep, TAU, type Scene } from './scene';
 import { glowSprite, puffSprite } from './sprites';
 
 export const P_SMOKE = 0;
@@ -25,18 +28,23 @@ export const P_DEBRIS = 7;
 export const P_POWDER = 8;
 export const P_WATER = 9;
 export const P_CHIP = 10;
+/** Spray: a soft white mist thrown up where the train cuts through water, settling as it drifts. */
+export const P_SPRAY = 11;
 
 /** Drawing layers for particles. */
 export const L_BEHIND = 0; // smoke and steam: behind the figures, so they stay readable
 export const L_LANE = 1; // dust under the horses
-export const L_FRONT = 2; // sparks, splinters, hit puffs, debris
+export const L_FRONT = 2; // sparks, splinters, hit puffs, debris, spray
 
 const CAP = 1400;
 
 /** Per-kind drag (1/s), gravity (m/s², + = down) and layer. */
-const DRAG = [1.4, 2.2, 1.6, 0.25, 0.3, 0.9, 3.5, 0.2, 1.8, 0.3, 0.3];
-const GRAV = [-0.9, -1.6, -0.3, 9.8, 9.8, -1.5, 1.5, 9.8, -0.5, 9.8, 9.8];
-const LAYER = [L_BEHIND, L_BEHIND, L_LANE, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT];
+const DRAG = [1.4, 2.2, 1.6, 0.25, 0.3, 0.9, 3.5, 0.2, 1.8, 0.3, 0.3, 2.4];
+const GRAV = [-0.9, -1.6, -0.3, 9.8, 9.8, -1.5, 1.5, 9.8, -0.5, 9.8, 9.8, 2.2];
+const LAYER = [L_BEHIND, L_BEHIND, L_LANE, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT, L_FRONT];
+
+/** A washed-off figure floats with the water at its chest: its feet this far below the surface. */
+const SWEPT_DEPTH = 1.35;
 
 interface Tracer {
   x0: number;
@@ -92,6 +100,20 @@ interface Shake {
   dur: number;
 }
 
+/** A figure washed off in a ford (spec §4.3), carried away by the river. */
+interface Swept {
+  kind: FigureKind;
+  tier: 1 | 2 | 3;
+  /** World position along the track, and speed: the water drags it to rest as the train runs on. */
+  s: number;
+  vx: number;
+  /** Feet height, settling to float with the water at the chest. */
+  y: number;
+  t0: number;
+  facing: 1 | -1;
+  seed: number;
+}
+
 export class Effects {
   // Particle pool (structure of arrays).
   private n = 0;
@@ -106,13 +128,17 @@ export class Effects {
   private readonly grow = new Float32Array(CAP);
   private readonly rot = new Float32Array(CAP);
   private readonly shade = new Float32Array(CAP);
+  /** Falling below this height ends a particle (spray falling back into the river). */
+  private readonly floor = new Float32Array(CAP);
 
   private readonly tracers: Tracer[] = [];
   private readonly flashes: Flash[] = [];
   private readonly explosions: Explosion[] = [];
   private readonly tumbles: Tumble[] = [];
   private readonly horses: Riderless[] = [];
+  private readonly swepts: Swept[] = [];
   private readonly shakes: Shake[] = [];
+  private readonly jolts: Shake[] = [];
   /** Aim telegraphs: key ('b12' / 'h7') → start time. */
   readonly aims = new Map<string, number>();
   /** Last shot time per shooter key ('rider', 'b12', 'h7'), for recoil. */
@@ -130,8 +156,11 @@ export class Effects {
 
   // ---- Spawning --------------------------------------------------------------------------------
 
-  /** Adds a particle at train-frame (tx, ty) with velocity relative to the train; `inherit` of the train's speed. */
-  spawn(s: Scene, kind: number, tx: number, ty: number, vx: number, vy: number, size: number, grow: number, life: number, inherit = 1): void {
+  /**
+   * Adds a particle at train-frame (tx, ty) with velocity relative to the train; `inherit` of the
+   * train's speed. It ends early if it falls below `floor` (spray dropping back into the water).
+   */
+  spawn(s: Scene, kind: number, tx: number, ty: number, vx: number, vy: number, size: number, grow: number, life: number, inherit = 1, floor = -100): void {
     if (this.n >= CAP) return;
     const i = this.n++;
     this.kind[i] = kind;
@@ -145,14 +174,31 @@ export class Effects {
     this.grow[i] = grow;
     this.rot[i] = this.rand() * TAU;
     this.shade[i] = this.rand();
+    this.floor[i] = floor;
   }
 
   /** A little cloud of particles around (tx, ty). */
-  burst(s: Scene, kind: number, tx: number, ty: number, count: number, speed: number, size: number, life: number, inherit = 1, up = 0): void {
+  burst(s: Scene, kind: number, tx: number, ty: number, count: number, speed: number, size: number, life: number, inherit = 1, up = 0, floor = -100): void {
     for (let i = 0; i < count; i++) {
       const a = this.rand() * TAU;
       const v = speed * (0.4 + 0.6 * this.rand());
-      this.spawn(s, kind, tx, ty, Math.cos(a) * v, Math.sin(a) * v + up, size * (0.6 + 0.8 * this.rand()), size * 0.8, life * (0.6 + 0.6 * this.rand()), inherit);
+      this.spawn(s, kind, tx, ty, Math.cos(a) * v, Math.sin(a) * v + up, size * (0.6 + 0.8 * this.rand()), size * 0.8, life * (0.6 + 0.6 * this.rand()), inherit, floor);
+    }
+  }
+
+  /**
+   * A splash at train-frame (tx, ty) on the water: droplets and mist thrown up (`big`: the loco
+   * ploughing in; otherwise a body falling in), all falling back into the river.
+   */
+  splash(s: Scene, tx: number, ty: number, big: number, inherit = 0.3): void {
+    const floor = FORD_WATER_Y - 0.15;
+    for (let i = 0; i < Math.round(26 * big); i++) {
+      const a = Math.PI * (0.12 + 0.76 * this.rand());
+      const v = (3 + 5 * this.rand()) * Math.sqrt(big);
+      this.spawn(s, P_WATER, tx + (this.rand() - 0.5) * big, ty, Math.cos(a) * v, Math.sin(a) * v, 0.05 + 0.05 * this.rand(), 0, 0.9 + 0.5 * this.rand(), inherit, floor);
+    }
+    for (let i = 0; i < Math.round(9 * big); i++) {
+      this.spawn(s, P_SPRAY, tx + (this.rand() - 0.5) * 1.2 * big, ty + 0.2, (this.rand() - 0.5) * 3, 1.5 + 2.5 * this.rand(), 0.35 * big, 0.9 * big, 0.8 + 0.5 * this.rand(), inherit);
     }
   }
 
@@ -184,9 +230,25 @@ export class Effects {
     this.horses.push({ s: x + s.odo, v: worldV, t0: s.t, look, phase: this.rand(), facing });
   }
 
+  /** A figure washed off the train at train-frame (x, y) by a ford: into the water and carried away. */
+  swept(s: Scene, kind: FigureKind, tier: 1 | 2 | 3, x: number, y: number, facing: 1 | -1): void {
+    if (this.swepts.length > 6) this.swepts.shift();
+    this.swepts.push({ kind, tier, s: x + s.odo, vx: s.v, y, t0: s.t, facing, seed: this.rand() * 10 });
+    this.splash(s, x, FORD_WATER_Y, 0.8);
+  }
+
   shake(t: number, amp: number, dur: number): void {
     if (this.shakes.length > 8) this.shakes.shift();
     this.shakes.push({ t0: t, amp, dur });
+  }
+
+  /**
+   * A jolt along the train (the lurch): the view kicks once toward the rear by `amp` CSS px (signed:
+   * negative kicks it the other way) and settles. Like shake(), only when screen shake is on.
+   */
+  jolt(t: number, amp: number, dur: number): void {
+    if (this.jolts.length > 4) this.jolts.shift();
+    this.jolts.push({ t0: t, amp, dur });
   }
 
   /** Current shake offset (CSS px) at time t; 0 when none. */
@@ -204,6 +266,18 @@ export class Effects {
     }
     out.x = amp * (0.6 * Math.sin(t * 73.1) + 0.4 * Math.sin(t * 121.7 + 1.7));
     out.y = amp * (0.6 * Math.sin(t * 89.3 + 0.5) + 0.4 * Math.sin(t * 137.9 + 2.1));
+    for (let i = this.jolts.length - 1; i >= 0; i--) {
+      const j = this.jolts[i];
+      const age = t - j.t0;
+      if (age >= j.dur || age < -1) {
+        this.jolts.splice(i, 1);
+        continue;
+      }
+      // Everything on the train keeps going as it bites: the world kicks back, rebounds, settles.
+      const f = 1 - Math.max(0, age) / j.dur;
+      out.x -= j.amp * f * f * Math.sin(Math.max(0, age) * 22);
+      out.y += Math.abs(j.amp) * 0.25 * f * f * Math.sin(Math.max(0, age) * 37 + 0.8);
+    }
   }
 
   // ---- Simulation ---------------------------------------------------------------------------------
@@ -219,6 +293,7 @@ export class Effects {
       let vx = this.vx[i] * d;
       let vy = this.vy[i] * d - GRAV[k] * dt;
       let y = this.y[i] + vy * dt;
+      if (y < this.floor[i] && vy < 0) continue;
       // Heavy bits bounce on the ground and settle.
       if ((k === P_DEBRIS || k === P_SPLINTER || k === P_CHIP) && y < LANE_Y + 0.1 && vy < 0) {
         y = LANE_Y + 0.1;
@@ -232,6 +307,7 @@ export class Effects {
         this.grow[j] = this.grow[i];
         this.rot[j] = this.rot[i];
         this.shade[j] = this.shade[i];
+        this.floor[j] = this.floor[i];
       }
       this.x[j] = this.x[i] + vx * dt;
       this.y[j] = y;
@@ -254,6 +330,11 @@ export class Effects {
       }
     }
     for (const h of this.horses) h.v *= Math.exp(-0.25 * dt);
+    for (const sw of this.swepts) {
+      sw.vx *= Math.exp(-2.5 * dt);
+      sw.s += sw.vx * dt;
+      sw.y += (FORD_WATER_Y - SWEPT_DEPTH - sw.y) * (1 - Math.exp(-dt / 0.18));
+    }
   }
 
   // ---- Drawing ----------------------------------------------------------------------------------
@@ -265,6 +346,7 @@ export class Effects {
     const steamRgb = s.night ? '150,160,178' : '244,241,234';
     const dustRgb = s.night ? '96,88,82' : '214,190,150';
     const powderRgb = s.night ? '150,150,160' : '232,230,224';
+    const sprayRgb = s.night ? '140,156,186' : '236,244,246';
     const dark = '26,24,22';
     let any = false;
     for (let i = 0; i < this.n; i++) {
@@ -275,12 +357,13 @@ export class Effects {
       const y = this.y[i];
       const u = this.age[i] / this.life[i];
       const r = this.size[i] + this.grow[i] * u;
-      if (k === P_SMOKE || k === P_STEAM || k === P_DUST || k === P_POWDER) {
+      if (k === P_SMOKE || k === P_STEAM || k === P_DUST || k === P_POWDER || k === P_SPRAY) {
         const tun = inTunnel(s, x);
-        const rgb = k === P_SMOKE ? (tun ? dark : smokeRgb) : k === P_STEAM ? (tun ? '60,58,56' : steamRgb) : k === P_DUST ? dustRgb : powderRgb;
+        const rgb =
+          k === P_SMOKE ? (tun ? dark : smokeRgb) : k === P_STEAM ? (tun ? '60,58,56' : steamRgb) : k === P_DUST ? dustRgb : k === P_SPRAY ? sprayRgb : powderRgb;
         const spr = puffSprite(rgb, i);
         if (!spr) continue;
-        const base = k === P_SMOKE ? 0.55 : k === P_STEAM ? 0.7 : k === P_DUST ? 0.5 : 0.6;
+        const base = k === P_SMOKE ? 0.55 : k === P_STEAM ? 0.7 : k === P_DUST ? 0.5 : k === P_SPRAY ? 0.5 : 0.6;
         const fadeIn = clamp01(u * 8);
         ctx.globalAlpha = base * fadeIn * (1 - u) * (1 - u * 0.3) * (0.75 + 0.25 * this.shade[i]);
         ctx.drawImage(spr, x - r, y - r, 2 * r, 2 * r);
@@ -290,9 +373,10 @@ export class Effects {
     if (any) ctx.globalAlpha = 1;
     if (layer !== L_FRONT) return;
     // Bits and sparks.
+    const drop = s.night ? 'rgba(150,170,205,0.75)' : 'rgba(214,236,246,0.9)';
     for (let i = 0; i < this.n; i++) {
       const k = this.kind[i];
-      if (LAYER[k] !== L_FRONT || k === P_POWDER) continue;
+      if (LAYER[k] !== L_FRONT || k === P_POWDER || k === P_SPRAY) continue;
       const x = this.x[i] - s.odo;
       if (x < s.left - 4 || x > s.right + 4) continue;
       const y = this.y[i];
@@ -331,7 +415,7 @@ export class Effects {
           break;
         }
         case P_WATER: {
-          ctx.fillStyle = 'rgba(170,205,235,0.8)';
+          ctx.fillStyle = drop;
           ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz * 1.6);
           break;
         }
@@ -560,6 +644,9 @@ export class Effects {
       p.crouch = 0.35;
       p.air = 1;
       p.aim = null;
+      p.hands = 'none';
+      p.stagger = 0;
+      p.tilt = 0;
       p.t = s.t;
       ctx.globalAlpha = 1 - clamp01((age - 2.4) / 0.8);
       ctx.save();
@@ -568,6 +655,77 @@ export class Effects {
       this.fig.draw(ctx, s.litFig, p, 0, -0.5, null);
       ctx.restore();
       ctx.globalAlpha = 1;
+    }
+  }
+
+  /**
+   * Figures washed off in a ford: thrashing with the water at their chests, left behind as the train
+   * runs on, then carried off downstream along the river's course, smaller and fainter. Only what
+   * is above the water is drawn; rings spread on the surface round them.
+   */
+  drawSwept(s: Scene): void {
+    const { ctx } = s;
+    setWorld(s);
+    const p = this.pose;
+    const ring = s.night ? '170,190,225' : '242,248,250';
+    for (let i = this.swepts.length - 1; i >= 0; i--) {
+      const sw = this.swepts[i];
+      const age = s.t - sw.t0;
+      if (age > 3.4 || age < -1) {
+        this.swepts.splice(i, 1);
+        continue;
+      }
+      const x = sw.s - s.odo;
+      if (x < s.left - 4 || x > s.right + 4) continue;
+      const away = smoothstep(0.6, 3.2, age);
+      const sc = (sw.kind === 'boss' ? 1.18 : 1) * (1 - 0.5 * away);
+      // Downstream is away from the line, up the screen into the river's course.
+      const water = FORD_WATER_Y + 1.1 * away;
+      const bob = 0.07 * Math.sin(s.t * 4.3 + sw.seed) * (1 - 0.5 * away);
+      const feet = water - (FORD_WATER_Y - sw.y) * sc + bob;
+      const alpha = 1 - clamp01((age - 2.6) / 0.8);
+      p.kind = sw.kind;
+      p.tier = sw.tier;
+      p.facing = sw.facing;
+      p.scale = sc;
+      p.phase = 0;
+      p.gait = 0;
+      p.crouch = 0.15;
+      p.aim = null;
+      p.recoil = 0;
+      p.climb = false;
+      p.air = 1;
+      p.stunned = false;
+      p.stagger = 0;
+      p.tilt = 0.25 * Math.sin(s.t * 2.1 + sw.seed);
+      p.hurt = 0;
+      p.wind = 0;
+      p.loot = false;
+      p.hands = 'flail';
+      p.seated = false;
+      p.stand = 0;
+      p.t = s.t;
+      p.seed = sw.seed;
+      ctx.globalAlpha = alpha;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x - 3, water, 6, 8);
+      ctx.clip();
+      this.fig.draw(ctx, s.litFig, p, x, feet, null);
+      ctx.restore();
+      ctx.lineWidth = 0.05 * sc;
+      for (let k = 0; k < 2; k++) {
+        const ph = (s.t * 1.3 + k * 0.5 + sw.seed) % 1;
+        ctx.strokeStyle = `rgba(${ring},${(0.75 * (1 - ph) * alpha).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.ellipse(x, water, (0.35 + 0.8 * ph) * sc, (0.05 + 0.07 * ph) * sc, 0, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      // Water flung up by the thrashing arms.
+      if (s.dt > 0 && age < 2.4 && this.rand() < s.dt * 7) {
+        this.spawn(s, P_WATER, x + (this.rand() - 0.5) * 0.7 * sc, water + 0.35 * sc, (this.rand() - 0.5) * 2, 1.5 + 2 * this.rand(), 0.05, 0, 0.6, 0, water - 0.1);
+      }
     }
   }
 
@@ -617,7 +775,9 @@ export class Effects {
     this.explosions.length = 0;
     this.tumbles.length = 0;
     this.horses.length = 0;
+    this.swepts.length = 0;
     this.shakes.length = 0;
+    this.jolts.length = 0;
     this.aims.clear();
     this.shots.clear();
   }

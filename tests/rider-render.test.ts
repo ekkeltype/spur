@@ -1,16 +1,42 @@
 // Pure helpers behind the Rider's view (spec §18.2): the camera and its inverse, parallax layers,
-// gait cycles, tick interpolation, signal looks (§9.1), the sky's time of day and car layout.
+// gait cycles, tick interpolation, signal looks (§9.1), the sky's time of day and car layout. Round
+// 2: the lookout's framing, fords (the water's surface, bow waves, banks), the HUD's distances and
+// flag, spray and the lurch's jolt; and whole frames drawn through a stand-in canvas, to check that
+// the river's water lies over the train, its figures and the horses, and that the lookout reaches
+// past the loco's front.
 
-import { describe, expect, it } from 'vitest';
-import { approach, makeCamera, placeCamera, RAIL_FRACTION, screenX, screenY, VIEW_HEIGHT_M, worldX, worldY } from '../src/render/rider/camera';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  approach,
+  LOOKOUT_MARGIN,
+  LOOKOUT_REACH,
+  LOOKOUT_ZOOM_MAX,
+  lookoutCentre,
+  lookoutZoom,
+  makeCamera,
+  placeCamera,
+  RAIL_FRACTION,
+  screenX,
+  screenY,
+  VIEW_HEIGHT_M,
+  worldX,
+  worldY,
+} from '../src/render/rider/camera';
 import { trainLook } from '../src/render/rider/cars';
+import { Effects, P_WATER } from '../src/render/rider/effects';
+import { BANK_TOP_Y, bankX, bowWaves, locoFaceX, SHOULDER_OUT, surfaceY, wash, WATER_Y } from '../src/render/rider/ford';
+import { distanceText, flagText, waitText } from '../src/render/rider/hud';
 import { advancePhase, gallopLegs, kneeBend, legSwing, TickInterp } from '../src/render/rider/motion';
 import { hash01, layerRange, layerScreenX, tileSpan, wrap } from '../src/render/rider/parallax';
+import { onLookout, RiderRenderer, type RiderFrame } from '../src/render/rider/renderer';
+import type { Scene } from '../src/render/rider/scene';
 import { lampLetter, signalHeads } from '../src/render/rider/signal-look';
 import { skyAt } from '../src/render/rider/sky';
+import { RUNS } from '../src/content/runs';
+import { newGame } from '../src/sim/game';
 import { trainGeometry } from '../src/sim/geometry';
-import { CAB_LENGTH, CAR_SPECS, COUPLER_GAP, CUPOLA_Y, PLATFORM_DEPTH, TENDER_DECK } from '../src/sim/rules';
-import type { CarState } from '../src/sim/types';
+import { CAB_LENGTH, CAR_SPECS, COUPLER_GAP, CUPOLA_Y, FLAG_MAX, FORD_WATER_Y, PLATFORM_DEPTH, TENDER_DECK, YARD } from '../src/sim/rules';
+import type { CarState, GameState, RunDef, SimEvent } from '../src/sim/types';
 
 const close = (a: number, b: number, eps = 1e-9): void => {
   expect(Math.abs(a - b)).toBeLessThan(eps);
@@ -341,5 +367,311 @@ describe('car layout for drawing, from the sim geometry (spec §5.1)', () => {
   it('is cached per layout', () => {
     const cars = consist(['express', 'caboose']);
     expect(trainLook(cars)).toBe(trainLook(cars.map((c) => ({ ...c }))));
+  });
+});
+
+// ---- Round 2 --------------------------------------------------------------------------------------
+
+describe('the lookout (camera)', () => {
+  it('zooms by showing more of the world, and still inverts exactly', () => {
+    const cam = makeCamera(1280, 720, 40, 2, -1, 1.4);
+    close(worldY(cam, 0) - worldY(cam, 720), VIEW_HEIGHT_M * 1.4, 1e-9);
+    close(screenY(cam, 0), 720 * RAIL_FRACTION - 1);
+    for (const [x, y] of [
+      [40, 0],
+      [21.5, 7.25],
+    ]) {
+      close(worldX(cam, screenX(cam, x)), x, 1e-9);
+      close(worldY(cam, screenY(cam, y)), y, 1e-9);
+    }
+    placeCamera(cam, 1280, 720, 40, 0, 0, Number.NaN);
+    expect(cam.zoom).toBe(1);
+  });
+
+  it('reaches LOOKOUT_REACH past the loco from the cab roof, the Rider kept inside the left edge', () => {
+    const L = 90;
+    const aspect = 16 / 9;
+    const rx = L - 13.75; // the middle of the cab roof
+    const z = lookoutZoom(rx, L, aspect);
+    expect(z).toBeGreaterThan(1);
+    expect(z).toBeLessThan(LOOKOUT_ZOOM_MAX);
+    const half = (VIEW_HEIGHT_M * z * aspect) / 2;
+    const c = lookoutCentre(rx, L, aspect, z);
+    close(c + half, L + LOOKOUT_REACH, 1e-9);
+    expect(c - half).toBeLessThanOrEqual(rx - LOOKOUT_MARGIN + 1e-9);
+  });
+
+  it('from farther back, zooms out no further than LOOKOUT_ZOOM_MAX and keeps the Rider in view', () => {
+    const L = 90;
+    const rx = L - 19.5; // the tender top
+    const z = lookoutZoom(rx, L, 16 / 9);
+    expect(z).toBe(LOOKOUT_ZOOM_MAX);
+    const half = (VIEW_HEIGHT_M * z * (16 / 9)) / 2;
+    close(lookoutCentre(rx, L, 16 / 9, z) - half, rx - LOOKOUT_MARGIN, 1e-9);
+    // A wide screen needs no zoom at all.
+    expect(lookoutZoom(L - 13.75, L, 21 / 9)).toBe(1);
+  });
+
+  it('is the cab roof or the tender top, standing and looking ahead, not scoped', () => {
+    const r = { mode: 'active' as const, scoped: false, onGround: true, surface: 'cabRoof' as const, facing: 1 as const, aim: 0.1 };
+    expect(onLookout(r)).toBe(true);
+    expect(onLookout({ ...r, surface: 'tenderTop' })).toBe(true);
+    expect(onLookout({ ...r, surface: 'roof' })).toBe(false);
+    expect(onLookout({ ...r, facing: -1, aim: Math.PI - 0.1 })).toBe(false);
+    expect(onLookout({ ...r, scoped: true })).toBe(false);
+    expect(onLookout({ ...r, onGround: false })).toBe(false);
+    expect(onLookout({ ...r, mode: 'off' })).toBe(false);
+  });
+});
+
+describe('fords (spec §4.3)', () => {
+  const cars = (): CarState[] => {
+    const kinds: CarState['kind'][] = ['loco', 'tender', 'express', 'boxcar'];
+    let x1 = kinds.reduce((n, k) => n + CAR_SPECS[k].length, 0);
+    return kinds.map((kind) => {
+      const c = { kind, x0: x1 - CAR_SPECS[kind].length, x1, hp: CAR_SPECS[kind].hp };
+      x1 = c.x0;
+      return c;
+    });
+  };
+
+  it('stands the water at the sim’s FORD_WATER_Y, ripples no more than a few centimetres', () => {
+    expect(WATER_Y).toBe(FORD_WATER_Y);
+    for (let x = 0; x < 30; x += 0.7) expect(Math.abs(surfaceY(x, x + 123.4, 5.5, []) - FORD_WATER_Y)).toBeLessThan(0.08);
+  });
+
+  it('piles a bow wave in front of the loco’s smokebox and smaller ones before the cars in the water, growing with speed', () => {
+    const looks = trainLook(cars()).cars;
+    const L = looks[0].x1;
+    expect(bowWaves(looks, -10, L + 20, 0)).toHaveLength(0); // standing still: none
+    const slow = bowWaves(looks, -10, L + 20, 4);
+    const fast = bowWaves(looks, -10, L + 20, 20);
+    expect(fast).toHaveLength(looks.length);
+    const bow = fast[0];
+    expect(bow.x).toBeGreaterThan(locoFaceX(looks[0]));
+    expect(bow.x).toBeLessThan(L);
+    for (const w of fast.slice(1)) expect(w.h).toBeLessThan(bow.h);
+    expect(bow.h).toBeGreaterThan(slow[0].h);
+    // Only faces in the water: the loco's, the tender's and the express car's here, not the boxcar's behind.
+    const partly = bowWaves(looks, looks[2].x0 + 0.1, L + 20, 20);
+    expect(partly).toHaveLength(3);
+    // Reversing, the water piles against the rear end instead.
+    const back = bowWaves(looks, -10, L + 20, -10);
+    expect(back[back.length - 1].x).toBeLessThan(looks[looks.length - 1].x0);
+    expect(wash(0)).toBe(0);
+    expect(wash(40)).toBe(1);
+  });
+
+  it('spills the surface down to the banks just outside the ford, which widen toward the viewer', () => {
+    expect(bankX(100, 1, BANK_TOP_Y)).toBe(100 + SHOULDER_OUT);
+    expect(bankX(20, -1, BANK_TOP_Y)).toBe(20 - SHOULDER_OUT);
+    expect(bankX(100, 1, -4)).toBeGreaterThan(bankX(100, 1, -1));
+    expect(bankX(20, -1, -4)).toBeLessThan(bankX(20, -1, -1));
+  });
+});
+
+describe('HUD text (round 2)', () => {
+  it('gives distances as the railroad does: yards under a mile, rounded, then miles', () => {
+    expect(distanceText(20)).toBe('22 yd'); // the spyglass's near end
+    expect(distanceText(99 * YARD)).toBe('99 yd');
+    expect(distanceText(263 * YARD)).toBe('265 yd');
+    expect(distanceText(650)).toBe('710 yd');
+    expect(distanceText(1234 * YARD)).toBe('1230 yd');
+    expect(distanceText(1609.34)).toBe('1.0 mi');
+    expect(distanceText(Number.NaN)).toBe('0 yd');
+  });
+
+  it('speaks of one flag, planted or moved', () => {
+    expect(FLAG_MAX).toBe(1);
+    expect(flagText(0)).toMatch(/click to flag/i);
+    expect(flagText(1)).toMatch(/move it/);
+  });
+
+  it('says why a due respawn is held', () => {
+    expect(waitText('water')).toMatch(/water/);
+    expect(waitText('tunnel')).toMatch(/tunnel/);
+    expect(waitText('other')).toMatch(/aboard/);
+  });
+});
+
+describe('effects (round 2)', () => {
+  const scene = { odo: 0, v: 0 } as unknown as Scene;
+
+  it('drops spray back into the river instead of through it', () => {
+    const fx = new Effects();
+    fx.splash(scene, 10, FORD_WATER_Y, 1);
+    expect(fx.count).toBeGreaterThan(20);
+    fx.clear();
+    // A drop thrown up from the surface, with ten seconds to live, is gone once it falls back in…
+    fx.spawn(scene, P_WATER, 0, FORD_WATER_Y, 0, 2, 0.05, 0, 10, 0, FORD_WATER_Y - 0.1);
+    for (let i = 0; i < 20; i++) fx.update(1 / 60);
+    expect(fx.count).toBe(1); // still in the air
+    for (let i = 0; i < 40; i++) fx.update(1 / 60);
+    expect(fx.count).toBe(0);
+    // …while one with no water under it falls on.
+    fx.spawn(scene, P_WATER, 0, FORD_WATER_Y, 0, 2, 0.05, 0, 10);
+    for (let i = 0; i < 60; i++) fx.update(1 / 60);
+    expect(fx.count).toBe(1);
+  });
+
+  it('jolts the view toward the rear and settles', () => {
+    const fx = new Effects();
+    const out = { x: 0, y: 0 };
+    fx.jolt(0, 10, 0.6);
+    fx.shakeAt(0.03, out);
+    expect(out.x).toBeLessThan(-1);
+    fx.shakeAt(0.7, out);
+    expect(Math.abs(out.x)).toBe(0);
+    expect(Math.abs(out.y)).toBe(0);
+  });
+});
+
+// ---- Whole frames, through a stand-in canvas ------------------------------------------------------
+
+/** A 2D context that accepts every call and returns harmless values. */
+function fakeContext(): CanvasRenderingContext2D {
+  const store: Record<string | symbol, unknown> = {};
+  return new Proxy(store, {
+    get(t, prop) {
+      if (prop in t) return t[prop];
+      if (prop === 'createLinearGradient' || prop === 'createRadialGradient' || prop === 'createPattern') return () => ({ addColorStop: () => undefined });
+      if (prop === 'measureText') return (s: string) => ({ width: String(s).length * 7 });
+      if (prop === 'getImageData') return () => ({ data: new Uint8ClampedArray(4) });
+      return () => undefined;
+    },
+    set(t, prop, v) {
+      t[prop] = v;
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+}
+
+function fakeCanvas(w: number, h: number): HTMLCanvasElement {
+  const ctx = fakeContext();
+  return { width: w, height: h, style: {}, getContext: () => ctx, getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }) } as unknown as HTMLCanvasElement;
+}
+
+describe('the Rider’s view, drawn', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const stub = (): void => {
+    vi.stubGlobal('window', { devicePixelRatio: 1 });
+    vi.stubGlobal('document', { createElement: () => fakeCanvas(64, 64), visibilityState: 'visible' });
+    vi.stubGlobal(
+      'Path2D',
+      function Path2D() {
+        return new Proxy({}, { get: () => () => undefined });
+      },
+    );
+  };
+
+  /** RUNS[0] with a ford over the front 40 m of the train as it stands at the start. */
+  const fordedRun = (): RunDef => {
+    const r = structuredClone(RUNS[0]);
+    const { edge, off, dir } = r.start;
+    const len = r.edges.find((e) => e.id === edge)?.length ?? 0;
+    const a = Math.min(len, Math.max(0, off - dir * 40));
+    const b = Math.min(len, Math.max(0, off + dir * 15));
+    r.fords.push({ id: 'f1', edge, from: Math.min(a, b), to: Math.max(a, b), name: 'Test Ford' });
+    return r;
+  };
+
+  const game = (run: RunDef): GameState => newGame(run, { seed: 5, consist: ['express', 'passenger', 'boxcar'], upgrades: [], assists: { rider: false, engineer: false } });
+
+  let now = 1000;
+  const frame = (st: GameState, run: RunDef, events: SimEvent[] = []): RiderFrame => {
+    now += 1000 / 60;
+    return { state: st, run, alpha: 0.5, now, events, settings: { screenShake: true, lampLetters: false }, prompt: null, frozen: false };
+  };
+
+  it('lays the river’s water over the train, its figures and the horses, and its far half behind them', () => {
+    stub();
+    const run = fordedRun();
+    const st = game(run);
+    const view = new RiderRenderer(fakeCanvas(1280, 720));
+    view.draw(frame(st, run));
+    view.devTrace = [];
+    view.draw(frame(st, run));
+    const tr = view.devTrace;
+    const at = (name: string): number => tr.indexOf(name);
+    expect(at('fordBack')).toBeGreaterThanOrEqual(0);
+    expect(at('fordFront')).toBeGreaterThanOrEqual(0);
+    expect(at('fordBack')).toBeLessThan(at('track'));
+    expect(at('fordBack')).toBeLessThan(at('train'));
+    expect(at('fordFront')).toBeGreaterThan(tr.lastIndexOf('train'));
+    expect(at('fordFront')).toBeGreaterThan(at('figures'));
+    expect(at('fordFront')).toBeGreaterThan(at('horsemen'));
+    // Spray, washed-off figures and shots are drawn over the water; tunnel rock and the HUD after.
+    expect(tr[at('fordFront') + 1]).toBe('fx');
+    expect(at('fordFront')).toBeLessThan(at('front'));
+    expect(at('fordFront')).toBeLessThan(at('hud'));
+    // No ford, no water.
+    const dry = new RiderRenderer(fakeCanvas(1280, 720));
+    dry.devTrace = [];
+    dry.draw(frame(game(RUNS[0]), RUNS[0]));
+    expect(dry.devTrace).not.toContain('fordFront');
+    expect(dry.devTrace).not.toContain('fordBack');
+  });
+
+  it('draws the round-2 events without trouble: a ford entered, the lurch, a shying horse, a throw, a wash-off', () => {
+    stub();
+    const run = fordedRun();
+    const st = game(run);
+    st.train.v = 12;
+    st.horsemen = [
+      { id: 7, x: 20, worldV: 12, hp: 1, tier: 1, boss: false, goal: 'safe', mode: 'pace', modeTicks: 0, stamina: 8, targetX: 20, aimTicks: 0, cooldownTicks: 0, behindTicks: 0, pickup: false, shyTicks: 100 },
+    ];
+    const view = new RiderRenderer(fakeCanvas(1280, 720));
+    view.draw(frame(st, run));
+    const before = view.particles;
+    view.draw(
+      frame(st, run, [
+        { type: 'fordEnter', id: 'f1' },
+        { type: 'lurch' },
+        { type: 'horseShy', id: 7 },
+        { type: 'thrown', who: 'rider' },
+        { type: 'banditKnockedOff', id: 3, cause: 'water' },
+        { type: 'cattleCalm', id: 'none' },
+        { type: 'cattleScatter', id: 'none' },
+      ]),
+    );
+    expect(view.particles).toBeGreaterThan(before);
+    st.rider.mode = 'off';
+    st.rider.respawnTicks = 0;
+    expect(() => {
+      view.draw(frame(st, run, [{ type: 'riderHurt', cause: 'water', hearts: 2 }, { type: 'riderOff', cause: 'water' }]));
+      for (let i = 0; i < 30; i++) view.draw(frame(st, run));
+    }).not.toThrow();
+  });
+
+  it('on the lookout, reaches LOOKOUT_REACH past the loco’s front; elsewhere the framing is unchanged', () => {
+    stub();
+    const run = RUNS[0];
+    const st = game(run);
+    const L = st.train.length;
+    const geo = trainGeometry(st.train.cars);
+    const cabRoof = geo.surfaces.find((s) => s.kind === 'cabRoof');
+    if (!cabRoof) throw new Error('no cab roof');
+    const x = (cabRoof.x0 + cabRoof.x1) / 2;
+    Object.assign(st.rider, { x, y: cabRoof.y, surface: 'cabRoof', onGround: true, facing: 1, aim: 0.05, mode: 'active', scoped: false, inside: null, ladder: null });
+    const view = new RiderRenderer(fakeCanvas(1280, 720));
+    for (let i = 0; i < 120; i++) view.draw(frame(st, run));
+    const cam = view.camera;
+    expect(cam.zoom).toBeGreaterThan(1.05);
+    expect(worldX(cam, cam.w)).toBeGreaterThan(L + LOOKOUT_REACH - 1);
+    expect(worldX(cam, 0)).toBeLessThan(x - LOOKOUT_MARGIN + 1);
+    // Turned to face a bandit behind: back to the usual framing.
+    Object.assign(st.rider, { facing: -1, aim: Math.PI - 0.1 });
+    for (let i = 0; i < 120; i++) view.draw(frame(st, run));
+    expect(view.camera.zoom).toBeCloseTo(1, 2);
+    // On a car roof facing ahead: no lookout.
+    const car = geo.surfaces.find((s) => s.kind === 'roof');
+    if (!car) throw new Error('no roof');
+    Object.assign(st.rider, { x: (car.x0 + car.x1) / 2, y: car.y, surface: 'roof', facing: 1, aim: 0.05 });
+    const other = new RiderRenderer(fakeCanvas(1280, 720));
+    for (let i = 0; i < 60; i++) other.draw(frame(st, run));
+    expect(other.camera.zoom).toBe(1);
   });
 });

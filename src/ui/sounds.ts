@@ -3,9 +3,17 @@
 // only as a muffled report from outside, never anything positional about bandits (spec §2). Sfx does
 // the synthesis (see the header of src/audio/sfx.ts for its contract); this maps game events and
 // state onto it. In local test mode only the Rider's set plays, since there's one set of speakers.
+//
+// Round 2: in a ford the Rider hears the river rushing round the train, loudest where the train is
+// wet nearest them and panned there, and splashes as the loco ploughs in or someone is washed off;
+// the lurch's clank and the brakes biting; a horse whinnying as it shies; cattle far ahead lowing
+// (they heard the whistle too soon) or bellowing as they bolt; a grunt when the Rider is thrown. In
+// the cab the ford is under the footplate, muffled, from the loco wading in until the cab is out,
+// and the Engineer hears the lurch they caused.
 
 import type { Sfx } from '../audio/sfx';
-import { QUICK_RELOAD_FACTOR, WEAPONS, WIND_MAX, WIND_REF_SPEED } from '../sim/rules';
+import { framePath, frameX, netIndex } from '../sim/network';
+import { CAB_LENGTH, CAR_SPECS, EMERGENCY_BRAKE, LURCH_COOLDOWN_SECONDS, LURCH_MIN_SPEED, QUICK_RELOAD_FACTOR, TICK_HZ, WEAPONS, WIND_MAX, WIND_REF_SPEED } from '../sim/rules';
 import type { EngineerCmdBody, EngineerEvent, EngineerView, GameState, LossReason, RiderState, RunDef, SimEvent, SurfaceKind, Weapon } from '../sim/types';
 import { trackside } from '../sim/views';
 
@@ -27,6 +35,14 @@ const GALLOP_RANGE = 60;
 const WHIZ_DISTANCE = 1.2;
 /** The Rider's head, above the feet. */
 const HEAD_Y = 1.55;
+/** A ford is heard this far ahead of the loco before it wades in (m). */
+export const FORD_HEARD_AHEAD = 30;
+/** The river churns hardest at this speed and above (m/s). */
+const FORD_CHURN_SPEED = 14;
+/** The cab's middle is this far behind the loco's front (m): it's still in the water that long after the front is out. */
+export const CAB_BEHIND_FRONT = CAR_SPECS.loco.length - CAB_LENGTH / 2;
+/** A herd is heard fading over this distance (m); cattle low loud, and far. */
+const HERD_RANGE = 900;
 
 /** The train-frame x at the left and right edges of the Rider's view, for panning by screen position. */
 export interface ViewSpan {
@@ -59,6 +75,41 @@ export function brakeLevel(brake: number, speed: number): number {
   return clamp(brake, 0, 1) * Math.min(1, Math.abs(speed) / 1.5);
 }
 
+/**
+ * The ford's river for the Rider at `riderX` on a train `length` long running at `speed` (train-frame
+ * fords [x0, x1]): how loud (0..1) and where along the train it's heard from. In a ford, the water
+ * nearest the Rider, churning harder the faster the train ploughs through; just ahead of the loco,
+ * the river faintly, coming up. Level 0 when there's none.
+ */
+export function fordLevel(riderX: number, length: number, fords: readonly { x0: number; x1: number }[], speed: number): { level: number; x: number } {
+  let best = 0;
+  let bx = riderX;
+  const churn = 0.45 + 0.55 * Math.min(1, Math.abs(speed) / FORD_CHURN_SPEED);
+  for (const f of fords) {
+    const a = Math.max(0, f.x0);
+    const b = Math.min(length, f.x1);
+    let level = 0;
+    let x = riderX;
+    if (b > a) {
+      x = clamp(riderX, a, b);
+      level = churn * gainFrom(riderX, x, 0.15);
+    } else if (f.x0 >= length && f.x0 - length < FORD_HEARD_AHEAD) {
+      x = f.x0;
+      level = 0.3 * (1 - (f.x0 - length) / FORD_HEARD_AHEAD) * gainFrom(riderX, x, 0.15);
+    }
+    if (level > best) {
+      best = level;
+      bx = x;
+    }
+  }
+  return { level: best, x: bx };
+}
+
+/** A herd `distance` metres from the Rider: how loud its lowing is (cattle carry far over the plain). */
+export function herdGain(distance: number): number {
+  return clamp(1 - Math.abs(distance) / HERD_RANGE, 0.3, 1);
+}
+
 /** Distance from point (px, py) to the segment (x0, y0)–(x1, y1). */
 function segmentDistance(px: number, py: number, x0: number, y0: number, x1: number, y1: number): number {
   const dx = x1 - x0;
@@ -74,6 +125,9 @@ function reloadSeconds(weapon: Weapon, upgrades: readonly string[]): number {
 
 export class RiderSounds {
   private layersOn = false;
+  /** The run last heard (frame() is told it; a herd's place needs it). */
+  private run: RunDef | null = null;
+  private readonly fords: { x0: number; x1: number }[] = [];
 
   constructor(private sfx: Sfx) {}
 
@@ -100,6 +154,8 @@ export class RiderSounds {
         case 'riderHurt':
           sfx.hurt();
           if (e.cause === 'bridge' || e.cause === 'fall') sfx.thud();
+          // Washed off: into the river (riderOff says so too; the splash plays once).
+          else if (e.cause === 'water') sfx.splash(false);
           break;
         case 'reload':
           sfx.reloadFor(e.weapon, reloadSeconds(e.weapon, state.upgrades));
@@ -114,9 +170,43 @@ export class RiderSounds {
           sfx.land(e.hard);
           break;
         case 'riderOff':
-        case 'banditKnockedOff':
-          sfx.thud();
+          if (e.cause === 'water') sfx.splash(false);
+          else sfx.thud();
           break;
+        case 'banditKnockedOff': {
+          if (e.cause !== 'water') {
+            sfx.thud();
+            break;
+          }
+          const b = state.bandits.find((x) => x.id === e.id);
+          const x = b ? b.x : r.x;
+          sfx.splash(false, { pan: panOf(x, view, r.x), gain: gainFrom(r.x, x, 0.3) });
+          break;
+        }
+        case 'fordEnter': {
+          // The loco ploughing in, up at the front.
+          const x = state.train.length;
+          sfx.splash(true, { pan: panOf(x, view, r.x), gain: gainFrom(r.x, x, 0.35) });
+          break;
+        }
+        case 'lurch':
+          sfx.lurch('rider');
+          break;
+        case 'horseShy': {
+          const h = state.horsemen.find((x) => x.id === e.id);
+          if (h) sfx.whinny(panOf(h.x, view, r.x), Math.max(0.25, 1 - Math.abs(h.x - r.x) / GALLOP_RANGE));
+          break;
+        }
+        case 'thrown':
+          if (e.who === 'rider') sfx.grunt();
+          break;
+        case 'cattleCalm':
+        case 'cattleScatter': {
+          // Far ahead, off the right of the view, unless the herd can be placed nearer.
+          const x = this.herdX(state, e.id);
+          sfx.cattle(e.type === 'cattleScatter', x === null ? 1 : panOf(x, view, r.x), herdGain(x === null ? HERD_RANGE / 2 : x - r.x));
+          break;
+        }
         case 'obstacleHit':
           if (!e.severe) sfx.thud();
           break;
@@ -163,6 +253,7 @@ export class RiderSounds {
 
   /** The continuous layers, every frame. `live` is false while paused: everything falls quiet. */
   frame(state: GameState, run: RunDef, live: boolean, view: ViewSpan | null): void {
+    this.run = run;
     if (!live) {
       this.stop();
       return;
@@ -172,16 +263,18 @@ export class RiderSounds {
     const r = state.rider;
     const speed = Math.abs(t.v);
     let tunnel = false;
-    if (r.mode === 'active') {
-      for (const item of trackside(state, run, 2, 2)) {
-        if (item.kind === 'tunnel' && r.x >= item.x0 && r.x <= item.x1) tunnel = true;
-      }
+    this.fords.length = 0;
+    for (const item of trackside(state, run, 2, FORD_HEARD_AHEAD)) {
+      if (item.kind === 'tunnel' && r.mode === 'active' && r.x >= item.x0 && r.x <= item.x1) tunnel = true;
+      else if (item.kind === 'ford') this.fords.push({ x0: item.x0, x1: item.x1 });
     }
     sfx.engine({ speed, throttle: t.throttle, tunnel, listener: 'rider' });
     sfx.wind(windLevel(r, speed));
     sfx.brakes(brakeLevel(t.brake, t.v));
     sfx.safetyValve(t.safetyValve);
     sfx.water(t.spout === 'down' && t.water < t.waterCap - 0.01);
+    const ford = fordLevel(r.x, t.length, this.fords, speed);
+    sfx.fordWater(ford.level, { pan: ford.level > 0 ? panOf(ford.x, view, r.x) : 0, listener: 'rider' });
     sfx.whistle(t.whistle, 'rider');
     // One slot per horse, kept in id order so each keeps its own hoofbeats (Sfx matches by position).
     sfx.gallop(
@@ -203,17 +296,42 @@ export class RiderSounds {
     sfx.brakes(0);
     sfx.safetyValve(false);
     sfx.water(false);
+    sfx.fordWater(0);
     sfx.whistle(false, 'rider');
     sfx.gallop([]);
+  }
+
+  /** A herd's train-frame x (ahead of the loco), or null if it can't be placed. */
+  private herdX(state: GameState, id: string): number | null {
+    const o = state.obstacles.find((x) => x.id === id);
+    if (!o || !this.run) return null;
+    try {
+      const fp = framePath(netIndex(this.run), state.switches, state.train.spans, 0, HERD_RANGE);
+      return frameX(fp, { edge: o.edge, off: o.at });
+    } catch {
+      return null;
+    }
   }
 }
 
 /** Throttle and brake drags send a stream of commands; one lever sound per this many ms is plenty. */
 const LEVER_SOUND_MS = 180;
 
-/** The cab: no hoofbeats and nothing positional about bandits, only muffled gunfire (spec §2). */
+/**
+ * The cab: no hoofbeats and nothing positional about bandits, only muffled gunfire (spec §2). The ford
+ * runs under the footplate from `fordEnter` until the cab is out, CAB_BEHIND_FRONT after `fordExit`.
+ * The Engineer's events don't carry the lurch, so the cab hears it when the brake it sees crosses into
+ * emergency at speed, by the sim's own rule (spec §5.2).
+ */
 export class CabSounds {
   private inTunnel = false;
+  private inFord = false;
+  /** Metres the loco still has to run, after leaving a ford, before the cab is out of the water. */
+  private fordLeft = 0;
+  private lastTick: number | null = null;
+  /** The brake in the last view (Infinity before the first, so joining at full brake is no lurch). */
+  private lastBrake = Number.POSITIVE_INFINITY;
+  private lastLurch = Number.NEGATIVE_INFINITY;
   private lastLever = Number.NEGATIVE_INFINITY;
   private layersOn = false;
 
@@ -261,6 +379,15 @@ export class CabSounds {
         this.inTunnel = false;
         sfx.tunnel(false);
         break;
+      case 'fordEnter':
+        this.inFord = true;
+        this.fordLeft = 0;
+        sfx.splash(true, { muffled: true, gain: 0.8 });
+        break;
+      case 'fordExit':
+        this.inFord = false;
+        this.fordLeft = CAB_BEHIND_FRONT;
+        break;
       default:
         break;
     }
@@ -280,17 +407,34 @@ export class CabSounds {
       return;
     }
     const t = view.train;
-    this.sfx.engine({ speed: Math.abs(t.v), throttle: t.throttle, tunnel: this.inTunnel, listener: 'cab' });
+    const speed = Math.abs(t.v);
+    const dt = this.lastTick === null ? 0 : Math.max(0, view.tick - this.lastTick) / TICK_HZ;
+    this.lastTick = view.tick;
+    if (this.fordLeft > 0) this.fordLeft = Math.max(0, this.fordLeft - speed * dt);
+    this.sfx.engine({ speed, throttle: t.throttle, tunnel: this.inTunnel, listener: 'cab' });
     this.sfx.whistle(t.whistle, 'cab');
     this.sfx.brakes(brakeLevel(t.brake, t.v));
     this.sfx.safetyValve(t.safetyValve);
     this.sfx.water(t.spout === 'down' && t.water < t.waterCap - 0.01);
+    const wet = this.inFord || this.fordLeft > 0;
+    this.sfx.fordWater(wet ? 0.5 + 0.5 * Math.min(1, speed / FORD_CHURN_SPEED) : 0, { listener: 'cab' });
+    // The lurch the Engineer just caused: the lever into emergency at speed, at most once a cooldown.
+    if (!t.heldUp && this.lastBrake < EMERGENCY_BRAKE && t.brake >= EMERGENCY_BRAKE && speed >= LURCH_MIN_SPEED && view.tick - this.lastLurch >= LURCH_COOLDOWN_SECONDS * TICK_HZ) {
+      this.sfx.lurch('cab');
+      this.lastLurch = view.tick;
+    }
+    this.lastBrake = t.brake;
     this.layersOn = true;
   }
 
-  /** A new game: out of any tunnel. */
+  /** A new game: out of any tunnel or ford, no lurch remembered. */
   reset(): void {
     this.inTunnel = false;
+    this.inFord = false;
+    this.fordLeft = 0;
+    this.lastTick = null;
+    this.lastBrake = Number.POSITIVE_INFINITY;
+    this.lastLurch = Number.NEGATIVE_INFINITY;
   }
 
   stop(): void {
@@ -301,5 +445,6 @@ export class CabSounds {
     this.sfx.brakes(0);
     this.sfx.safetyValve(false);
     this.sfx.water(false);
+    this.sfx.fordWater(0, { listener: 'cab' });
   }
 }

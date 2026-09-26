@@ -5,8 +5,10 @@
 // has what it shows) and advances it with the sim's step(). Everything the scene is about is staged
 // by writing the state directly: the Rider's poses, bandits aboard, horsemen alongside, obstacles,
 // other trains, signals and their aspects, time of day, and synthesized events (shots, aims,
-// explosions). A staged scene restores its figures after every step and drops the sim's own fight
-// events, so screenshots are repeatable whatever the Rider and bandit modules do.
+// explosions, a lurch, a ford entered, figures washed off). A staged scene restores its figures
+// after every step and drops the sim's own fight events, so screenshots are repeatable whatever the
+// Rider and bandit modules do. Signals and fords a scene needs are added to its own copy of the run
+// on a plain stretch of the main line, so no scene depends on where the content puts them.
 //
 // The "play" scene is interactive. If the sim's step() drives the Rider (probed at startup), play
 // uses the real game loop with keyboard input; otherwise a small physics of its own on the real
@@ -28,7 +30,7 @@ import { trainGeometry } from '../sim/geometry';
 import { spawnWave } from '../sim/bandits';
 import { fightContext, newGame, step } from '../sim/game';
 import { framePath, framePoint, frontHead, mainPos, netIndex, spansFromFront, walk } from '../sim/network';
-import { CAR_SPECS, DT, RIDER_SHOULDER, RIDER_SHOULDER_CROUCH, TICK_HZ, WEAPONS } from '../sim/rules';
+import { CAR_SPECS, DT, FLAG_MAX, RIDER_SHOULDER, RIDER_SHOULDER_CROUCH, SCOPE_MAX, SCOPE_MIN, TICK_HZ, WEAPONS } from '../sim/rules';
 import { NO_INPUT } from '../sim/types';
 import type {
   AiTrainDef,
@@ -98,6 +100,8 @@ interface Extras {
   hour?: number;
   signals?: { d: number; facing: 'with' | 'against'; heads: 1 | 2; id: string }[];
   mileposts?: { at: TrackHead; mile: number }[];
+  /** Fords `len` metres long from `d` metres along the main line (clipped to one edge). */
+  fords?: { d: number; len: number; id: string; name: string }[];
 }
 
 const FULL: CarType[] = ['express', 'passenger', 'boxcar', 'armored', 'caboose'];
@@ -175,6 +179,13 @@ function fresh(ex: Extras = {}): void {
     r.signals.push(def);
   }
   for (const m of ex.mileposts ?? []) r.mileposts.push({ edge: m.at.edge, at: m.at.off, mile: m.mile });
+  for (const fd of ex.fords ?? []) {
+    // A ford lies on one edge: the one its start is on.
+    const p = alongMain(baseRun, fd.d);
+    const len = baseRun.edges.find((e) => e.id === p.edge)?.length ?? p.off;
+    const end = p.dir === 1 ? Math.min(len, p.off + fd.len) : Math.max(0, p.off - fd.len);
+    r.fords.push({ id: fd.id, name: fd.name, edge: p.edge, from: Math.min(p.off, end), to: Math.max(p.off, end) });
+  }
   run = r;
   state = newGame(run, { seed: 7, consist: ex.consist ?? FULL, upgrades: ['shotgun', 'rifle', 'headlamp'], assists: { rider: false, engineer: false } });
   state.godMode = true;
@@ -257,6 +268,31 @@ function feature(kind: 'tunnel' | 'lowBridge' | 'trestle' | 'station' | 'water' 
 /** A plain stretch of the current run, `extra` metres further along. */
 function plain(extra = 0, from = 600): TrackHead {
   return alongMain(run, clearAlong(run, from) + extra);
+}
+
+/**
+ * A ford scene on the first run: a ford `len` metres long whose start is `ahead` metres past the
+ * loco's front once `frames` frames have run at `v` (negative: the front is that far into it).
+ */
+function fordScene(ahead: number, len: number, v: number, frames: number, ex: Extras = {}): void {
+  const d = clearAlong(RUNS[0], 700, 150, 140);
+  fresh({ ...ex, fords: [{ d: d + ahead, len, id: 'ford1', name: 'Cottonwood Ford' }] });
+  approachPoint(alongMain(run, d), 0, v, frames, 0.7);
+}
+
+/** The train 45 m into a ford at 10 m/s: the Rider dry on a roof, a bandit washed off, a horse wading. */
+function fordInside(ex: Extras = {}): string {
+  fordScene(-45, 95, 10, 80, ex);
+  const exp = carIndex('express');
+  riderAt(exp, 'roof', 2, { facing: 1, aim: 0.15 });
+  const c = state.train.cars[exp];
+  stage([bandit(121, exp, 'platformRear', 0, { facing: 1 })], [horseman(122, c.x1 + 5, { mode: 'pace', worldV: 5 })], (t, b) => {
+    if (t > 1) b.length = 0;
+  });
+  settle(60);
+  emit({ type: 'banditKnockedOff', id: 121, cause: 'water' });
+  settle(20);
+  return 'Inside a ford at 10 m/s: the Rider dry on the express roof, a bandit washed off its platform, a horseman wading';
 }
 
 // ---- Figures ---------------------------------------------------------------------------------
@@ -575,12 +611,10 @@ const SCENES: Record<string, () => string> = {
     stage([], []);
     settle(40);
     const fp = framePath(netIndex(run), state.switches, state.train.spans, 0, 800);
-    const p1 = framePoint(fp, state.train.length + 257);
-    const p2 = framePoint(fp, state.train.length + 263);
-    if (p1) state.flags.push({ id: 1, point: p1, tick: state.tick - 3000 });
-    if (p2) state.flags.push({ id: 2, point: p2, tick: state.tick - 60 });
+    const p1 = framePoint(fp, state.train.length + 263);
+    if (p1) state.flags.push({ id: 1, point: p1, tick: state.tick - 60 });
     settle(20);
-    return 'Spyglass at ~260 m: a signal at stop, cattle beyond, two flags';
+    return 'Spyglass at ~260 m: a signal at stop, cattle beyond, the flag on them';
   },
   signals() {
     // Two-head (junction) signals need a run with a junction to guard.
@@ -980,6 +1014,177 @@ const SCENES: Record<string, () => string> = {
     settle(30);
     return 'Reloading the revolver';
   },
+  // ---- Round 2: fords, the lurch, calm cattle, the lookout, signals read in passing ----
+  ford() {
+    // The front 2.5 m into the water at 12 m/s: fordEnter a quarter of a second ago.
+    fordScene(-2.5, 70, 12, 75);
+    riderAt(1, 'roof', -1, { facing: 1, aim: 0.05 });
+    stage([], []);
+    settle(60);
+    emit({ type: 'fordEnter', id: 'ford1' });
+    settle(15);
+    return 'The loco ploughing into a ford at 12 m/s, seen from the tender top (the lookout)';
+  },
+  fordAhead() {
+    fordScene(14, 60, 12, 60);
+    riderAt(0, 'roof', 0, { facing: 1, aim: 0.05 });
+    stage([], []);
+    settle(60);
+    return 'A ford coming up 14 m ahead of the loco, seen from the cab roof (the lookout)';
+  },
+  fordInside() {
+    return fordInside();
+  },
+  fordDusk() {
+    fordInside({ hour: 18.6 });
+    return 'Inside a ford at dusk';
+  },
+  fordNight() {
+    fordInside({ night: true, hour: 22 });
+    return 'Inside a ford at night';
+  },
+  fordStill() {
+    // Standing in the water: no bow waves, just the river running past the wheels.
+    fordScene(-30, 70, 0, 1);
+    riderAt(carIndex('express'), 'roof', 3, { facing: 1, aim: 0.1 });
+    stage([], []);
+    settle(60);
+    return 'Stopped in a ford: the current and ripples, no spray';
+  },
+  washedWait() {
+    // Off the train with the respawn due, but the rear platform is still in the water: held.
+    fordScene(-100, 112, 5, 60);
+    riderAt(carIndex('caboose'), 'platformRear', 0, { facing: 1, aim: 0 });
+    stage([], []);
+    addHold((st) => {
+      st.rider.mode = 'off';
+      st.rider.respawnTicks = 0;
+    });
+    settle(60);
+    return 'Washed off, the respawn held: the rear platform is still in the ford';
+  },
+  washed() {
+    fordScene(-47, 95, 10, 70);
+    riderAt(carIndex('express'), 'platformRear', 0, { facing: 1, aim: 0 });
+    stage([], []);
+    settle(50);
+    emit({ type: 'riderHurt', cause: 'water', hearts: 4 }, { type: 'riderOff', cause: 'water' });
+    let left = 6 * TICK_HZ;
+    addHold((st) => {
+      st.rider.mode = 'off';
+      st.rider.respawnTicks = Math.max(0, --left);
+    });
+    settle(20);
+    return 'Washed off an express platform in a ford: into the water and carried away';
+  },
+  lurch() {
+    fresh();
+    approachPoint(plain(), 0, 15, 105);
+    const ex = carIndex('express');
+    const pa = carIndex('passenger');
+    riderAt(pa, 'roof', 1, { facing: 1, aim: 0.15, crouch: true });
+    const c = state.train.cars[ex];
+    const p = state.train.cars[pa];
+    const at = 90 / 60;
+    stage(
+      [bandit(131, ex, 'roof', -3, { facing: -1, mode: 'fighting', tier: 2 })],
+      [horseman(132, c.x0 + 3, { mode: 'pace' }), horseman(133, c.x1 - 1, { mode: 'boarding', goal: 'safe', tier: 2 }), horseman(134, p.x0 + 5, { mode: 'approach', tier: 3 })],
+      (t, b, h) => {
+        const since = t - at;
+        if (since < 0) return;
+        // Thrown toward the loco (spec §5.2): a hop forward, then staggering while stunned.
+        const hop = Math.min(since, 0.23);
+        b[0].x += 4 * hop;
+        b[0].y += Math.max(0, 2.5 * hop - 11 * hop * hop);
+        b[0].onGround = since >= 0.23;
+        b[0].stunTicks = since < 0.83 ? Math.round((0.83 - since) * TICK_HZ) : 0;
+        // The horses shy at the squeal and drop back 8 m/s below the train.
+        for (const hm of h) {
+          const total = hm.tier === 3 ? 1.5 : 2.5;
+          hm.shyTicks = Math.max(0, Math.round((total - since) * TICK_HZ));
+          hm.x -= 8 * Math.min(since, total) * 0.35;
+          hm.worldV = 15 - 8;
+          if (hm.mode === 'boarding') hm.mode = 'pace';
+        }
+      },
+    );
+    addHold((st) => {
+      st.train.brake = 1;
+    });
+    settle(90);
+    emit({ type: 'lurch' }, { type: 'horseShy', id: 132 }, { type: 'horseShy', id: 133 }, { type: 'horseShy', id: 134 }, { type: 'thrown', who: 'bandit', id: 131 });
+    settle(15);
+    return 'The lurch: the brake slammed into emergency; horses shy and rear, a bandit thrown forward, the Rider braced';
+  },
+  cattleCalm() {
+    fresh();
+    approachPoint(plain(), 0, 0, 1, 0);
+    riderAt(carIndex('express'), 'roof', 0, { facing: 1, scoped: true, scopeDist: 20 });
+    obstacle('cattle1', 'cattle', 22);
+    stage([], []);
+    addHold((st) => {
+      const o = st.obstacles.find((x) => x.id === 'cattle1');
+      if (o) o.calmTicks = 300;
+    });
+    settle(45);
+    return 'A herd that heard the whistle too soon: heads up, turned to the train (spyglass)';
+  },
+  cattleAhead() {
+    fresh();
+    approachPoint(plain(), 0, 3, 60, 0);
+    riderAt(0, 'roof', 0, { facing: 1, aim: 0.05 });
+    obstacle('cattle1', 'cattle', 21);
+    stage([], []);
+    addHold((st) => {
+      const o = st.obstacles.find((x) => x.id === 'cattle1');
+      if (o) o.calmTicks = 300;
+    });
+    settle(60);
+    return 'A calm herd 18 m ahead, from the cab roof (the lookout)';
+  },
+  lookout() {
+    const d = clearAlong(RUNS[0], 600, 115, 60);
+    fresh({ signals: [{ d: d + 15, facing: 'with', heads: 1, id: 'sg1' }] });
+    placeFront(alongMain(run, d));
+    cruise(0, 0);
+    riderAt(0, 'roof', 0.5, { facing: 1, aim: 0.05 });
+    aspectOverride = { sg1: 'stop' };
+    stage([], []);
+    settle(60);
+    return 'The lookout from the cab roof: waiting at a signal 15 m ahead, read without the spyglass';
+  },
+  lookoutTender() {
+    const d = clearAlong(RUNS[0], 600, 115, 60);
+    fresh({ signals: [{ d: d + 20, facing: 'with', heads: 1, id: 'sg1' }] });
+    placeFront(alongMain(run, d));
+    cruise(0, 0);
+    riderAt(1, 'roof', 0, { facing: 1, aim: 0.05 });
+    aspectOverride = { sg1: 'clear' };
+    stage([], []);
+    settle(60);
+    return 'The lookout from the tender top: a signal 20 m ahead';
+  },
+  signalPass() {
+    const d = clearAlong(RUNS[0], 600, 130, 60);
+    fresh({ signals: [{ d: d - 21, facing: 'with', heads: 1, id: 'sp' }] });
+    approachPoint(alongMain(run, d), 0, 20, 60, 1);
+    riderAt(carIndex('express'), 'roof', 0, { facing: 1, aim: 0.1 });
+    aspectOverride = { sp: 'approach' };
+    stage([], []);
+    settle(60);
+    return 'A signal sweeping past at 20 m/s (45 mph), at approach: read as it passes';
+  },
+  signalPassNight() {
+    const withJunction = RUNS.find((r) => r.junctions.length > 0) ?? RUNS[0];
+    const d = clearAlong(withJunction, 600, 130, 60);
+    fresh({ run: withJunction.id, night: true, hour: 22, signals: [{ d: d - 21, facing: 'with', heads: 2, id: 'sp' }] });
+    approachPoint(alongMain(run, d), 0, 20, 60, 1);
+    riderAt(carIndex('express'), 'roof', 0, { facing: 1, aim: 0.1 });
+    aspectOverride = { sp: 'divergeApproach' };
+    stage([], []);
+    settle(60);
+    return 'A two-head signal sweeping past at night, diverging approach: lamps only';
+  },
   play() {
     const r = runFor(params.get('run'));
     fresh({ run: r.id, hour: r.startClock / 3600, night: r.night });
@@ -1146,12 +1351,14 @@ function playTick(st: GameState): void {
   r.aim = inp.aim;
   r.scoped = inp.scope && r.onGround && r.inside === null;
   if (r.scoped) {
-    r.scopeDist = 60 + 590 * inp.scopeT;
-    if (inp.flagPressed && st.flags.length < 3) {
+    r.scopeDist = SCOPE_MIN + (SCOPE_MAX - SCOPE_MIN) * inp.scopeT;
+    if (inp.flagPressed) {
       const p = framePoint(framePath(netIndex(run), st.switches, st.train.spans, 0, r.scopeDist + 10), st.train.length + r.scopeDist);
       if (p) {
+        // FLAG_MAX flags: a new one replaces the oldest (spec §6.5).
         const flag = { id: st.nextId++, point: p, tick: st.tick };
         st.flags.push(flag);
+        while (st.flags.length > FLAG_MAX) st.flags.shift();
         pending.push({ type: 'flagPlaced', flag });
       }
     }

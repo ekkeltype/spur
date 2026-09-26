@@ -304,6 +304,76 @@ function onsets(buffer: AudioBuffer, threshold: number, refractory: number): num
   return times;
 }
 
+/** RBJ band-pass coefficients (0 dB at the peak) at the bench's rate, as biquadInPlace takes them. */
+function bandpassCoeffs(hz: number, q: number): number[] {
+  const w = (2 * Math.PI * hz) / SR;
+  const alpha = Math.sin(w) / (2 * q);
+  const a0 = 1 + alpha;
+  return [alpha / a0, 0, -alpha / a0, (-2 * Math.cos(w)) / a0, (1 - alpha) / a0];
+}
+
+/**
+ * Onsets within one band (centre `hz`, width `q`): rising crossings of `rel` times the band's loudest
+ * 5 ms level, at least `refractory` seconds apart. Picks out knocks another band's roar would hide.
+ */
+function bandOnsets(buffer: AudioBuffer, hz: number, q: number, rel: number, refractory: number): number[] {
+  const L = buffer.getChannelData(0);
+  const R = buffer.getChannelData(1);
+  const x = new Float32Array(L.length);
+  for (let i = 0; i < L.length; i++) x[i] = (L[i] + R[i]) / 2;
+  biquadInPlace(x, bandpassCoeffs(hz, q));
+  const w = Math.round(0.005 * SR);
+  const env: number[] = [];
+  for (let s = 0; s + w <= x.length; s += w) {
+    let a = 0;
+    for (let i = s; i < s + w; i++) a += x[i] * x[i];
+    env.push(Math.sqrt(a / w));
+  }
+  const threshold = rel * Math.max(0, ...env);
+  const times: number[] = [];
+  let last = -Infinity;
+  for (let k = 1; k < env.length; k++) {
+    const t = k * 0.005;
+    if (env[k] >= threshold && env[k - 1] < threshold && t - last >= refractory) {
+      times.push(round(t, 3));
+      last = t;
+    }
+  }
+  return times;
+}
+
+/**
+ * The fundamental (Hz) of a voiced sound over [from, to]: the lag between 1/hi and 1/lo seconds at which
+ * the mid signal best matches itself (normalised autocorrelation), or 0 if nothing there is periodic.
+ */
+function pitch(buffer: AudioBuffer, from: number, to: number, lo: number, hi: number): number {
+  const L = buffer.getChannelData(0);
+  const R = buffer.getChannelData(1);
+  const i0 = Math.max(0, Math.floor(from * SR));
+  const n = Math.min(L.length, Math.floor(to * SR)) - i0;
+  if (n < 64) return 0;
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i++) x[i] = (L[i0 + i] + R[i0 + i]) / 2;
+  let best = 0;
+  let bestLag = 0;
+  for (let lag = Math.floor(SR / hi); lag <= Math.min(n - 1, Math.ceil(SR / lo)); lag++) {
+    let s = 0;
+    let e0 = 0;
+    let e1 = 0;
+    for (let i = 0; i + lag < n; i++) {
+      s += x[i] * x[i + lag];
+      e0 += x[i] * x[i];
+      e1 += x[i + lag] * x[i + lag];
+    }
+    const r = s / Math.sqrt(e0 * e1 + 1e-20);
+    if (r > best) {
+      best = r;
+      bestLag = lag;
+    }
+  }
+  return best > 0.3 && bestLag > 0 ? round(SR / bestLag, 1) : 0;
+}
+
 // ---- What gets rendered ------------------------------------------------------------------------------
 
 interface Case {
@@ -354,6 +424,16 @@ const ONE_SHOTS: Case[] = [
   shotCase('win', 2.8, (s) => s.win()),
   shotCase('lose', 2.9, (s) => s.lose()),
   shotCase('ui click', 0.2, (s) => s.uiClick()),
+  // Round 2.
+  shotCase('splash (the loco)', 2, (s) => s.splash(true)),
+  shotCase('splash (a body)', 1.2, (s) => s.splash(false)),
+  shotCase('splash (cab)', 2, (s) => s.splash(true, { muffled: true, gain: 0.8 })),
+  shotCase('lurch (rider)', 1.4, (s) => s.lurch('rider')),
+  shotCase('lurch (cab)', 1.4, (s) => s.lurch('cab')),
+  shotCase('whinny', 1.5, (s) => s.whinny(0, 1)),
+  shotCase('cattle calm', 2, (s) => s.cattle(false, 0, 1)),
+  shotCase('cattle scatter', 3.2, (s) => s.cattle(true, 0, 1)),
+  shotCase('grunt', 0.8, (s) => s.grunt()),
 ];
 
 const ENGINE_SECONDS = 3.5;
@@ -452,6 +532,26 @@ const LAYERS: Case[] = [
     seconds: 3,
     script: (s, at) => everyFrame(at, 0, 3, (t) => s.whistle(t < 1.5, 'rider')),
   },
+  {
+    name: 'ford water (churning)',
+    seconds: 3,
+    script: (s, at) => everyFrame(at, 0, 3, () => s.fordWater(1)),
+  },
+  {
+    name: 'ford water (standing in it)',
+    seconds: 3,
+    script: (s, at) => everyFrame(at, 0, 3, () => s.fordWater(0.4)),
+  },
+  {
+    name: 'ford water (pan -1)',
+    seconds: 3,
+    script: (s, at) => everyFrame(at, 0, 3, () => s.fordWater(1, { pan: -1 })),
+  },
+  {
+    name: 'ford water (cab)',
+    seconds: 3,
+    script: (s, at) => everyFrame(at, 0, 3, () => s.fordWater(1, { listener: 'cab' })),
+  },
 ];
 
 /** Every method with sensible and nonsensical arguments. None may throw. */
@@ -467,6 +567,12 @@ function exerciseAll(s: Sfx): void {
   s.brakes(-1);
   s.safetyValve(true);
   s.water(true);
+  s.fordWater(Number.NaN, { pan: Number.POSITIVE_INFINITY, listener: 'moon' as Listener });
+  s.fordWater(0.7);
+  s.splash(undefined as unknown as boolean, { gain: Number.NaN });
+  s.lurch('moon' as Listener);
+  s.whinny(Number.NaN, -1);
+  s.cattle('yes' as unknown as boolean, 9, 9);
   s.gallop([{ pan: Number.NaN, gain: 2 }]);
   s.gallop(null as unknown as []);
   s.whistle(true, 'cab');
@@ -614,6 +720,34 @@ async function renderAll(): Promise<RenderReport> {
   const wTail = peakOf(wb, 2.4, 3);
   check('whistle stops when let go', wTail < SILENT_PEAK, `peak after release ${wTail.toExponential(1)}`);
 
+  // Round 2: the ford, the lurch, horses and cattle, the Rider thrown.
+  const fChurn = stat('ford water (churning)');
+  const fStand = stat('ford water (standing in it)');
+  const fCab = stat('ford water (cab)');
+  const fLeft = stat('ford water (pan -1)');
+  check('ford: ploughing through churns louder and brighter than standing in it', fChurn.loudnessLufs > fStand.loudnessLufs + 2 && fChurn.brightnessHz > fStand.brightnessHz, `${fChurn.loudnessLufs} vs ${fStand.loudnessLufs} LUFS, ${fChurn.brightnessHz} vs ${fStand.brightnessHz} Hz`);
+  check('ford: under the cab’s footplate it is muffled', fCab.brightnessHz < 0.5 * fChurn.brightnessHz, `${fCab.brightnessHz} vs ${fChurn.brightnessHz} Hz`);
+  check('ford at pan -1 sits left', fLeft.balanceDb >= 8, `L/R ${fLeft.balanceDb} dB`);
+  const sBig = stat('splash (the loco)');
+  const sBody = stat('splash (a body)');
+  check('the loco ploughing in is a bigger splash than a body falling in', sBig.loudnessLufs > sBody.loudnessLufs && sBig.activeSec > sBody.activeSec, `${sBig.loudnessLufs} vs ${sBody.loudnessLufs} LUFS, ${sBig.activeSec} vs ${sBody.activeSec} s`);
+  check('a splash heard from the cab is muffled', stat('splash (cab)').brightnessHz < 0.5 * sBig.brightnessHz, `${stat('splash (cab)').brightnessHz} vs ${sBig.brightnessHz} Hz`);
+  // The clanks ring below the brakes' squeal and above the shove's thump: count them in their own band.
+  const clanks = bandOnsets(buf('lurch (rider)'), 700, 0.8, 0.3, 0.04);
+  check('lurch: clank after clank as the slack runs in', clanks.length >= 4, `${clanks.length} clanks at ${clanks.join(', ')} s`);
+  const wh = buf('whinny');
+  const whEarly = pitch(wh, 0.1, 0.18, 300, 1600);
+  const whLate = pitch(wh, 0.55, 0.7, 300, 1600);
+  check('a whinny leaps up, then shudders down', whEarly > 1.2 * whLate && whLate > 0, `${whEarly} Hz early, ${whLate} Hz late`);
+  const moo = buf('cattle calm');
+  const mooMid = pitch(moo, 0.35, 0.65, 60, 300);
+  const mooEnd = pitch(moo, 1.18, 1.3, 60, 300);
+  check('the calm herd’s low is a question: it rises at the end', mooEnd > 1.12 * mooMid && mooMid > 0, `${mooMid} Hz, then ${mooEnd} Hz`);
+  const bolt = stat('cattle scatter');
+  const hoofbeats = onsets(buf('cattle scatter'), 0.2 * 10 ** (bolt.loudestRmsDb / 20), 0.04).filter((t) => t > 1);
+  check('a scattering herd bellows, then drums off', bolt.activeSec > stat('cattle calm').activeSec && hoofbeats.length >= 5, `${bolt.activeSec} s, ${hoofbeats.length} hoofbeats after the bellow`);
+  check('the Rider’s grunt is short', stat('grunt').activeSec < 0.7, `${stat('grunt').activeSec} s`);
+
   // Layers stop when told: faded within a second or so, torn down (silent) once idle for two.
   const offs: [string, Script][] = [
     ['engine null', (s, at) => everyFrame(at, 0, 5, (t) => s.engine(t < 1.5 ? { speed: 12, throttle: 0.8, tunnel: false, listener: 'rider' } : null))],
@@ -621,6 +755,7 @@ async function renderAll(): Promise<RenderReport> {
     ['brakes 0', (s, at) => everyFrame(at, 0, 5, (t) => s.brakes(t < 1.5 ? 1 : 0))],
     ['safety valve off', (s, at) => everyFrame(at, 0, 5, (t) => s.safetyValve(t < 1.5))],
     ['water off', (s, at) => everyFrame(at, 0, 5, (t) => s.water(t < 1.5))],
+    ['ford water off', (s, at) => everyFrame(at, 0, 5, (t) => s.fordWater(t < 1.5 ? 0.8 : 0))],
     ['horses gone', (s, at) => everyFrame(at, 0, 5, (t) => s.gallop(t < 1.5 ? [{ pan: 0, gain: 1 }] : []))],
   ];
   for (const [name, script] of offs) {
@@ -641,6 +776,7 @@ async function renderAll(): Promise<RenderReport> {
       s.brakes(0.6);
       s.safetyValve(true);
       s.water(true);
+      s.fordWater(0.8, { pan: 0.3 });
       s.gallop([
         { pan: -0.5, gain: 1 },
         { pan: 0.5, gain: 0.6 },
@@ -691,6 +827,7 @@ async function renderAll(): Promise<RenderReport> {
       s.brakes(1);
       s.safetyValve(true);
       s.water(true);
+      s.fordWater(1);
       s.gallop([
         { pan: -1, gain: 1 },
         { pan: -0.3, gain: 1 },
@@ -897,8 +1034,9 @@ const knobs = {
   horseGain: 0.8,
   pan: 0,
   gain: 1,
+  ford: 0.8,
 };
-const flags = { engine: false, tunnel: false, cab: false, valve: false, water: false, whistle: false, muffled: false, drive: false, rideBy: false };
+const flags = { engine: false, tunnel: false, cab: false, valve: false, water: false, whistle: false, muffled: false, drive: false, rideBy: false, ford: false };
 
 // Capture phase, so the context is created inside the gesture before any button handler runs.
 const unlock = (): void => sfx.unlock();
@@ -1018,6 +1156,20 @@ byId('controls').append(
     ),
   ),
   group(
+    'Fords, the lurch, cattle (round 2)',
+    buttons(
+      toggle('Ford water', 'ford'),
+      button('Splash: the loco', () => sfx.splash(true, shotOpts())),
+      button('Splash: a body', () => sfx.splash(false, shotOpts())),
+      button('Lurch', () => sfx.lurch(flags.cab ? 'cab' : 'rider')),
+      button('Whinny', () => sfx.whinny(knobs.pan, knobs.gain)),
+      button('Cattle: a questioning low', () => sfx.cattle(false, knobs.pan, knobs.gain)),
+      button('Cattle: bellow and bolt', () => sfx.cattle(true, knobs.pan, knobs.gain)),
+      button('Grunt (thrown)', () => sfx.grunt()),
+    ),
+    knob('Ford level', 'ford', 0, 1, 0.05),
+  ),
+  group(
     'Screens',
     buttons(
       button('Chime', () => sfx.chime()),
@@ -1065,6 +1217,7 @@ function tick(): void {
   sfx.brakes(brakes);
   sfx.safetyValve(flags.valve);
   sfx.water(flags.water);
+  sfx.fordWater(flags.ford ? knobs.ford : 0, { pan: knobs.pan, listener });
   sfx.whistle(flags.whistle, listener);
   const n = flags.rideBy ? 3 : knobs.horses;
   sfx.gallop(
