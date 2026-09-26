@@ -634,15 +634,19 @@ describe('slamming the brakes: the lurch (spec §5.2)', () => {
     const now = s.tick;
     expect(lurches(brake(s, 1))).toEqual([{ type: 'lurch' }]);
     expect(s.train.lurchTick).toBe(now);
-    // Exactly at EMERGENCY_BRAKE is emergency, and backing at speed counts too.
-    expect(lurches(brake(running(15), EMERGENCY_BRAKE))).toHaveLength(1);
+    // On from full service (the desk's detent at EMERGENCY_BRAKE) counts, and so does backing at speed.
+    const full = running(15);
+    full.train.brake = EMERGENCY_BRAKE;
+    expect(lurches(brake(full, EMERGENCY_BRAKE + 0.01))).toHaveLength(1);
     expect(lurches(brake(running(-LURCH_MIN_SPEED - 1), 1))).toHaveLength(1);
   });
 
-  it('not below LURCH_MIN_SPEED, nor with the brake short of emergency', () => {
+  it('not below LURCH_MIN_SPEED, nor at full service or short of it', () => {
     const slow = running(LURCH_MIN_SPEED - 0.1);
     expect(lurches(brake(slow, 1))).toEqual([]);
     expect(slow.train.lurchTick).toBe(-COOLDOWN);
+    // Full service is the top of the service range: the hardest ordinary application, no lurch.
+    expect(lurches(brake(running(15), EMERGENCY_BRAKE))).toEqual([]);
     expect(lurches(brake(running(15), EMERGENCY_BRAKE - 0.01))).toEqual([]);
   });
 

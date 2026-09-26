@@ -226,15 +226,18 @@ export function applyEngineerCmd(state: GameState, run: RunDef, cmd: EngineerCmd
   events.push(refused === null ? { type: 'cmdResult', seq: cmd.seq, ok: true } : { type: 'cmdResult', seq: cmd.seq, ok: false, reason: refused });
 }
 
+/** The brake lever in emergency: above full service, EMERGENCY_BRAKE itself (spec §5.2). */
+const emergency = (brake: number): boolean => brake > EMERGENCY_BRAKE;
+
 /**
- * Slamming the brakes (spec §5.2): the lever going into emergency (from `was`, below it) at
+ * Slamming the brakes (spec §5.2): the lever going into emergency (from `was`, out of it) at
  * LURCH_MIN_SPEED or more lurches the train, at most once per LURCH_COOLDOWN_SECONDS. Holding it
- * there doesn't lurch again. Commands come first in a tick, so the Rider and bandit modules see
- * lurchTick === state.tick in the same step and do the rest.
+ * there doesn't lurch again, and full service never does. Commands come first in a tick, so the
+ * Rider and bandit modules see lurchTick === state.tick in the same step and do the rest.
  */
 function lurch(state: GameState, was: number, events: SimEvent[]): void {
   const t = state.train;
-  if (was >= EMERGENCY_BRAKE || t.brake < EMERGENCY_BRAKE || Math.abs(t.v) < LURCH_MIN_SPEED) return;
+  if (emergency(was) || !emergency(t.brake) || Math.abs(t.v) < LURCH_MIN_SPEED) return;
   if (state.tick - t.lurchTick < secondsToTicks(LURCH_COOLDOWN_SECONDS)) return;
   t.lurchTick = state.tick;
   events.push({ type: 'lurch' });
