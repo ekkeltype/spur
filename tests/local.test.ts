@@ -88,7 +88,7 @@ describe('createLocalPair', () => {
     };
     const lobby: LobbyMsg = {
       type: 'lobby',
-      lobby: { campaign, selectedRun: 0, consist: ['express'], hostReady: false, clientReady: false, checkpoint: null },
+      lobby: { campaign, selectedRun: 0, consist: ['express'], hostReady: false, clientReady: false, checkpoint: null, switchSeats: { rider: false, engineer: false, switching: false } },
     } as LobbyMsg;
     host.send(lobby);
     // Mutating after send must not reach the receiver.

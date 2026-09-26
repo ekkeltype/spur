@@ -3,18 +3,18 @@
 
 import type { Sfx } from '../audio/sfx';
 import { ClientSession, type ClientGame } from '../net/client';
-import { PeerClient } from '../net/peer';
+import { PeerClient, PeerHost } from '../net/peer';
 import { normalizeRoomCode } from '../net/room';
 import type { Transport } from '../net/transport';
 import { EngineerDesk } from '../render/desk/desk';
-import type { DebugInfo } from '../net/protocol';
+import type { DebugInfo, SwitchSave } from '../net/protocol';
 import type { EngineerEvent } from '../sim/types';
 import { button, clear, h } from './dom';
 import { Hints, hintsOn, Toaster } from './feedback';
 import { depotBoard } from './lobby';
-import { briefingScreen, countdownOverlay, messageScreen, noticeOverlay, pauseOverlay, readyRow, resultsScreen, type Actions, type PauseView } from './screens';
+import { briefingScreen, countdownOverlay, messageScreen, noticeOverlay, pauseOverlay, readyRow, resultsScreen, switchSeatsRow, type Actions, type PauseView } from './screens';
 import { CabSounds } from './sounds';
-import type { SettingsSource } from './stores';
+import type { SaveStore, SettingsSource } from './stores';
 
 export interface ClientAppOptions {
   root: HTMLElement;
@@ -28,7 +28,16 @@ export interface ClientAppOptions {
   initialCode?: string;
   /** Local test mode: the Engineer is always ready, so one person can drive both views. */
   autoReady?: boolean;
+  /** Online: this browser's save, which keeps a copy of the pair's campaign (spec §17). */
+  store?: SaveStore;
+  /** Shown in the lobby once, e.g. "You're the Engineer now." */
+  note?: string;
+  /** Both ticked "Switch seats" and the save arrived: host in `peer`, the room opened for it (spec §3). */
+  onTakeRiderSeat?: (peer: PeerHost, save: SwitchSave) => void;
 }
+
+/** Switching seats: how long the room opened for the Rider's seat waits for the save before closing. */
+const SWITCH_SAVE_WAIT_MS = 15000;
 
 interface ScreenCtl {
   name: string;
@@ -45,8 +54,15 @@ export class ClientApp {
   private current: ScreenCtl | null = null;
   private play: EngineerPlay | null = null;
   private unsubs: (() => void)[] = [];
+  private note: string | null;
+  /** Switching seats: the room opened for the Rider's seat, until the save arrives. */
+  private switchPeer: PeerHost | null = null;
+  private switchOpening = false;
+  private switchTimer: number | undefined;
+  private destroyed = false;
 
   constructor(private opts: ClientAppOptions) {
+    this.note = opts.note ?? null;
     this.refresh();
   }
 
@@ -61,7 +77,50 @@ export class ClientApp {
     this.session?.destroy();
     this.session = session;
     this.unsubs.push(session.onChange(() => this.refresh()));
+    const store = this.opts.store;
+    if (store && this.opts.mode === 'online') this.unsubs.push(session.onCampaign((c) => store.takeCampaign(c)));
+    this.unsubs.push(session.onSwitchBegin(() => void this.openRoomForSwitch(session)));
+    this.unsubs.push(session.onSwitchSave((save) => this.takeRiderSeat(save)));
     this.refresh();
+  }
+
+  /** Both ticked "Switch seats": open a room for the Rider's seat, and tell the Rider's browser where. */
+  private async openRoomForSwitch(session: ClientSession): Promise<void> {
+    if (this.opts.mode !== 'online' || this.switchPeer || this.switchOpening) return;
+    this.switchOpening = true;
+    try {
+      const peer = await PeerHost.open();
+      if (this.destroyed || this.session !== session || session.status !== 'open') {
+        peer.destroy();
+        return;
+      }
+      this.switchPeer = peer;
+      session.sendSwitchRoom(peer.code);
+      this.switchTimer = window.setTimeout(() => this.dropSwitchRoom(), SWITCH_SAVE_WAIT_MS);
+    } catch (e) {
+      session.sendSwitchFailed(e instanceof Error ? e.message : String(e));
+    } finally {
+      this.switchOpening = false;
+    }
+  }
+
+  private dropSwitchRoom(): void {
+    window.clearTimeout(this.switchTimer);
+    this.switchTimer = undefined;
+    this.switchPeer?.destroy();
+    this.switchPeer = null;
+  }
+
+  /** The save arrived: this browser hosts now, in the room it opened (the app takes over the room). */
+  private takeRiderSeat(save: SwitchSave): void {
+    const peer = this.switchPeer;
+    if (!peer || !this.opts.onTakeRiderSeat) return;
+    window.clearTimeout(this.switchTimer);
+    this.switchTimer = undefined;
+    this.switchPeer = null;
+    const take = this.opts.onTakeRiderSeat;
+    // Leave the session's own callbacks before the app is torn down.
+    window.setTimeout(() => take(peer, save), 0);
   }
 
   join(rawCode: string): void {
@@ -79,7 +138,8 @@ export class ClientApp {
       this.peerError = msg;
       this.refresh();
     });
-    this.setSession(new ClientSession(this.peer.transport));
+    const store = this.opts.store;
+    this.setSession(new ClientSession(this.peer.transport, { campaign: () => store?.save.campaign ?? null }));
   }
 
   /** Drops the current connection attempt and shows the join screen again. */
@@ -100,6 +160,8 @@ export class ClientApp {
   }
 
   destroy(): void {
+    this.destroyed = true;
+    this.dropSwitchRoom();
     for (const u of this.unsubs) u();
     this.play?.destroy();
     this.play = null;
@@ -243,6 +305,7 @@ export class ClientApp {
     const toaster = new Toaster();
     const board = depotBoard((a) => s.depot(a));
     const ready = readyRow('engineer', (r) => s.setReady(r));
+    const switchRow = online ? switchSeatsRow('engineer', (on) => s.setSwitchSeats(on)) : null;
     const statusEl = h('div', { class: 'status' });
     const unsub = s.onDepotRefusal((reason) => toaster.show(reason, 'danger', 3200));
     const head = h(
@@ -257,7 +320,7 @@ export class ClientApp {
       button('Settings', () => this.opts.onSettings(), 'btn small-btn'),
       online ? button('Leave', () => this.opts.onExit(), 'btn small-btn') : null,
     );
-    const foot = h('footer', { class: 'depot-foot' }, ready.el, h('span', { class: 'spacer' }), h('span', { class: 'start-note', text: 'The Rider starts the run when you’re both ready.' }));
+    const foot = h('footer', { class: 'depot-foot' }, ready.el, switchRow?.el, h('span', { class: 'spacer' }), h('span', { class: 'start-note', text: 'The Rider starts the run when you’re both ready.' }));
     const el = h('div', { class: 'screen depot-screen' }, h('div', { class: 'sheet depot' }, head, board.el, foot), toaster.el);
     return {
       name: key,
@@ -265,6 +328,12 @@ export class ClientApp {
       update: () => {
         if (s.lobby) board.update({ lobby: s.lobby, runs: s.runs });
         ready.update(s.ready, s.hostReady, s.status === 'open');
+        const sw = s.lobby?.switchSeats;
+        if (sw) switchRow?.update(sw.engineer, sw.rider, sw.switching, s.status === 'open');
+        if (this.note) {
+          toaster.show(this.note, 'good', 5000);
+          this.note = null;
+        }
         const latency = s.latencyMs !== null && online ? ` (${Math.round(s.latencyMs)} ms)` : '';
         clear(statusEl);
         statusEl.append(h('span', { class: `status-dot ${s.status === 'open' ? 'open' : 'connecting'}` }), h('span', { text: s.status === 'open' ? `Connected to the Rider${latency}` : 'Reconnecting…' }));

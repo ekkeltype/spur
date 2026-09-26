@@ -457,6 +457,66 @@ function base64ToBytes(base64: string): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------------------------
+// One campaign in both browsers (spec §17): the Engineer's browser keeps a copy of the pair's
+// campaign, so either player can host the next session, and switching seats moves the host
+// ---------------------------------------------------------------------------------------------
+
+/** Where a save is kept when a different campaign from the other player replaces it. */
+export const ASIDE_SAVE_KEY = 'spur.save.aside';
+
+export type CampaignMerge = 'take' | 'keep' | 'takeAside';
+
+/**
+ * Is campaign `a` an earlier point of `b`, or the same one? Every run won in `a` is won at least as
+ * often in `b`, with its medals, and `b` has every unlock and purchase of `a`. Money isn't compared:
+ * it rises with wins and falls with purchases, which the rest already shows.
+ */
+export function campaignWithin(a: CampaignProgress, b: CampaignProgress): boolean {
+  if (a.unlocked > b.unlocked || a.owned.some((o) => !b.owned.includes(o))) return false;
+  return a.completed.every((e) => {
+    const f = b.completed.find((x) => x.runId === e.runId);
+    return f !== undefined && f.times >= e.times && e.medals.every((m) => f.medals.includes(m));
+  });
+}
+
+/**
+ * What a browser does with the pair's campaign arriving from the other player: 'take' it when its
+ * own is an earlier point of it (or the same), 'keep' its own when that's further along, and
+ * 'takeAside' when they're different stories (take it, and keep its own aside).
+ */
+export function mergeCampaign(own: CampaignProgress, incoming: CampaignProgress): CampaignMerge {
+  if (campaignWithin(own, incoming)) return 'take';
+  if (campaignWithin(incoming, own)) return 'keep';
+  return 'takeAside';
+}
+
+/** A campaign from the other player's browser, cleaned like a save's; null if it isn't one. */
+export function cleanIncomingCampaign(raw: unknown, runs: Runs = RUNS): CampaignProgress | null {
+  return isRecord(raw) ? cleanCampaign(raw, runs) : null;
+}
+
+/**
+ * This browser's save after the pair's campaign arrives (with the checkpoint, when switching seats).
+ * Settings stay this browser's own. A campaign further along than the incoming one is kept, with its
+ * checkpoint. Otherwise the incoming one is taken, and a different story it replaces comes back as
+ * `aside`, to be kept. Taking a campaign that has moved on drops this browser's checkpoint, which is
+ * from an earlier point, unless a checkpoint comes with it.
+ */
+export function takeCampaign(save: SaveV1, incoming: CampaignProgress, checkpoint?: Checkpoint | null): { save: SaveV1; outcome: CampaignMerge; aside: SaveV1 | null } {
+  const outcome = mergeCampaign(save.campaign, incoming);
+  if (outcome === 'keep') return { save, outcome, aside: null };
+  const samePoint = campaignWithin(incoming, save.campaign);
+  const kept = checkpoint !== undefined ? checkpoint : samePoint ? save.checkpoint : null;
+  return { save: { ...save, campaign: incoming, checkpoint: kept }, outcome, aside: outcome === 'takeAside' ? save : null };
+}
+
+/** Keeps a replaced save under ASIDE_SAVE_KEY (never throws). */
+export function writeAsideSave(save: SaveV1, storage?: Storage): void {
+  const store = storageOrDefault(storage);
+  if (store) writeItem(store, ASIDE_SAVE_KEY, JSON.stringify(save));
+}
+
+// ---------------------------------------------------------------------------------------------
 // Payouts and campaign progress (spec §12)
 // ---------------------------------------------------------------------------------------------
 

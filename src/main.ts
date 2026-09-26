@@ -10,6 +10,9 @@ import { Sfx } from './audio/sfx';
 import { RUNS } from './content/runs';
 import type { AutopilotHook } from './net/host';
 import { createLocalPair } from './net/local';
+import type { PeerHost } from './net/peer';
+import type { SwitchSave } from './net/protocol';
+import { cleanCheckpoint, cleanIncomingCampaign } from './save/save';
 import { autopilotStep, newAutopilot, type AutopilotState } from './sim/autopilot';
 import { tryLowerSpout } from './sim/train';
 import { ClientApp } from './ui/client-app';
@@ -103,7 +106,7 @@ function showTitle(): void {
   useVolumes(store);
   show(
     titleScreen({
-      host: startHost,
+      host: () => startHost(),
       join: () => startJoin(),
       local: startLocal,
       settings: () => showSettings([store, clientStore], showTitle),
@@ -138,9 +141,17 @@ function settingsOver(host: HTMLElement, sources: SettingsSource[]): void {
   host.append(layer);
 }
 
-function startHost(): void {
+/**
+ * Hosts as the Rider: in a new room, or (after switching seats, spec §3) in the room this browser
+ * opened as the Engineer, with the save the Rider's browser handed over.
+ */
+function startHost(handover?: { peer: PeerHost; save: SwitchSave }): void {
   stopAll();
   useVolumes(store);
+  // The save comes from the other browser: clean it like an imported one. Without a campaign, this
+  // browser's own copy (kept in step with the host's, spec §17) stands.
+  const campaign = handover ? cleanIncomingCampaign(handover.save.campaign) : null;
+  if (handover && campaign) store.takeCampaign(campaign, cleanCheckpoint(handover.save.checkpoint));
   const pane = h('div', { class: 'app-root' });
   const wrap = h('div', { class: 'app-wrap' }, pane);
   show(wrap);
@@ -154,14 +165,18 @@ function startHost(): void {
     forcedRun,
     onExit: showTitle,
     onSettings: () => settingsOver(wrap, [store]),
+    peer: handover?.peer,
+    selectedRunId: handover?.save.runId,
+    note: handover ? 'You’re the Rider now. The Engineer is on the way.' : undefined,
+    onSwitchToEngineer: (code) => startJoin(code, 'You’re the Engineer now.'),
   });
   applyAutopilot(host);
   active = [host];
   exposeForChecks({ host });
-  void host.openRoom();
+  if (!handover) void host.openRoom();
 }
 
-function startJoin(code?: string): void {
+function startJoin(code?: string, note?: string): void {
   stopAll();
   useVolumes(clientStore);
   const pane = h('div', { class: 'app-root' });
@@ -176,6 +191,9 @@ function startJoin(code?: string): void {
     onExit: showTitle,
     onSettings: () => settingsOver(wrap, [clientStore]),
     initialCode: code,
+    store,
+    note,
+    onTakeRiderSeat: (peer, save) => startHost({ peer, save }),
   });
   active = [client];
   exposeForChecks({ client });

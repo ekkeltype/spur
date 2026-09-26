@@ -53,6 +53,38 @@ export function readyRow(role: Role, onReady: (ready: boolean) => void): ReadyVi
 }
 
 // ---------------------------------------------------------------------------------------------
+// Switching seats (spec §3)
+// ---------------------------------------------------------------------------------------------
+
+export interface SwitchSeatsView {
+  el: HTMLElement;
+  update(me: boolean, them: boolean, switching: boolean, connected: boolean): void;
+}
+
+/** The lobby's "Switch seats" box: once both players tick it, the Rider and the Engineer swap seats. */
+export function switchSeatsRow(role: Role, onToggle: (on: boolean) => void): SwitchSeatsView {
+  const partner = Seat(other(role));
+  const box = h('input', { type: 'checkbox', on: { change: () => onToggle(box.checked) } });
+  const note = h('span', { class: 'switch-note' });
+  const el = h('div', { class: 'switch-row' }, h('label', { class: 'switch-seats' }, box, h('span', { text: 'Switch seats' })), note);
+  return {
+    el,
+    update(me, them, switching, connected) {
+      box.checked = me;
+      box.disabled = switching || !connected;
+      note.textContent = switching
+        ? 'Switching seats…'
+        : me && !them
+          ? `Waiting for the ${partner} to tick it too`
+          : them && !me
+            ? `The ${partner} wants to switch seats`
+            : `When you both tick it, you become the ${partner}`;
+      el.classList.toggle('asked', them && !me && !switching);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
 // Controls (spec §6.2, §11)
 // ---------------------------------------------------------------------------------------------
 

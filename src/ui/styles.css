@@ -1056,6 +1056,47 @@ h3.section {
   background: rgba(91, 196, 107, 0.12);
 }
 
+/* ---------------------------------------------------------------- switching seats */
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 10px;
+  flex-wrap: wrap;
+}
+
+.switch-seats {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.switch-seats input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--mesa);
+  cursor: pointer;
+}
+
+.switch-seats input:disabled,
+.switch-seats input:disabled + span {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.switch-note {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.switch-row.asked .switch-note {
+  color: var(--text-red);
+  font-weight: 700;
+}
+
 /* ---------------------------------------------------------------- briefing */
 
 .sheet.briefing {

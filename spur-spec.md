@@ -80,6 +80,12 @@ campaign (Acts I and II). Money earned from contracts buys cars and upgrades bet
    preview, the train consist (cars) and the shop (money, upgrades), plus per-seat assists. Either
    player can change the consist or buy things. Both press Ready, then the Rider presses **Start**.
    If a checkpoint exists, the lobby offers **Continue from <station>**.
+   Online, each player has a **Switch seats** box. When both have ticked it, the seats swap: the
+   Engineer's browser opens a new room and becomes the host (the Rider's seat always hosts, §16.1),
+   the Rider's browser hands it the save (the campaign, the checkpoint and the selected run) and
+   joins that room as the Engineer. Both come back to the depot in their new seats, unready and
+   unticked. While the seats switch, the depot and Start wait. If the new room can't open, or the
+   Engineer drops out first, nothing changes and the lobby says why.
 3. **Briefing.** The run's name and flavor, the contract, and "new this time" lines for each seat,
    plus controls. Both press Ready, then a 3-2-1 countdown.
 4. **The run.** The train starts stopped at the origin station. Departing a checkpoint station, after
@@ -712,9 +718,13 @@ the last value wins. Transport, chunking, goodbyes, reconnects and TURN work exa
 
 ### 16.2 Messages
 
-`hello`, `welcome`, `reject`, `ready`, `lobby`, `depot` (a client action in the lobby: toggle a car,
-buy an item, toggle an assist), `start`, `snapshot`, `event`, `cmd`, `ack`, `pause`, `countdown`, `ping`,
-`pong`, `result` and `debug` (dev only).
+`hello` (with the Engineer's copy of the campaign, if their browser has one, §17), `welcome`,
+`reject`, `ready`, `lobby`, `depot` (a client action in the lobby: toggle a car, buy an item, toggle
+an assist), `start`, `snapshot`, `event`, `cmd`, `ack`, `pause`, `countdown`, `ping`, `pong`,
+`result` and `debug` (dev only). Switching seats (§3): `switchSeats` (the Engineer ticks or unticks
+the box), `switchBegin` (both have: open a room), `switchRoom` (its code) or `switchFailed`, then
+`switchSave` (the save to host with). The checkpoint, and with it the seed, only crosses the wire in
+`switchSave`, once the Engineer's browser is about to become the host.
 
 `start` carries an `EngineerRun`: the `RunDef` stripped of obstacles, waves, the runaway, variants
 and the plan.
@@ -752,7 +762,17 @@ gunfire intensity, and the loss reason).
     completed), `assists`.
   - `checkpoint`: `null`, or `{ runId, seed, stationId, stationName, composition, upgrades, state }`,
     where `state` is the `GameState` at departure from a checkpoint station.
-- **Engineer's client** (`spur.settings.v1`): their own settings.
+- **Engineer's client** (`spur.settings.v1`): their own settings. Online, the Engineer's browser
+  also keeps a copy of the pair's campaign in its own `spur.save.v1` (with its own settings), so
+  either player can host the next session with the campaign as it stands.
+- **One campaign in two browsers.** A campaign is *within* another when every run won in it is won
+  at least as often in the other, with its medals, and the other has all its unlocks and purchases
+  (money isn't compared). A browser receiving the pair's campaign takes it when its own is within it,
+  keeps its own when the incoming one is within its own (further along), and otherwise (a different
+  story) takes it and keeps its own under `spur.save.aside`. The Engineer's browser does this with
+  every campaign the host sends; the host does it once, with the Engineer's copy in their `hello`,
+  taking it only when it's further along (the last session was hosted over there), and never mid-game.
+  Taking a campaign that has moved on drops the browser's checkpoint, which is from an earlier point.
 - **Save codes** (export and import) as in Clew.
 - A checkpoint is cleared when its run is won, restarted, or another run starts.
 
@@ -850,6 +870,7 @@ The first playtest's notes, and what changed (details in the sections above; cho
 | Cattle: holding the whistle down worked | Herds get used to an early whistle; the whistle costs steam (§5.2, §8) |
 | Extra cars earned nothing | Cargo cars pay (§12) |
 | The 30 mph diverging limit lasted to the next signal | It ends once the train is through the junction (§9.3) |
+| Switching seats meant hosting afresh and moving a save code | A **Switch seats** box in the lobby for both players (§3); both browsers keep the campaign (§17) |
 
 ## 22. Out of scope for v1
 

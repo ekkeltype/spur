@@ -4,7 +4,7 @@ Where the spec was silent or ambiguous, these are the choices made (spec §0). E
 
 ## Architecture
 
-- **The Rider hosts.** The action seat's browser runs the authoritative simulation, so the Rider's movement and shooting have no network latency. What the Engineer does is naturally latency-tolerant: levers on a heavy train, switches thrown ahead of time. To swap seats, the other player hosts; the campaign moves with a save code.
+- **The Rider hosts.** The action seat's browser runs the authoritative simulation, so the Rider's movement and shooting have no network latency. What the Engineer does is naturally latency-tolerant: levers on a heavy train, switches thrown ahead of time. So switching seats moves the host: see "Switching seats" below.
 - **60 Hz ticks** (Clew used 30). Platforming and hitscan shooting feel better at 60, and the sim is cheap (about 10 µs a tick for the train). Engineer snapshots go out at 15 Hz, and the desk smooths its gauges between them.
 - **Clew's infrastructure is reused**: the transport, the PeerJS layer with chunking, goodbyes and reconnects, room codes, the save helpers, the DOM helpers, toasts and hints, and the Pages workflow. Those parts are renamed but otherwise unchanged.
 - **Nothing on the wire carries the seed.** It picks the run's hidden variant, so the Engineer's browser never learns it.
@@ -114,7 +114,18 @@ Tuned against `tests/balance.test.ts`: the autopilot drives while a bot Rider fi
 - **Precise yards.** The precision-stop readout is in whole yards; its tolerances round down (a station's 16 yd, the spout's 3 yd) so keeping inside them keeps inside the rule. A distance that would round up to 1,760 yd reads "1.0 mi". Depot weights are in (short) tons.
 - **Cargo in the depot** shows full rates, with a "(half on a replay)" note on replays; the results row names the cars that earned it. The depot and the results use the sim's own `cargoCars()`.
 - **Hints show on any run not yet won**, not only the first, since signals and cattle first appear in run 3; the setting reads "On runs not yet won". Each hint shows once per play screen. The Engineer's signal hint waits 9 s into a run so it doesn't replace the opening one.
-- **The protocol is version 2.** Round 2 changed what the host sends, so an Engineer on an old page is asked to reload.
+- **The protocol went to version 2** (3 since switching seats). Round 2 changed what the host sends, so an Engineer on an old page is asked to reload.
+
+## Switching seats
+
+- **The host moves with the Rider's seat.** When both tick "Switch seats", the Engineer's browser opens a new room (a new code) and the Rider's browser hands it the save and joins it. Reusing the old code would race the old room's release on the signalling server. The Rider's browser leaves only once the other has left its room (it has the save by then), or after 3 s.
+- **The save goes over only once the new room is open.** `switchBegin` carries nothing; the campaign, the checkpoint and the selected run go in `switchSave`, after `switchRoom`. So the seed in a checkpoint only reaches a browser that is about to become the host, not an Engineer whose room then failed to open.
+- **Nothing changes unless it all works.** A room that can't open (`switchFailed`) or an Engineer dropping out before the handover leaves the seats as they were, clears both boxes (or the Engineer's) and says why in the lobby. The depot and Start wait while the seats switch. Once the save has gone, the switch goes ahead.
+- **A tick and an untick can cross.** If the Engineer unticks just as the Rider ticks, the host may see both ticked and begin. The players talk; the box is a confirmation, not a lock.
+- **Local test mode has no box.** One person plays both seats in one window, so switching would change nothing.
+- **Both browsers keep the campaign.** The campaign used to live only in the host's browser, so after a switch the progress stayed with whoever hosted last, and the next session could start from an older copy. Now the Engineer's browser keeps a copy of every campaign the host sends, and the host takes the Engineer's copy at the hello when it's further along. "Further along" needs no clocks or ids: along one campaign, wins, medals, unlocks and purchases only grow, so containment decides; money moves both ways and isn't compared. Two different stories (neither within the other) can't be merged: the one being played wins, and the other is kept under `spur.save.aside`, never silently lost. The host never takes a campaign mid-game.
+- **A mirrored campaign keeps the browser's own settings**, and drops its checkpoint when the campaign has moved on (it would be from an earlier point). Switching seats brings the Rider's checkpoint along.
+- **The protocol is version 3.**
 
 ## Audio
 

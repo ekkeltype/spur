@@ -3,11 +3,11 @@
 // without depending on how the sim modules produce them.
 
 import { describe, expect, it, vi } from 'vitest';
-import { ClientSession } from '../src/net/client';
+import { ClientSession, type ClientOptions } from '../src/net/client';
 import { RUNS } from '../src/content/runs';
 import { cleanCmd, GUNFIRE_MIN_TICKS, HostSession, runCard, type HostOptions } from '../src/net/host';
 import { createLocalPair } from '../src/net/local';
-import type { Msg } from '../src/net/protocol';
+import type { Msg, SwitchSave } from '../src/net/protocol';
 import { defaultCampaign, defaultSave, recordResult, type SaveV1 } from '../src/save/save';
 import { COUNTDOWN_SECONDS, TICK_HZ } from '../src/sim/rules';
 import type { CampaignProgress, EngineerCmdBody, RunDef, SimEvent } from '../src/sim/types';
@@ -38,7 +38,7 @@ const flush = async (n = 3): Promise<void> => {
   for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0));
 };
 
-function setup(opts: { campaign?: Partial<CampaignProgress>; host?: Partial<HostOptions> } = {}) {
+function setup(opts: { campaign?: Partial<CampaignProgress>; host?: Partial<HostOptions>; client?: ClientOptions } = {}) {
   const pair = createLocalPair();
   let save: SaveV1 = { ...defaultSave(false), campaign: { ...defaultCampaign(), ...opts.campaign } };
   const writes = { campaign: 0, checkpoint: 0 };
@@ -64,7 +64,9 @@ function setup(opts: { campaign?: Partial<CampaignProgress>; host?: Partial<Host
   host.attachTransport(pair.host);
   const received: Msg[] = [];
   pair.client.onMessage((m) => received.push(m));
-  const client = new ClientSession(pair.client);
+  const sent: Msg[] = [];
+  pair.host.onMessage((m) => sent.push(m));
+  const client = new ClientSession(pair.client, opts.client);
   let now = 1000;
   const advance = (ms: number): void => {
     const end = now + ms;
@@ -74,7 +76,7 @@ function setup(opts: { campaign?: Partial<CampaignProgress>; host?: Partial<Host
       client.frame(now);
     }
   };
-  return { pair, host, client, received, advance, time: () => now, save: () => save, writes };
+  return { pair, host, client, received, sent, advance, time: () => now, save: () => save, writes };
 }
 
 type Ctx = ReturnType<typeof setup>;
@@ -324,7 +326,7 @@ describe('host and client sessions', () => {
     endGame(ctx, 'lost');
     advance(100);
     await flush();
-    const allowed = new Set(['welcome', 'reject', 'ready', 'lobby', 'depotRefused', 'start', 'snapshot', 'event', 'ack', 'pause', 'countdown', 'ping', 'pong', 'result', 'debug']);
+    const allowed = new Set(['welcome', 'reject', 'ready', 'lobby', 'depotRefused', 'start', 'snapshot', 'event', 'ack', 'pause', 'countdown', 'ping', 'pong', 'result', 'debug', 'switchBegin', 'switchSave']);
     for (const m of received) expect(allowed.has(m.type)).toBe(true);
     const keys = keysIn(received.filter((m) => m.type !== 'debug'));
     for (const hidden of ['seed', 'variant', 'variants', 'obstacles', 'waves', 'plan', 'bandits', 'horsemen', 'loot']) expect(keys.has(hidden)).toBe(false);
@@ -416,6 +418,190 @@ describe('the lobby and depot', () => {
     expect(forced.selectedRun).toBe(2);
     expect(forced.canPlay(2)).toBe(true);
     expect(forced.canPlay(1)).toBe(false);
+  });
+});
+
+describe('switching seats (spec §3)', () => {
+  /** Both tick "Switch seats". */
+  async function bothTick(ctx: Ctx): Promise<void> {
+    await flush();
+    ctx.host.setSwitchSeats(true);
+    ctx.client.setSwitchSeats(true);
+    await flush();
+  }
+
+  it('begins when both have ticked it: the Engineer’s browser is asked for a room, and the depot waits', async () => {
+    const ctx = setup({ campaign: { money: 500 } });
+    const { host, client, received } = ctx;
+    await flush();
+    const begun: number[] = [];
+    client.onSwitchBegin(() => begun.push(1));
+    host.setSwitchSeats(true);
+    await flush();
+    expect(client.lobby?.switchSeats).toEqual({ rider: true, engineer: false, switching: false });
+    expect(host.switching).toBe(false);
+    client.setSwitchSeats(true);
+    await flush();
+    expect(host.switching).toBe(true);
+    expect(begun).toEqual([1]);
+    expect(client.lobby?.switchSeats).toEqual({ rider: true, engineer: true, switching: true });
+    // The depot and the start wait while the seats switch, and nothing of the save has gone yet.
+    expect(host.depot({ kind: 'buy', item: 'rifle' })).toEqual({ ok: false, reason: 'The seats are switching.' });
+    host.setReady(true);
+    client.setReady(true);
+    await flush();
+    expect(host.canStart()).toBe(false);
+    expect(received.some((m) => m.type === 'switchSave')).toBe(false);
+    expect(keysIn(received).has('seed')).toBe(false);
+  });
+
+  it('either can change their mind before the other ticks it', async () => {
+    const ctx = setup();
+    const { host, client } = ctx;
+    await flush();
+    client.setSwitchSeats(true);
+    await flush();
+    client.setSwitchSeats(false);
+    await flush();
+    host.setSwitchSeats(true);
+    await flush();
+    expect(host.switching).toBe(false);
+    expect(client.lobby?.switchSeats).toEqual({ rider: true, engineer: false, switching: false });
+  });
+
+  it('hands the save over once the new room is open', async () => {
+    const ctx = setup({ campaign: { money: 70, unlocked: 2 } });
+    const { host, client } = ctx;
+    await flush();
+    host.depot({ kind: 'selectRun', index: 1 });
+    const saves: SwitchSave[] = [];
+    client.onSwitchSave((s) => saves.push(s));
+    await bothTick(ctx);
+    client.sendSwitchRoom('ab cde');
+    await flush();
+    expect(host.handoverCode).toBe('ABCDE');
+    expect(saves).toEqual([{ campaign: host.campaign, checkpoint: null, runId: 'payroll' }]);
+    // Once handed over, a second room changes nothing, and neither does the Engineer leaving.
+    client.sendSwitchRoom('FGHJK');
+    ctx.pair.drop();
+    await flush();
+    expect(host.handoverCode).toBe('ABCDE');
+    expect(host.switching).toBe(true);
+    expect(saves).toHaveLength(1);
+  });
+
+  it('takes the checkpoint along, so the new Rider can continue from it', async () => {
+    const ctx = setup();
+    await toPlaying(ctx);
+    addEvents({ type: 'checkpoint', stationId: 'orig' });
+    ctx.advance(20);
+    await flush();
+    const cp = ctx.host.checkpoint!;
+    ctx.host.toLobby();
+    const saves: SwitchSave[] = [];
+    ctx.client.onSwitchSave((s) => saves.push(s));
+    await bothTick(ctx);
+    ctx.client.sendSwitchRoom('ABCDE');
+    await flush();
+    expect(saves[0].checkpoint).toEqual(cp);
+    expect(saves[0].runId).toBe('first-light');
+  });
+
+  it('ignores a room code that isn’t one', async () => {
+    const ctx = setup();
+    await bothTick(ctx);
+    ctx.client.sendSwitchRoom('I0I0I');
+    await flush();
+    expect(ctx.host.handoverCode).toBeNull();
+    expect(ctx.received.some((m) => m.type === 'switchSave')).toBe(false);
+  });
+
+  it('stays put when the room can’t open or the Engineer drops out, and the boxes clear', async () => {
+    const ctx = setup();
+    const { host, client, pair } = ctx;
+    await bothTick(ctx);
+    client.sendSwitchFailed("Can't reach the matchmaking server.");
+    await flush();
+    expect(host.switching).toBe(false);
+    expect(host.switchProblem).toContain("Can't reach the matchmaking server.");
+    expect(client.lobby?.switchSeats).toEqual({ rider: false, engineer: false, switching: false });
+
+    await bothTick(ctx);
+    expect(host.switching).toBe(true);
+    pair.drop();
+    await flush();
+    expect(host.switching).toBe(false);
+    expect(host.switchProblem).toContain('dropped out');
+    pair.restore();
+    await flush(5);
+    // The Engineer comes back unticked; the Rider's tick stands.
+    expect(client.lobby?.switchSeats).toEqual({ rider: true, engineer: false, switching: false });
+  });
+
+  it('clears the boxes when a run begins', async () => {
+    const ctx = setup();
+    const { host, client } = ctx;
+    await flush();
+    host.setSwitchSeats(true);
+    await toBriefing(ctx);
+    expect(host.switchRider).toBe(false);
+    host.toLobby();
+    await flush();
+    expect(client.lobby?.switchSeats).toEqual({ rider: false, engineer: false, switching: false });
+  });
+});
+
+describe('one campaign in both browsers (spec §17)', () => {
+  const won = (runId: string, times = 1) => ({ runId, bestTimeSec: 400, medals: [], times });
+
+  it('the Engineer brings their copy in the hello, and the host takes it when it’s further along', async () => {
+    const theirs: CampaignProgress = { ...defaultCampaign(), unlocked: 3, money: 200, completed: [won('first-light'), won('payroll')] };
+    const ctx = setup({ campaign: { unlocked: 2, completed: [won('first-light')] }, client: { campaign: () => theirs } });
+    await flush();
+    const hello = ctx.sent.find((m) => m.type === 'hello');
+    expect(hello?.type === 'hello' && hello.campaign).toEqual(theirs);
+    expect(ctx.host.campaign).toEqual(theirs);
+    expect(ctx.save().campaign).toEqual(theirs);
+    expect(ctx.host.tookEngineersCampaign).toBe(true);
+    expect(ctx.host.selectedRun).toBe(2); // the run after the furthest won
+    expect(ctx.client.lobby?.campaign).toEqual(theirs);
+  });
+
+  it('the host keeps its own when the Engineer’s copy is behind, the same, a different story or not there', async () => {
+    const mine = { unlocked: 3, owned: ['shotgun' as const], completed: [won('first-light'), won('payroll')] };
+    const behind = { ...defaultCampaign(), unlocked: 2, completed: [won('first-light')] };
+    const other = { ...defaultCampaign(), unlocked: 2, owned: ['rifle' as const], completed: [won('first-light', 3)] };
+    for (const theirs of [behind, { ...defaultCampaign(), ...mine }, other, null]) {
+      const ctx = setup({ campaign: mine, client: { campaign: () => theirs } });
+      await flush();
+      expect(ctx.host.campaign).toEqual({ ...defaultCampaign(), ...mine });
+      expect(ctx.host.tookEngineersCampaign).toBe(false);
+      expect(ctx.writes.campaign).toBe(0);
+      const hello = ctx.sent.find((m) => m.type === 'hello');
+      expect(hello?.type === 'hello' && 'campaign' in hello).toBe(theirs !== null);
+    }
+  });
+
+  it('a copy that isn’t a campaign is ignored', async () => {
+    const ctx = setup({ client: { campaign: () => 'lots of money' as unknown as CampaignProgress } });
+    await flush();
+    expect(ctx.host.campaign).toEqual(defaultCampaign());
+    expect(ctx.host.connected).toBe(true);
+  });
+
+  it('the Engineer’s browser hears every campaign the host sends, to keep its copy', async () => {
+    const ctx = setup({ campaign: { money: 500 } });
+    const seen: CampaignProgress[] = [];
+    ctx.client.onCampaign((c) => seen.push(c));
+    await flush();
+    ctx.client.depot({ kind: 'buy', item: 'rifle' });
+    await flush();
+    expect(seen.at(-1)?.owned).toEqual(['rifle']);
+    await toPlaying(ctx);
+    endGame(ctx, 'won');
+    ctx.advance(100);
+    await flush();
+    expect(seen.at(-1)?.completed.map((e) => e.runId)).toEqual(['first-light']);
   });
 });
 

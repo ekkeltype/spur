@@ -14,6 +14,8 @@ The full design is in [`spur-spec.md`](spur-spec.md). Choices made where the spe
 2. **The Engineer** opens the same URL, chooses **Join as Engineer** and types the code.
 3. In the depot, pick a run, couple the cars you want (an extra express, passenger car or boxcar carries paying cargo, but a heavier train is slower), spend your earnings in the shop, and both press **Ready**. The Rider presses **Start**. Read the briefing, press Ready again, and go.
 
+To switch seats, both players tick **Switch seats** in the depot: the Engineer becomes the Rider (and hosts), the Rider becomes the Engineer, and the campaign goes with you. Both browsers keep a copy of the campaign, so either of you can host the next session.
+
 Each run has the same shape:
 
 - **Beginning: the depot.** Plan together: the contract, the consist, the route.

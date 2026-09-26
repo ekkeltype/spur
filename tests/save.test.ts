@@ -14,7 +14,9 @@ import {
   UNREADABLE_SAVE_KEY,
   availableCars,
   buyItem,
+  campaignWithin,
   checkpointOf,
+  cleanIncomingCampaign,
   defaultCampaign,
   defaultSave,
   defaultSettings,
@@ -24,11 +26,13 @@ import {
   isUnlocked,
   loadClientSettings,
   loadSave,
+  mergeCampaign,
   migrate,
   payoutFor,
   recordResult,
   restoreCheckpoint,
   setAssist,
+  takeCampaign,
   toggleCar,
   writeClientSettings,
   writeSave,
@@ -669,6 +673,58 @@ describe('cargo cars in the depot and on the results screen (spec §12)', () => 
   it('names the cars that earned it in the payout row', () => {
     expect(cargoLabel(['express', 'passenger', 'boxcar'], { requiredCars: ['express'] })).toBe('Cargo (passenger, boxcar)');
     expect(cargoLabel([], { requiredCars: [] })).toBe('Cargo');
+  });
+});
+
+describe('one campaign in both browsers (spec §17)', () => {
+  const won = (runId: string, times = 1, medals: Medal[] = []) => ({ runId, bestTimeSec: 500, medals, times });
+  const campaign = (p: Partial<CampaignProgress> = {}): CampaignProgress => ({ ...defaultCampaign(), ...p });
+  const early = campaign({ unlocked: 2, money: 120, completed: [won('first-light')] });
+  const later = campaign({ unlocked: 3, money: 90, owned: ['shotgun'], completed: [won('first-light', 2, ['onTime']), won('payroll')] });
+  const other = campaign({ unlocked: 2, money: 400, owned: ['rifle'], completed: [won('first-light')] });
+
+  it('tells an earlier point of the same campaign from a further one, and from a different story', () => {
+    expect(campaignWithin(defaultCampaign(), later)).toBe(true);
+    expect(campaignWithin(early, later)).toBe(true);
+    expect(campaignWithin(later, early)).toBe(false);
+    expect(campaignWithin(later, later)).toBe(true);
+    // Money isn't compared: it goes up and down along one campaign.
+    expect(campaignWithin({ ...early, money: 5000 }, later)).toBe(true);
+    // A medal or a purchase the other doesn't have makes them different stories.
+    expect(campaignWithin(campaign({ ...early, completed: [won('first-light', 1, ['clean'])] }), later)).toBe(false);
+    expect(campaignWithin(other, later)).toBe(false);
+    expect(mergeCampaign(early, later)).toBe('take');
+    expect(mergeCampaign(later, early)).toBe('keep');
+    expect(mergeCampaign(later, later)).toBe('take');
+    expect(mergeCampaign(other, later)).toBe('takeAside');
+  });
+
+  it('takes a campaign that has moved on, dropping the checkpoint from an earlier point, and keeps its own settings', () => {
+    const settings = { ...defaultSettings(false), masterVolume: 0.2 };
+    const mine: SaveV1 = { version: 1, campaign: early, settings, checkpoint: sampleCheckpoint() };
+    const out = takeCampaign(mine, later);
+    expect(out.outcome).toBe('take');
+    expect(out.aside).toBeNull();
+    expect(out.save).toEqual({ version: 1, campaign: later, settings, checkpoint: null });
+    // At the same point the checkpoint stays; switching seats brings the Rider's own.
+    expect(takeCampaign({ ...mine, campaign: later }, later).save.checkpoint).toEqual(sampleCheckpoint());
+    expect(takeCampaign(mine, later, null).save.checkpoint).toBeNull();
+    const cp = sampleCheckpoint();
+    expect(takeCampaign(mine, later, cp).save.checkpoint).toBe(cp);
+  });
+
+  it('keeps a campaign that is further along, and keeps a different one aside rather than losing it', () => {
+    const mine: SaveV1 = { ...defaultSave(false), campaign: later, checkpoint: sampleCheckpoint() };
+    expect(takeCampaign(mine, early)).toEqual({ save: mine, outcome: 'keep', aside: null });
+    const theirs = takeCampaign(mine, other, null);
+    expect(theirs.outcome).toBe('takeAside');
+    expect(theirs.aside).toBe(mine);
+    expect(theirs.save.campaign).toEqual(other);
+  });
+
+  it('cleans a campaign from the wire like a save', () => {
+    expect(cleanIncomingCampaign('rich', RUNS6)).toBeNull();
+    expect(cleanIncomingCampaign({ money: -5, owned: ['shotgun', 'jetpack'], unlocked: 99 }, RUNS6)).toEqual({ ...defaultCampaign(), owned: ['shotgun'], unlocked: 6 });
   });
 });
 

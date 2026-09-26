@@ -4,7 +4,7 @@
 // action against the campaign rules in save.ts and broadcasts the result.
 
 import { RUNS } from '../content/runs';
-import { buyItem, checkpointOf, isUnlocked, restoreCheckpoint, setAssist, toggleCar, type DepotResult } from '../save/save';
+import { buyItem, campaignWithin, checkpointOf, cleanIncomingCampaign, isUnlocked, restoreCheckpoint, setAssist, toggleCar, type DepotResult } from '../save/save';
 import { composeConsist, isOver, newGame, runResult, step } from '../sim/game';
 import { COUNTDOWN_SECONDS, SNAPSHOT_HZ, TICK_HZ } from '../sim/rules';
 import { aspectOf } from '../sim/signals';
@@ -27,6 +27,7 @@ import type {
 } from '../sim/types';
 import { filterForEngineer, toEngineerRun, toEngineerView } from '../sim/views';
 import { PROTOCOL_VERSION, type DebugInfo, type DepotAction, type LobbyState, type Msg, type Payout, type Role, type RunCard } from './protocol';
+import { normalizeRoomCode } from './room';
 import type { Transport, TransportStatus } from './transport';
 
 export type HostScreen = 'lobby' | 'briefing' | 'playing' | 'results';
@@ -75,6 +76,8 @@ export interface HostOptions {
   forcedSeed?: number | null;
   /** Dev: preselect this run (0-based), even if it's locked. */
   forcedRun?: number | null;
+  /** Preselect this run if it can be played (after switching seats, the one the lobby had selected). */
+  selectedRunId?: string;
   debug?: boolean;
 }
 
@@ -172,6 +175,17 @@ export class HostSession {
   alpha = 0;
   /** Counts the games begun, so the app knows when to build a new play screen. */
   gameId = 0;
+  /** "Switch seats" (spec §3): ticked by the Rider here, and by the Engineer over the wire. */
+  switchRider = false;
+  switchEngineer = false;
+  /** Both ticked it: the Engineer's browser is opening a room for the Rider's seat. */
+  switching = false;
+  /** The room this browser joins as the Engineer, once the save has gone over. */
+  handoverCode: string | null = null;
+  /** Why the last switch didn't happen, for the lobby. */
+  switchProblem: string | null = null;
+  /** The Engineer's copy of the campaign was further along, so the lobby took it (spec §17). */
+  tookEngineersCampaign = false;
   readonly runs: readonly RunDef[];
 
   inputSource: () => RiderInput = () => NO_INPUT;
@@ -201,7 +215,8 @@ export class HostSession {
     this.debug = !!opts.debug;
     const forced = opts.forcedRun ?? null;
     this.forcedRun = forced !== null && Number.isFinite(forced) ? Math.max(0, Math.min(this.runs.length - 1, Math.floor(forced))) : null;
-    this.selectedRun = this.forcedRun ?? this.checkpointRunIndex() ?? this.suggestedRun();
+    const given = opts.selectedRunId !== undefined ? this.runs.findIndex((r) => r.id === opts.selectedRunId) : -1;
+    this.selectedRun = this.forcedRun ?? (given >= 0 && this.canPlay(given) ? given : null) ?? this.checkpointRunIndex() ?? this.suggestedRun();
   }
 
   // ---------------------------------------------------------------------------
@@ -254,6 +269,11 @@ export class HostSession {
       const wasConnected = this.connected;
       this.connected = false;
       this.clientReady = false;
+      this.switchEngineer = false;
+      if (this.switching && this.handoverCode === null) {
+        this.switching = false;
+        this.switchProblem = 'The Engineer dropped out before the seats could switch.';
+      }
       if (wasConnected && this.screen === 'playing' && this.game && !isOver(this.game.state)) {
         this.pause('engineer', true);
       }
@@ -272,6 +292,8 @@ export class HostSession {
         }
         this.connected = true;
         this.clientReady = false;
+        this.switchEngineer = false;
+        if (this.screen === 'lobby') this.considerEngineersCampaign(m.campaign);
         this.send({ type: 'welcome', protocol: PROTOCOL_VERSION });
         this.resync();
         break;
@@ -296,6 +318,20 @@ export class HostSession {
         break;
       case 'pong':
         this.latencyMs = Math.max(0, performance.now() - m.t);
+        break;
+      case 'switchSeats':
+        if (this.screen === 'lobby' && !this.switching) {
+          this.switchEngineer = m.on === true;
+          this.afterSwitchChange();
+        }
+        break;
+      case 'switchRoom': {
+        const code = typeof m.code === 'string' ? normalizeRoomCode(m.code) : '';
+        if (this.switching && this.handoverCode === null && code) this.handOver(code);
+        break;
+      }
+      case 'switchFailed':
+        if (this.switching && this.handoverCode === null) this.switchFailed(typeof m.reason === 'string' ? m.reason : '');
         break;
       default:
         break;
@@ -358,6 +394,7 @@ export class HostSession {
       hostReady: this.hostReady,
       clientReady: this.clientReady,
       checkpoint: cp && cpRun ? { runId: cp.runId, runName: cpRun.name, stationName: cp.stationName } : null,
+      switchSeats: { rider: this.switchRider, engineer: this.switchEngineer, switching: this.switching },
     };
   }
 
@@ -387,6 +424,7 @@ export class HostSession {
    */
   depot(action: DepotAction): DepotOutcome {
     if (this.screen !== 'lobby') return { ok: false, reason: 'The run has started, so the depot is closed.' };
+    if (this.switching) return { ok: false, reason: 'The seats are switching.' };
     if (typeof action !== 'object' || action === null) return { ok: false, reason: "The depot doesn't know that." };
     let result: DepotResult | null = null;
     switch (action.kind) {
@@ -428,7 +466,63 @@ export class HostSession {
   }
 
   canStart(): boolean {
-    return this.screen === 'lobby' && this.connected && this.hostReady && this.clientReady && this.canPlay(this.selectedRun);
+    return this.screen === 'lobby' && !this.switching && this.connected && this.hostReady && this.clientReady && this.canPlay(this.selectedRun);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Switching seats (spec §3, §17)
+  // ---------------------------------------------------------------------------
+
+  /** The Rider ticks or unticks "Switch seats". */
+  setSwitchSeats(on: boolean): void {
+    if (this.screen !== 'lobby' || this.switching) return;
+    this.switchRider = on;
+    this.afterSwitchChange();
+    this.changed();
+  }
+
+  /** Once both have ticked it, the Engineer's browser is asked to open a room for the Rider's seat. */
+  private afterSwitchChange(): void {
+    this.switchProblem = null;
+    if (this.switchRider && this.switchEngineer && this.connected) {
+      this.switching = true;
+      this.hostReady = false;
+      this.clientReady = false;
+      this.send({ type: 'switchBegin' });
+    }
+    this.sendLobby();
+  }
+
+  /**
+   * The Engineer's browser has its room: it gets the save to host with, and this browser is to join
+   * that room as the Engineer (the app does, once the save has had time to go).
+   */
+  private handOver(code: string): void {
+    this.send({ type: 'switchSave', save: { campaign: this.campaign, checkpoint: this.checkpoint, runId: this.runs[this.selectedRun]?.id ?? '' } });
+    this.handoverCode = code;
+  }
+
+  private switchFailed(reason: string): void {
+    this.switching = false;
+    this.switchRider = false;
+    this.switchEngineer = false;
+    this.switchProblem = `The seats couldn't switch: ${reason || 'the Engineer’s browser couldn’t open a room.'}`;
+    this.sendLobby();
+  }
+
+  /**
+   * The Engineer's browser brought its copy of the campaign (spec §17). If it's further along than
+   * this one (the last session was hosted over there), the lobby takes it, and this browser's
+   * checkpoint, from an earlier point, is dropped. Otherwise this browser's campaign stands.
+   */
+  private considerEngineersCampaign(raw: unknown): void {
+    const theirs = raw === undefined ? null : cleanIncomingCampaign(raw, this.runs);
+    if (!theirs || !campaignWithin(this.campaign, theirs) || campaignWithin(theirs, this.campaign)) return;
+    this.campaign = theirs;
+    this.opts.saveCampaign?.(theirs);
+    this.setCheckpoint(null);
+    this.selectedRun = this.suggestedRun();
+    this.tookEngineersCampaign = true;
   }
 
   /** The station to continue from, when the checkpoint belongs to the selected run. */
@@ -496,6 +590,8 @@ export class HostSession {
   private begin(game: HostGame): void {
     this.game = game;
     this.gameId++;
+    this.switchRider = false;
+    this.switchEngineer = false;
     this.result = null;
     this.payout = null;
     this.screen = 'briefing';

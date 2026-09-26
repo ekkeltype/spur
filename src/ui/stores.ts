@@ -12,8 +12,11 @@ import {
   recordResult,
   SAVE_KEY,
   SaveError,
+  takeCampaign,
+  writeAsideSave,
   writeClientSettings,
   writeSave,
+  type CampaignMerge,
   type SaveV1,
 } from '../save/save';
 import type { CampaignProgress, Checkpoint, RunResult, Settings } from '../sim/types';
@@ -102,6 +105,22 @@ export class SaveStore implements SettingsSource {
     this.problem = null;
     this.write(save);
     this.emit();
+  }
+
+  /**
+   * The pair's campaign from the other player's browser (spec §17), and its checkpoint when switching
+   * seats: taken by takeCampaign()'s rules, with a different campaign it replaces kept aside.
+   */
+  takeCampaign(incoming: CampaignProgress, checkpoint?: Checkpoint | null): CampaignMerge {
+    const current = this.fresh();
+    const out = takeCampaign(current, incoming, checkpoint);
+    if (out.outcome === 'keep') return out.outcome;
+    if (out.aside) writeAsideSave(out.aside);
+    // Lobby updates repeat the same campaign; only a real change is written.
+    if (JSON.stringify(out.save) === JSON.stringify(current)) return out.outcome;
+    this.write(out.save);
+    this.emit();
+    return out.outcome;
   }
 }
 

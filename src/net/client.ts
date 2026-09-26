@@ -15,7 +15,7 @@ import type {
   RunResult,
   UpgradeId,
 } from '../sim/types';
-import { PROTOCOL_VERSION, type DebugInfo, type DepotAction, type LobbyState, type Msg, type Payout, type Role, type RunCard } from './protocol';
+import { PROTOCOL_VERSION, type DebugInfo, type DepotAction, type LobbyState, type Msg, type Payout, type Role, type RunCard, type SwitchSave } from './protocol';
 import type { Transport, TransportStatus } from './transport';
 
 export type ClientScreen = 'connecting' | 'lobby' | 'briefing' | 'playing' | 'results' | 'rejected';
@@ -41,6 +41,11 @@ export interface Refusal {
 
 const TICK_MS = 1000 / TICK_HZ;
 const PING_MS = 2000;
+
+export interface ClientOptions {
+  /** This browser's copy of the pair's campaign, brought along in the hello (spec §17), if it has one. */
+  campaign?: () => CampaignProgress | null;
+}
 
 export class ClientSession {
   screen: ClientScreen = 'connecting';
@@ -83,8 +88,14 @@ export class ClientSession {
   private snapshotListeners = new Set<(view: EngineerView) => void>();
   private refusalListeners = new Set<(reason: string, cmd?: EngineerCmd) => void>();
   private depotRefusalListeners = new Set<(reason: string) => void>();
+  private campaignListeners = new Set<(campaign: CampaignProgress) => void>();
+  private switchBeginListeners = new Set<() => void>();
+  private switchSaveListeners = new Set<(save: SwitchSave) => void>();
 
-  constructor(private transport: Transport) {
+  constructor(
+    private transport: Transport,
+    private opts: ClientOptions = {},
+  ) {
     this.unsubs.push(transport.onStatus((s) => this.onStatus(s)));
     this.unsubs.push(transport.onMessage((m) => this.onMessage(m)));
   }
@@ -124,6 +135,24 @@ export class ClientSession {
     return () => this.depotRefusalListeners.delete(cb);
   }
 
+  /** The pair's campaign as the host has it now (every lobby update and result), for this browser's copy. */
+  onCampaign(cb: (campaign: CampaignProgress) => void): () => void {
+    this.campaignListeners.add(cb);
+    return () => this.campaignListeners.delete(cb);
+  }
+
+  /** Both ticked "Switch seats": this browser is to open a room for the Rider's seat (spec §3). */
+  onSwitchBegin(cb: () => void): () => void {
+    this.switchBeginListeners.add(cb);
+    return () => this.switchBeginListeners.delete(cb);
+  }
+
+  /** The save to host with has arrived: this browser takes the Rider's seat. */
+  onSwitchSave(cb: (save: SwitchSave) => void): () => void {
+    this.switchSaveListeners.add(cb);
+    return () => this.switchSaveListeners.delete(cb);
+  }
+
   private changed(): void {
     for (const cb of this.changeListeners) cb();
   }
@@ -136,7 +165,8 @@ export class ClientSession {
     this.status = s;
     if (s === 'open') {
       this.everConnected = true;
-      this.send({ type: 'hello', protocol: PROTOCOL_VERSION });
+      const campaign = this.opts.campaign?.() ?? null;
+      this.send(campaign ? { type: 'hello', protocol: PROTOCOL_VERSION, campaign } : { type: 'hello', protocol: PROTOCOL_VERSION });
     }
     this.changed();
   }
@@ -156,6 +186,7 @@ export class ClientSession {
         this.lobby = m.lobby;
         if (Array.isArray(m.runs)) this.runs = m.runs;
         this.campaign = m.lobby.campaign;
+        for (const cb of this.campaignListeners) cb(m.lobby.campaign);
         this.ready = m.lobby.clientReady;
         this.hostReady = m.lobby.hostReady;
         if (this.screen !== 'lobby') {
@@ -244,6 +275,7 @@ export class ClientSession {
         this.result = m.result;
         this.payout = m.payout;
         this.campaign = m.campaign;
+        for (const cb of this.campaignListeners) cb(m.campaign);
         this.checkpointName = m.checkpointName;
         this.screen = 'results';
         this.mode = 'paused';
@@ -252,6 +284,12 @@ export class ClientSession {
         break;
       case 'debug':
         this.debugInfo = m.info;
+        break;
+      case 'switchBegin':
+        for (const cb of this.switchBeginListeners) cb();
+        break;
+      case 'switchSave':
+        for (const cb of this.switchSaveListeners) cb(m.save);
         break;
       default:
         break;
@@ -294,6 +332,20 @@ export class ClientSession {
   /** A lobby action: the host applies it (or says why not) and sends everyone the new lobby. */
   depot(action: DepotAction): void {
     this.send({ type: 'depot', action });
+  }
+
+  /** The Engineer ticks or unticks "Switch seats" (spec §3). */
+  setSwitchSeats(on: boolean): void {
+    this.send({ type: 'switchSeats', on });
+  }
+
+  /** The room for the Rider's seat is open (or couldn't be): the host hands over, or stays. */
+  sendSwitchRoom(code: string): void {
+    this.send({ type: 'switchRoom', code });
+  }
+
+  sendSwitchFailed(reason: string): void {
+    this.send({ type: 'switchFailed', reason });
   }
 
   /** Sends a command to the host; returns its sequence number. The ack arrives later. */

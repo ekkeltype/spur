@@ -17,7 +17,7 @@ import { button, clear, copyText, h } from './dom';
 import { Hints, hintsOn, Toaster } from './feedback';
 import { RiderControls, type AimContext } from './input';
 import { depotBoard } from './lobby';
-import { briefingScreen, countdownOverlay, pauseOverlay, readyRow, resultsScreen, type PauseView } from './screens';
+import { briefingScreen, countdownOverlay, pauseOverlay, readyRow, resultsScreen, switchSeatsRow, type PauseView } from './screens';
 import { RiderSounds, type ViewSpan } from './sounds';
 import type { SaveStore } from './stores';
 import { distance, money } from './text';
@@ -32,7 +32,21 @@ export interface HostAppOptions {
   forcedRun: number | null;
   onExit: () => void;
   onSettings: () => void;
+  /** After switching seats: the room this browser's Engineer-turned-Rider already opened (spec §3). */
+  peer?: PeerHost;
+  /** After switching seats: the run the lobby had selected. */
+  selectedRunId?: string;
+  /** Shown in the lobby once, e.g. "You're the Rider now." */
+  note?: string;
+  /** Both ticked "Switch seats" and the save went over: join `code` as the Engineer. */
+  onSwitchToEngineer?: (code: string) => void;
 }
+
+/**
+ * Switching seats: once the save has gone, the other browser leaves this room to host its own. This
+ * browser follows when it has gone, or after this long at most.
+ */
+const HANDOVER_WAIT_MS = 3000;
 
 interface ScreenCtl {
   name: string;
@@ -50,6 +64,11 @@ export class HostApp {
   private current: ScreenCtl | null = null;
   private play: RiderPlay | null = null;
   private unsubs: (() => void)[] = [];
+  /** Lobby notes still to show, once each. */
+  private notes: { text: string; tone: 'good' | 'danger' }[] = [];
+  private shownProblem: string | null = null;
+  private handingOver = false;
+  private handoverTimer: number | undefined;
 
   constructor(private opts: HostAppOptions) {
     const store = opts.store;
@@ -61,13 +80,16 @@ export class HostApp {
       saveCheckpoint: (cp) => store.saveCheckpoint(cp),
       forcedSeed: opts.forcedSeed,
       forcedRun: opts.forcedRun,
+      selectedRunId: opts.selectedRunId,
       debug: opts.debug,
     });
+    if (opts.note) this.notes.push({ text: opts.note, tone: 'good' });
     this.unsubs.push(this.session.onChange(() => this.refresh()));
     this.unsubs.push(this.session.onEvents((ev) => this.play?.onEvents(ev)));
     // Another tab of the game, or an imported save code, changed the save: show it rather than a stale copy.
     this.unsubs.push(store.onSaveChange((save) => this.session.syncSave(save.campaign, save.checkpoint)));
     document.addEventListener('visibilitychange', this.onVisibility);
+    if (opts.peer) this.usePeer(opts.peer);
     this.refresh();
   }
 
@@ -84,22 +106,49 @@ export class HostApp {
         peer.destroy();
         return;
       }
-      this.peer = peer;
-      writeRoomCode(peer.code);
-      peer.onError((msg) => {
-        this.peerError = msg;
-        this.refresh();
-      });
-      peer.onRecovered(() => {
-        this.peerError = '';
-        this.refresh();
-      });
-      this.session.attachTransport(peer.transport);
+      this.usePeer(peer);
     } catch (e) {
       this.peerError = e instanceof Error ? e.message : String(e);
     }
     this.opening = false;
     this.refresh();
+  }
+
+  /** Hosts in a room that's open: one from openRoom(), or one opened while switching seats. */
+  private usePeer(peer: PeerHost): void {
+    this.peer = peer;
+    writeRoomCode(peer.code);
+    peer.onError((msg) => {
+      this.peerError = msg;
+      this.refresh();
+    });
+    peer.onRecovered(() => {
+      this.peerError = '';
+      this.refresh();
+    });
+    this.session.attachTransport(peer.transport);
+  }
+
+  /** Switching seats: the save has gone over; join the new room once the other browser has left this one. */
+  private followHandover(): void {
+    const code = this.session.handoverCode;
+    if (code === null || this.handingOver) return;
+    if (this.session.connected && this.handoverTimer === undefined) {
+      this.handoverTimer = window.setTimeout(() => {
+        this.handoverTimer = undefined;
+        this.handOver(code);
+      }, HANDOVER_WAIT_MS);
+      return;
+    }
+    if (!this.session.connected) this.handOver(code);
+  }
+
+  private handOver(code: string): void {
+    if (this.handingOver || this.destroyed) return;
+    this.handingOver = true;
+    window.clearTimeout(this.handoverTimer);
+    // Leave the session's own callbacks before the app is torn down.
+    window.setTimeout(() => this.opts.onSwitchToEngineer?.(code), 0);
   }
 
   attachTransport(t: Transport): void {
@@ -113,6 +162,7 @@ export class HostApp {
 
   destroy(): void {
     this.destroyed = true;
+    window.clearTimeout(this.handoverTimer);
     for (const u of this.unsubs) u();
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.play?.destroy();
@@ -170,6 +220,7 @@ export class HostApp {
   }
 
   private refresh(): void {
+    this.followHandover();
     const key = this.screenKey();
     if (!this.current || this.current.name !== key) {
       this.current?.destroy?.();
@@ -232,6 +283,7 @@ export class HostApp {
     };
     const board = depotBoard(act);
     const ready = readyRow('rider', (r) => s.setReady(r));
+    const switchRow = online ? switchSeatsRow('rider', (on) => s.setSwitchSeats(on)) : null;
     const codeEl = h('span', { class: 'room-code' });
     const statusEl = h('div', { class: 'status' });
     const startBtn = button('Start', () => s.start(), 'btn primary big');
@@ -292,7 +344,7 @@ export class HostApp {
       button('Settings', () => opts.onSettings(), 'btn small-btn'),
       button('Leave', () => opts.onExit(), 'btn small-btn'),
     );
-    const foot = h('footer', { class: 'depot-foot' }, ready.el, h('span', { class: 'spacer' }), note, continueBtn, startBtn);
+    const foot = h('footer', { class: 'depot-foot' }, ready.el, switchRow?.el, h('span', { class: 'spacer' }), note, continueBtn, startBtn);
     const el = h('div', { class: 'screen depot-screen' }, h('div', { class: 'sheet depot' }, head, saveTools, board.el, foot), toaster.el);
 
     return {
@@ -316,8 +368,17 @@ export class HostApp {
         statusEl.append(h('span', { class: `status-dot ${s.connected ? 'open' : this.peerError ? 'error' : 'connecting'}` }), h('span', { class: this.peerError ? 'danger' : '', text: status }));
         if (this.peerError && online && !this.peer) statusEl.append(button('Try again', () => void this.openRoom(), 'btn small-btn'));
 
-        board.update({ lobby: s.lobbyState(), runs: s.runCards() });
+        const lobby = s.lobbyState();
+        board.update({ lobby, runs: s.runCards() });
         ready.update(s.hostReady, s.clientReady, s.connected);
+        switchRow?.update(lobby.switchSeats.rider, lobby.switchSeats.engineer, lobby.switchSeats.switching, s.connected);
+        if (s.tookEngineersCampaign) {
+          s.tookEngineersCampaign = false;
+          this.notes.push({ text: 'The Engineer’s copy of the campaign was further along, so the depot uses it.', tone: 'good' });
+        }
+        if (s.switchProblem && s.switchProblem !== this.shownProblem) this.notes.push({ text: s.switchProblem, tone: 'danger' });
+        this.shownProblem = s.switchProblem;
+        for (const n of this.notes.splice(0)) toaster.show(n.text, n.tone, 5000);
         const station = s.continueStation();
         const can = s.canStart();
         continueBtn.hidden = station === null;

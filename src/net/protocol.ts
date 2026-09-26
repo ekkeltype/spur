@@ -9,6 +9,7 @@ import type {
   CampaignProgress,
   Cargo,
   CarType,
+  Checkpoint,
   EngineerCmd,
   EngineerEvent,
   EngineerRun,
@@ -18,7 +19,7 @@ import type {
   UpgradeId,
 } from '../sim/types';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type Role = 'rider' | 'engineer';
 
@@ -71,6 +72,16 @@ export interface LobbyState {
   clientReady: boolean;
   /** A saved checkpoint the Rider can continue from. */
   checkpoint: { runId: string; runName: string; stationName: string } | null;
+  /** "Switch seats" (spec §3): who has ticked it, and whether the switch is under way. */
+  switchSeats: { rider: boolean; engineer: boolean; switching: boolean };
+}
+
+/** What the Rider's browser hands over when the seats switch: the save to host with (spec §17). */
+export interface SwitchSave {
+  campaign: CampaignProgress;
+  checkpoint: Checkpoint | null;
+  /** The run selected in the lobby, to keep it selected. */
+  runId: string;
 }
 
 /** Lobby actions either player can take (the Engineer sends them as `depot` messages). */
@@ -107,7 +118,8 @@ export interface DebugInfo {
 }
 
 export type Msg =
-  | { type: 'hello'; protocol: number }
+  /** The Engineer's browser also brings its copy of the campaign (spec §17), if it has one. */
+  | { type: 'hello'; protocol: number; campaign?: CampaignProgress }
   | { type: 'welcome'; protocol: number }
   | { type: 'reject'; reason: string }
   | { type: 'ready'; ready: boolean }
@@ -138,7 +150,18 @@ export type Msg =
   | { type: 'ping'; t: number }
   | { type: 'pong'; t: number }
   | { type: 'result'; result: RunResult; payout: Payout; campaign: CampaignProgress; checkpointName: string | null }
-  | { type: 'debug'; info: DebugInfo };
+  | { type: 'debug'; info: DebugInfo }
+  // Switching seats (spec §3): the Engineer's browser becomes the host, so the Rider's hands it the save.
+  /** The Engineer ticks or unticks "Switch seats". */
+  | { type: 'switchSeats'; on: boolean }
+  /** Both ticked it: the Engineer's browser opens a room for the Rider's seat. */
+  | { type: 'switchBegin' }
+  /** The Engineer's browser has opened that room. */
+  | { type: 'switchRoom'; code: string }
+  /** It couldn't; the seats stay as they are. */
+  | { type: 'switchFailed'; reason: string }
+  /** The save to host with; the Rider's browser then joins the new room as the Engineer. */
+  | { type: 'switchSave'; save: SwitchSave };
 
 export type MsgType = Msg['type'];
 
