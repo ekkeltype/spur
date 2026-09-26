@@ -2,11 +2,12 @@
 // two shells, a rifle's tube), reload progress, a strip of the whole train at the top (cars, the
 // Rider, bandits aboard as red dots, horsemen alongside, the safe's status, HANDS UP on the loco,
 // the powder car's hp), the prompt by the Rider, the spyglass (vignette, range in yards,
-// crosshair, flags) and the respawn countdown. Screen space, CSS px.
+// crosshair, the flag) and the respawn countdown. Screen space, CSS px.
 //
 // There is no speedometer: the Rider feels speed through the wind and the scenery (spec §2).
+// Distances are the railroad's: yards below a mile, miles beyond (spec §0 note 6).
 
-import { FLAG_MAX, QUICK_RELOAD_FACTOR, TICK_HZ, WEAPONS } from '../../sim/rules';
+import { FLAG_MAX, QUICK_RELOAD_FACTOR, TICK_HZ, WEAPONS, YARD } from '../../sim/rules';
 import type { GameState, Weapon } from '../../sim/types';
 import { PALETTE } from '../palette';
 import { font, roundRect, TAU, type Scene } from './scene';
@@ -18,7 +19,19 @@ const BRASS = '#C8A15A';
 const RED = PALETTE.signalRed;
 
 const WEAPON_NAME: Record<Weapon, string> = { revolver: 'REVOLVER', shotgun: 'COACH GUN', rifle: 'WINCHESTER' };
-const YARDS = 1.09361;
+const MILE = 1609.34;
+
+/**
+ * A distance as the railroad gives it (DECISIONS, round 2): yards under a mile, rounded to 1 yd under
+ * 100, to 5 under 1,000 and to 10 beyond; a mile and up in miles with one decimal.
+ */
+export function distanceText(m: number): string {
+  const d = Math.max(0, Number.isFinite(m) ? m : 0);
+  if (d >= MILE) return `${(d / MILE).toFixed(1)} mi`;
+  const yd = d / YARD;
+  const step = yd < 100 ? 1 : yd < 1000 ? 5 : 10;
+  return `${Math.round(yd / step) * step} yd`;
+}
 
 export interface HudInput {
   state: GameState;
@@ -30,6 +43,18 @@ export interface HudInput {
   /** The view's train-frame range, for the strip's window bracket. */
   viewX0: number;
   viewX1: number;
+  /** Why the Rider last left the train, for the countdown's title. */
+  offCause?: 'tunnel' | 'water' | 'fall';
+  /**
+   * A respawn that is due but held (respawnTicks at 0, spec §6.3), and why: the rear platform is
+   * still in a ford, or on a bare train the tender top is in a tunnel. null when not held.
+   */
+  respawnWait?: 'water' | 'tunnel' | 'other' | null;
+}
+
+/** What the respawn countdown says while a due respawn is held. */
+export function waitText(wait: 'water' | 'tunnel' | 'other'): string {
+  return wait === 'water' ? 'Waiting for the water to pass' : wait === 'tunnel' ? 'Waiting for the tunnel to pass' : 'Waiting to climb back aboard';
 }
 
 export class Hud {
@@ -52,7 +77,7 @@ export class Hud {
     this.hearts(s, h.state);
     this.weapon(s, h.state);
     if (h.prompt && h.state.rider.mode === 'active') this.prompt(s, h.prompt, h.riderHead);
-    if (h.state.rider.mode !== 'active') this.respawn(s, h.state);
+    if (h.state.rider.mode !== 'active') this.respawn(s, h.state, h.offCause ?? 'fall', h.respawnWait ?? null);
   }
 
   // ---- Hearts ----------------------------------------------------------------------------------
@@ -550,11 +575,10 @@ export class Hud {
     ctx.stroke();
     // Range readout below the glass.
     const st = h.state;
-    const yd = Math.round((st.rider.scopeDist * YARDS) / 5) * 5;
     ctx.font = font('rye', Math.max(18, cam.h * 0.034));
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const label = `${yd} yd ahead`;
+    const label = `${distanceText(st.rider.scopeDist)} ahead`;
     const tw = ctx.measureText(label).width;
     const ly = Math.min(cam.h - 24, cy + R + Math.max(24, cam.h * 0.04));
     ctx.fillStyle = 'rgba(20,16,12,0.8)';
@@ -563,17 +587,17 @@ export class Hud {
     ctx.fill();
     ctx.fillStyle = BRASS;
     ctx.fillText(label, cx, ly + 1);
-    // Flags.
+    // The flag (spec §6.5): one, and a new one replaces it.
     ctx.font = font('sans', Math.max(12, cam.h * 0.018));
     ctx.fillStyle = PAPER;
     ctx.textAlign = 'left';
-    ctx.fillText(`FLAGS ${st.flags.length}/${FLAG_MAX}  ·  click to flag`, cx + tw / 2 + 24, ly + 1);
+    ctx.fillText(flagText(st.flags.length), cx + tw / 2 + 24, ly + 1);
     ctx.globalAlpha = 1;
   }
 
   // ---- Respawn ---------------------------------------------------------------------------------
 
-  private respawn(s: Scene, st: GameState): void {
+  private respawn(s: Scene, st: GameState, cause: 'tunnel' | 'water' | 'fall', wait: 'water' | 'tunnel' | 'other' | null): void {
     const { ctx, cam } = s;
     const r = st.rider;
     const down = r.mode === 'down';
@@ -587,29 +611,84 @@ export class Hud {
     const cx = cam.w / 2;
     const cy = cam.h * 0.4;
     const R = Math.max(36, cam.h * 0.07);
+    // A respawn that's due but held (the rear still in the water): no count, the ring turning.
+    const held = r.respawnTicks <= 0 ? wait : null;
     ctx.fillStyle = 'rgba(20,16,12,0.75)';
     ctx.beginPath();
     ctx.arc(cx, cy, R + 12, 0, TAU);
     ctx.fill();
-    this.ring(ctx, cx, cy, R + 4, p);
-    ctx.fillStyle = down ? RED : PAPER;
-    ctx.font = font('rye', R * 1.1);
+    if (held) this.waiting(s, cx, cy, R, held);
+    else {
+      this.ring(ctx, cx, cy, R + 4, p);
+      ctx.fillStyle = down ? RED : PAPER;
+      ctx.font = font('rye', R * 1.1);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(secs), cx, cy + R * 0.06);
+    }
+    ctx.font = font('rye', Math.max(18, cam.h * 0.036));
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(secs), cx, cy + R * 0.06);
-    ctx.font = font('rye', Math.max(18, cam.h * 0.036));
-    const title = down ? 'DOWN' : 'OFF THE TRAIN';
+    const title = down ? 'DOWN' : cause === 'water' ? 'WASHED OFF' : cause === 'tunnel' ? 'KNOCKED OFF' : 'OFF THE TRAIN';
     ctx.lineWidth = 5;
     ctx.strokeStyle = 'rgba(20,16,12,0.85)';
     ctx.strokeText(title, cx, cy - R - 34);
     ctx.fillStyle = down ? RED : PAPER;
     ctx.fillText(title, cx, cy - R - 34);
     ctx.font = font('sans', Math.max(13, cam.h * 0.02));
-    const sub = down ? 'Back on at the rear with full hearts' : 'Back on at the rear platform';
+    const sub = held ? waitText(held) : down ? 'Back on at the rear with full hearts' : 'Back on at the rear platform';
     ctx.strokeText(sub, cx, cy + R + 32);
     ctx.fillStyle = PAPER;
     ctx.fillText(sub, cx, cy + R + 32);
   }
+
+  /** The held respawn's dial: an arc turning round the ring, and the water (or the tunnel's arch) inside. */
+  private waiting(s: Scene, cx: number, cy: number, R: number, wait: 'water' | 'tunnel' | 'other'): void {
+    const { ctx } = s;
+    const a = s.now * 2.4;
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 4, 0, TAU);
+    ctx.stroke();
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = BRASS;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 4, a, a + 1.4);
+    ctx.stroke();
+    ctx.lineWidth = Math.max(2.5, R * 0.08);
+    ctx.lineCap = 'round';
+    if (wait === 'tunnel') {
+      ctx.strokeStyle = PAPER;
+      ctx.beginPath();
+      ctx.moveTo(cx - R * 0.45, cy + R * 0.35);
+      ctx.lineTo(cx - R * 0.45, cy - R * 0.05);
+      ctx.arc(cx, cy - R * 0.05, R * 0.45, Math.PI, 0);
+      ctx.lineTo(cx + R * 0.45, cy + R * 0.35);
+      ctx.stroke();
+      return;
+    }
+    // Waves running across: water still over the rear platform.
+    ctx.strokeStyle = wait === 'water' ? '#9FD0DA' : PAPER;
+    for (let k = -1; k <= 1; k++) {
+      const y = cy + k * R * 0.3;
+      ctx.beginPath();
+      for (let i = 0; i <= 16; i++) {
+        const u = i / 16;
+        const x = cx - R * 0.5 + u * R;
+        const yy = y + Math.sin(u * TAU * 1.5 - s.now * 5 + k) * R * 0.07;
+        if (i === 0) ctx.moveTo(x, yy);
+        else ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    }
+  }
+}
+
+/** The spyglass's flag line: with one flag (FLAG_MAX), a click plants it or moves it. */
+export function flagText(placed: number): string {
+  if (FLAG_MAX <= 1) return placed > 0 ? 'Flag set  ·  click to move it' : 'Click to flag this spot';
+  return `FLAGS ${placed}/${FLAG_MAX}  ·  click to flag`;
 }
 
 function easeOut(t: number): number {

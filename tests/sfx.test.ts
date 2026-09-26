@@ -19,6 +19,7 @@ import {
   chuffRate,
   clamp,
   engineMix,
+  fordMix,
   gallopPattern,
   gritNoise,
   karplusStrong,
@@ -282,6 +283,21 @@ describe('other mixes', () => {
     expect(light.howl).toBe(0);
     expect(gale.howl).toBeGreaterThan(0.5);
     expect(windMix(Number.NaN)).toEqual(calm);
+  });
+
+  it('the ford: silent at 0, louder with the level, and only throwing spray when churned hard', () => {
+    expect(fordMix(0).gain).toBe(0);
+    expect(fordMix(Number.NaN)).toEqual(fordMix(0));
+    const lapping = fordMix(0.25);
+    const churning = fordMix(1);
+    expect(lapping.gain).toBeGreaterThan(0);
+    expect(churning.gain).toBeGreaterThan(lapping.gain);
+    expect(churning.rush).toBeGreaterThan(lapping.rush);
+    expect(churning.drops).toBeGreaterThan(lapping.drops);
+    expect(churning.bubbles).toBeGreaterThan(lapping.bubbles);
+    expect(lapping.spray).toBe(0);
+    expect(churning.spray).toBe(1);
+    expect(fordMix(3)).toEqual(churning);
   });
 
   it('shots pan, attenuate and dull with distance; muffled ones are centred and dark', () => {
@@ -749,9 +765,15 @@ interface SpecifiedSfx {
   brakes(level: number): void;
   safetyValve(on: boolean): void;
   water(on: boolean): void;
+  fordWater(level: number, opts?: { pan?: number; listener?: Listener }): void;
   gallop(horses: { pan: number; gain: number }[]): void;
   whistle(on: boolean, listener: Listener): void;
   shot(weapon: Weapon | 'bandit', opts?: { pan?: number; gain?: number; muffled?: boolean }): void;
+  splash(big: boolean, opts?: { pan?: number; gain?: number; muffled?: boolean }): void;
+  lurch(listener: Listener): void;
+  whinny(pan?: number, gain?: number): void;
+  cattle(scatter: boolean, pan?: number, gain?: number): void;
+  grunt(): void;
   ricochet(pan?: number): void;
   whiz(pan?: number): void;
   hurt(): void;
@@ -811,6 +833,15 @@ const ONE_SHOTS: [string, (s: Sfx) => void][] = [
   ['win', (s) => s.win()],
   ['lose', (s) => s.lose()],
   ['ui click', (s) => s.uiClick()],
+  ['splash (the loco)', (s) => s.splash(true, { pan: 0.6, gain: 0.9 })],
+  ['splash (a body)', (s) => s.splash(false)],
+  ['splash (the cab)', (s) => s.splash(true, { muffled: true, gain: 0.8 })],
+  ['lurch (rider)', (s) => s.lurch('rider')],
+  ['lurch (cab)', (s) => s.lurch('cab')],
+  ['whinny', (s) => s.whinny(-0.5, 0.8)],
+  ['cattle calm', (s) => s.cattle(false, 1, 0.6)],
+  ['cattle scatter', (s) => s.cattle(true, 0.8, 0.9)],
+  ['grunt', (s) => s.grunt()],
 ];
 
 /** Every method, with sensible and nonsensical arguments, and the continuous ones called repeatedly. */
@@ -828,6 +859,10 @@ function exercise(s: Sfx, advance: (seconds: number) => void = () => undefined):
   s.land('hard' as unknown as boolean);
   s.explosion(undefined as unknown as boolean);
   s.tunnel(null as unknown as boolean);
+  s.splash(undefined as unknown as boolean, { pan: Number.NaN, gain: 7, muffled: 'no' as unknown as boolean });
+  s.lurch('moon' as Listener);
+  s.whinny(Number.POSITIVE_INFINITY, Number.NaN);
+  s.cattle('yes' as unknown as boolean, -9, -1);
   for (let f = 0; f < 90; f++) {
     advance(frame);
     const t = f * frame;
@@ -836,6 +871,7 @@ function exercise(s: Sfx, advance: (seconds: number) => void = () => undefined):
     s.brakes(f > 60 ? 1 : 0.4);
     s.safetyValve(f % 30 < 15);
     s.water(f > 20);
+    s.fordWater(f > 30 && f < 75 ? Math.abs(Math.sin(t * 2)) : 0, { pan: Math.cos(t), listener: f % 40 < 20 ? 'rider' : 'cab' });
     s.gallop(
       [
         { pan: -1, gain: 1 },
@@ -850,6 +886,8 @@ function exercise(s: Sfx, advance: (seconds: number) => void = () => undefined):
   s.engine(null);
   s.wind(Number.POSITIVE_INFINITY);
   s.brakes(Number.NaN);
+  s.fordWater(Number.NaN, { pan: Number.NaN, listener: 'moon' as Listener });
+  s.fordWater(2, null as unknown as { pan?: number });
   s.gallop(null as unknown as { pan: number; gain: number }[]);
   s.gallop([null, 'horse'] as unknown as { pan: number; gain: number }[]);
   s.whistle(true, 'moon' as Listener);
@@ -950,6 +988,7 @@ describe('Sfx', () => {
       sfx.brakes(s > 7 ? 1 : 0);
       sfx.safetyValve(s > 2 && s < 3);
       sfx.water(s > 3 && s < 4.5);
+      sfx.fordWater(s > 5 && s < 8 ? 0.4 + 0.6 * Math.abs(Math.sin(s)) : 0, { pan: Math.sin(s * 2), listener: s < 6.5 ? 'rider' : 'cab' });
       sfx.gallop([
         { pan: -0.5, gain: 0.8 },
         { pan: 0.5, gain: 0.3 },
@@ -1024,6 +1063,7 @@ describe('Sfx', () => {
       sfx.brakes(p.brakes);
       sfx.safetyValve(true);
       sfx.water(true);
+      sfx.fordWater(p.wind, { pan: p.pans[0], listener: p.listener });
       sfx.whistle(p.whistle, p.listener);
       sfx.gallop([
         { pan: p.pans[0], gain: 1 },
@@ -1218,6 +1258,7 @@ describe('Sfx', () => {
       sfx.wind(0.7);
       sfx.water(true);
       sfx.safetyValve(true);
+      sfx.fordWater(0.8, { pan: -0.3 });
     }, 1);
     expect(ctx.sources.length).toBeGreaterThan(0);
     run(() => {
@@ -1225,11 +1266,56 @@ describe('Sfx', () => {
       sfx.wind(0);
       sfx.water(false);
       sfx.safetyValve(false);
+      sfx.fordWater(0);
     }, 2.5);
     for (const s of ctx.sources) expect(s.stopAt ?? Infinity).toBeLessThanOrEqual(ctx.currentTime + 0.1);
     const after = ctx.sources.length;
     sfx.brakes(0.5);
     expect(ctx.sources.length).toBeGreaterThan(after);
+    const again = ctx.sources.length;
+    sfx.fordWater(0.5);
+    expect(ctx.sources.length).toBeGreaterThan(again);
+    expect(ctx.problems).toEqual([]);
+  });
+
+  it('pans the ford to where the train is wet, and muffles it under the footplate for the cab', () => {
+    const { ctx, sfx } = rig();
+    sfx.unlock();
+    const panners = ctx.panners.length;
+    for (let f = 0; f < 30; f++) {
+      ctx.currentTime += frame;
+      sfx.fordWater(1, { pan: -1, listener: 'rider' });
+    }
+    const pan = ctx.panners[panners];
+    expect(pan).toBeDefined();
+    const target = (p: FakeParam): number => p.calls.at(-1)?.args[0] ?? p.value;
+    expect(target(pan.pan)).toBeCloseTo(-0.9);
+    // The layer's low-pass sits right before its panner: wide open for the Rider…
+    const muffle = ctx.nodes.find((n) => n.outputs.includes(pan)) as unknown as { frequency: FakeParam };
+    expect(target(muffle.frequency)).toBeGreaterThan(10000);
+    // …and down to a rumble under the cab's floor, centred.
+    for (let f = 0; f < 30; f++) {
+      ctx.currentTime += frame;
+      sfx.fordWater(0.8, { pan: -1, listener: 'cab' });
+    }
+    expect(target(muffle.frequency)).toBeLessThan(1000);
+    expect(target(pan.pan)).toBeCloseTo(0);
+    expect(ctx.problems).toEqual([]);
+  });
+
+  it('plays several shying horses a moment apart rather than in unison', () => {
+    const { ctx, sfx } = rig();
+    sfx.unlock();
+    const before = ctx.sources.length;
+    sfx.whinny(-0.5, 1);
+    sfx.whinny(0.2, 1);
+    sfx.whinny(0.8, 0.6);
+    const starts = ctx.sources
+      .slice(before)
+      .filter((s) => s.kind === 'osc' && (s as FakeOscillator).type === 'sawtooth')
+      .map((s) => s.startAt ?? Number.NaN);
+    expect(starts).toHaveLength(3);
+    expect(new Set(starts.map((t) => t.toFixed(4))).size).toBe(3);
     expect(ctx.problems).toEqual([]);
   });
 

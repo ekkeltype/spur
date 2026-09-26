@@ -5,6 +5,9 @@
 //
 // Signals follow spec §9.1 exactly (signal-look.ts): a signal facing the train shows its arms and
 // lamps; one facing away shows the arm's back and no lamp colour; at night only lamps are seen.
+// Since round 2 they're read as they sweep past rather than through the spyglass, so arms and lamps
+// are drawn big and outlined, and the lamps glow again over the loco's smoke. A herd of cattle that
+// has got used to the whistle stands with its heads up, facing the train. Fords are ford.ts's.
 // Depth: structures on the far side of the track are drawn behind the train; switch stands,
 // mileposts and speed boards stand on the near side; a tunnel's rock and portals, a low bridge's
 // deck and the telltales before it hang in front of everything on the train.
@@ -31,6 +34,8 @@ const STONE = '#9A8672';
 
 /** Low bridge beam bottom: the highest roof (4.2) plus the clearance (spec §4.3). */
 export const LOW_BRIDGE_Y = 5.4;
+/** A signal's lamps hang this far out from the mast, on the side away from the arm. */
+const SIGNAL_LAMP_DX = 0.5;
 /** Telltales hang this far before a low bridge, on both sides. */
 export const TELLTALE_DIST = 25;
 
@@ -54,6 +59,8 @@ export interface AiDraw {
 export class TracksidePainter {
   /** Eased 0..1 per tunnel id: the near face is cut away while the train is inside. */
   private readonly cut = new Map<string, number>();
+  /** Eased 0..1 per herd id: heads up and turned to the train, used to the whistle (spec §8). */
+  private readonly calm = new Map<string, number>();
 
   // ---- Behind the train ------------------------------------------------------------------------
 
@@ -165,13 +172,21 @@ export class TracksidePainter {
     setWorld(s);
     for (const it of items) {
       if (it.kind !== 'obstacle') continue;
+      // A herd turns to face the train as it gets used to the whistle, easing, even off screen.
+      let calm = 0;
+      if (it.obstacle === 'cattle') {
+        const target = it.calm && it.state === 'present' ? 1 : 0;
+        const prev = this.calm.get(it.id) ?? target;
+        calm = s.dt > 0 ? prev + (target - prev) * (1 - Math.exp(-s.dt / 0.25)) : prev;
+        this.calm.set(it.id, calm);
+      }
       const x = it.x + s.shift;
       if (x < s.left - 12 || x > s.right + 12) continue;
       const seed = hashId(it.id);
       const lit = s.lit;
       if (it.obstacle === 'rocks') rocksPile(s.ctx, lit, x, seed);
       else if (it.obstacle === 'barricade') barricade(s, lit, x, seed, it.state === 'hit');
-      else cattle(s, lit, x, seed, it.state, obstacleTicks(it.id));
+      else cattle(s, lit, x, seed, it.state, obstacleTicks(it.id), calm);
     }
   }
 
@@ -267,12 +282,13 @@ export class TracksidePainter {
     ctx.globalCompositeOperation = 'lighter';
     for (const it of items) {
       if (it.kind === 'signal' && it.facing === 'toward') {
+        // Read as it sweeps past (spec §9.1), often through the loco's smoke: the lamps glow on top.
         const x = it.x + s.shift;
         if (x < s.left - 6 || x > s.right + 6) continue;
         const heads = signalHeads(it.aspect, it.heads);
         for (let h = 0; h < heads.length; h++) {
           const y = signalLampY(h);
-          glow(ctx, LAMP_RGB[heads[h].lamp], x + 0.42, y, s.night ? 2.2 : 1.1, s.night ? 0.95 : 0.45);
+          glow(ctx, LAMP_RGB[heads[h].lamp], x + SIGNAL_LAMP_DX, y, s.night ? 2.6 : 1.6, s.night ? 0.95 : 0.62);
         }
       } else if (it.kind === 'station' && dark > 0) {
         const x = it.x + s.shift;
@@ -508,10 +524,12 @@ export class TracksidePainter {
     ctx.stroke();
     const looks = signalHeads(aspect, heads);
     const toward = facing === 'toward';
+    const lx = x + SIGNAL_LAMP_DX;
     for (let h = 0; h < looks.length; h++) {
       const y = signalLampY(h);
       const hd = looks[h];
-      // Arm: toward the train (−x) when facing it; the other way when seen from behind.
+      // Arm: toward the train (−x) when facing it; the other way when seen from behind. Big and
+      // heavily outlined, so its angle reads at a glance as it sweeps past, against sky or rock.
       if (!s.night) {
         const a = (hd.arm * Math.PI) / 180;
         const dir = toward ? -1 : 1;
@@ -521,40 +539,45 @@ export class TracksidePainter {
         ctx.scale(dir, 1);
         ctx.fillStyle = lit.c(toward ? '#C8372A' : '#EDE6D6');
         ctx.beginPath();
-        ctx.moveTo(0.1, -0.13);
-        ctx.lineTo(1.75, -0.16);
-        ctx.lineTo(1.75, 0.16);
-        ctx.lineTo(0.1, 0.13);
+        ctx.moveTo(0.1, -0.16);
+        ctx.lineTo(2.05, -0.21);
+        ctx.lineTo(2.05, 0.21);
+        ctx.lineTo(0.1, 0.16);
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = lit.c(INK);
-        ctx.lineWidth = 0.035;
+        ctx.lineWidth = 0.065;
         ctx.stroke();
         ctx.fillStyle = lit.c(toward ? '#F4ECD8' : '#1E1C1C');
-        ctx.fillRect(1.3, -0.15, 0.2, 0.3);
+        ctx.fillRect(1.52, -0.19, 0.24, 0.38);
         ctx.restore();
       }
-      // Lamp case on the mast; its lens shows the aspect colour only from the front.
+      // Lamp case on the mast; its lens shows the aspect colour only from the front, in a ring of it.
       ctx.fillStyle = lit.c('#1A1818');
       ctx.beginPath();
-      ctx.arc(x + 0.42, y, 0.24, 0, TAU);
+      ctx.arc(lx, y, 0.3, 0, TAU);
       ctx.fill();
       if (toward) {
         ctx.fillStyle = LAMP[hd.lamp];
         ctx.beginPath();
-        ctx.arc(x + 0.42, y, 0.16, 0, TAU);
+        ctx.arc(lx, y, 0.21, 0, TAU);
         ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.strokeStyle = LAMP[hd.lamp];
+        ctx.lineWidth = 0.05;
         ctx.beginPath();
-        ctx.arc(x + 0.38, y + 0.05, 0.05, 0, TAU);
+        ctx.arc(lx, y, 0.34, 0, TAU);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.beginPath();
+        ctx.arc(lx - 0.06, y + 0.07, 0.06, 0, TAU);
         ctx.fill();
         if (s.lampLetters) {
-          worldText(s, lampLetter(hd.lamp), x + 0.95, y, 0.42, '#FFFFFF', { stroke: 'rgba(20,16,12,0.9)', family: 'sans' });
+          worldText(s, lampLetter(hd.lamp), lx + 0.62, y, 0.44, '#FFFFFF', { stroke: 'rgba(20,16,12,0.9)', family: 'sans' });
         }
       } else {
         ctx.fillStyle = lit.c('#3A3634');
         ctx.beginPath();
-        ctx.arc(x + 0.42, y, 0.08, 0, TAU);
+        ctx.arc(lx, y, 0.1, 0, TAU);
         ctx.fill();
       }
     }
@@ -1141,37 +1164,46 @@ function barricade(s: Scene, lit: Lit, x: number, seed: number, smashed: boolean
   ctx.fill();
 }
 
-/** Longhorns on the line: idle, scattering away from the track, or pushed aside. */
-function cattle(s: Scene, lit: Lit, x: number, seed: number, state: string, ticks: number): void {
+/**
+ * Longhorns on the line: grazing (heads down, idly facing any way), scattering away from the track,
+ * pushed aside, or, once they've got used to the whistle (spec §8), calm: bunched a little, every
+ * head up and turned to the oncoming train, ears forward, now and then one lowing at it.
+ */
+function cattle(s: Scene, lit: Lit, x: number, seed: number, state: string, ticks: number, calm: number): void {
   const { ctx } = s;
   const n = 4;
   const scatter = state === 'scattering' ? clamp01(ticks / 240) : 0;
   for (let i = 0; i < n; i++) {
-    const hx = x + (i - (n - 1) / 2) * 2.3 + (hash01(seed + i, 21) - 0.5) * 1.2;
+    const hx = x + (i - (n - 1) / 2) * (2.3 - 0.35 * calm) + (hash01(seed + i, 21) - 0.5) * 1.2 * (1 - 0.4 * calm);
     const back = i % 2 === 1;
-    const dir: 1 | -1 = hash01(seed + i, 22) < 0.5 ? 1 : -1;
+    const idle: 1 | -1 = hash01(seed + i, 22) < 0.5 ? 1 : -1;
+    // Turned to the train (it comes from −x) as the herd calms.
+    const dir: 1 | -1 = calm > 0.5 ? -1 : idle;
     let cx = hx;
     let cy = back ? 0.35 : -0.25;
     let alpha = 1;
     let trot = 0;
     if (scatter > 0) {
       const e = scatter * scatter;
-      cx += dir * 9 * e;
+      cx += idle * 9 * e;
       cy += 3.2 * e;
       alpha = 1 - clamp01((scatter - 0.6) / 0.4);
       trot = 1;
     } else if (state === 'hit') {
       cy += 1.4;
-      cx += dir * 3;
+      cx += idle * 3;
     }
     if (alpha <= 0.01) continue;
     ctx.globalAlpha = alpha;
-    steer(ctx, lit, cx, cy, dir, s.t + i * 1.7, trot, hash01(seed + i, 23), scatter > 0 ? 1 - scatter * 0.3 : 1);
+    // The turn itself: flipping at the half-way point reads as a quick look round.
+    const alert = calm > 0.5 ? (calm - 0.5) * 2 : 0;
+    steer(ctx, lit, cx, cy, dir, s.t + i * 1.7, trot, hash01(seed + i, 23), scatter > 0 ? 1 - scatter * 0.3 : 1, alert);
     ctx.globalAlpha = 1;
   }
 }
 
-function steer(ctx: CanvasRenderingContext2D, lit: Lit, x: number, y: number, dir: 1 | -1, t: number, trot: number, r: number, scale: number): void {
+/** One longhorn at (x, y), facing `dir`. `alert` 0..1: head up, looking straight ahead, ears forward. */
+function steer(ctx: CanvasRenderingContext2D, lit: Lit, x: number, y: number, dir: 1 | -1, t: number, trot: number, r: number, scale: number, alert: number): void {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(dir * scale, scale);
@@ -1200,13 +1232,40 @@ function steer(ctx: CanvasRenderingContext2D, lit: Lit, x: number, y: number, di
   ctx.strokeStyle = ink;
   ctx.lineWidth = 0.04;
   ctx.stroke();
-  // Head bobbing, with long horns.
-  const bob = 0.06 * Math.sin(t * 1.6) + (trot ? 0.05 * Math.sin(t * 9) : 0);
-  const hx = 1.12;
-  const hy = 1.05 + bob - (trot ? 0 : 0.18 * (0.5 + 0.5 * Math.sin(t * 0.7)));
+  // Head: bobbing low while grazing; held high and still when alert, lifted now and then to low.
+  const idle = 1 - alert;
+  const bob = (0.06 * Math.sin(t * 1.6) + (trot ? 0.05 * Math.sin(t * 9) : 0)) * idle;
+  const lowing = alert * clamp01(Math.sin(t * 0.9) * 4 - 3);
+  const hx = 1.12 + 0.06 * alert;
+  const hy = 1.05 + bob - (trot ? 0 : 0.18 * (0.5 + 0.5 * Math.sin(t * 0.7)) * idle) + 0.36 * alert;
+  const tilt = -0.5 + 0.38 * alert + 0.45 * lowing;
+  if (alert > 0) {
+    // The neck, stretched up.
+    ctx.fillStyle = coat;
+    ctx.beginPath();
+    ctx.moveTo(0.62, 1.32);
+    ctx.quadraticCurveTo(0.95, 1.3 + 0.3 * alert, hx - 0.05, hy + 0.12);
+    ctx.lineTo(hx + 0.05, hy - 0.16);
+    ctx.quadraticCurveTo(0.95, 0.95, 0.78, 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
   ctx.fillStyle = coat;
   ctx.beginPath();
-  ctx.ellipse(hx, hy, 0.3, 0.2, -0.5, 0, TAU);
+  ctx.ellipse(hx, hy, 0.3, 0.2, tilt, 0, TAU);
+  ctx.fill();
+  ctx.stroke();
+  // Ears: drooping sideways while grazing, pricked forward when alert.
+  ctx.fillStyle = coat;
+  const ea = -2.3 * idle + 0.55 * alert;
+  const ex = hx - 0.12;
+  const ey = hy + 0.1;
+  ctx.beginPath();
+  ctx.moveTo(ex, ey);
+  ctx.lineTo(ex + Math.cos(ea + 0.25) * 0.24, ey + Math.sin(ea + 0.25) * 0.24);
+  ctx.lineTo(ex + Math.cos(ea - 0.25) * 0.22, ey + Math.sin(ea - 0.25) * 0.22);
+  ctx.closePath();
   ctx.fill();
   ctx.stroke();
   ctx.strokeStyle = lit.c('#E8DCC0');
@@ -1217,12 +1276,19 @@ function steer(ctx: CanvasRenderingContext2D, lit: Lit, x: number, y: number, di
   ctx.moveTo(hx - 0.02, hy + 0.15);
   ctx.quadraticCurveTo(hx + 0.4, hy + 0.35, hx + 0.6, hy + 0.6);
   ctx.stroke();
-  // Tail swish.
+  // Eye, open on the train when alert.
+  if (alert > 0.3) {
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.arc(hx + 0.1, hy + 0.04, 0.035, 0, TAU);
+    ctx.fill();
+  }
+  // Tail: a lazy swish while grazing, hanging still when alert.
   ctx.strokeStyle = ink;
   ctx.lineWidth = 0.04;
   ctx.beginPath();
   ctx.moveTo(-1.02, 1.1);
-  ctx.quadraticCurveTo(-1.2, 0.8, -1.15 + 0.15 * Math.sin(t * 2.3), 0.45);
+  ctx.quadraticCurveTo(-1.2, 0.8, -1.15 + 0.15 * Math.sin(t * 2.3) * idle, 0.45);
   ctx.stroke();
   ctx.restore();
   ctx.lineCap = 'butt';

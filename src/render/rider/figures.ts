@@ -6,11 +6,15 @@
 // Figures are drawn in local metres: origin at the feet, +x the way they face, y up (the world
 // transform is already y-up). Each pose comes from the renderer, which keeps the per-figure
 // animation state (gait phase from distance moved, recoil, hurt flashes, aim telegraphs).
+//
+// Round 2: a figure thrown by the lurch (spec §5.2) pitches toward the loco and stumbles, arms
+// flung out; one washed off in a ford flails in the water; a shying horse rears, its rider thrown
+// back in the saddle.
 
 import type { Weapon } from '../../sim/types';
 import { advancePhase, gallopLegs, kneeBend, legSwing } from './motion';
 import type { Lit } from './materials';
-import { TAU } from './scene';
+import { clamp01, TAU } from './scene';
 
 export type FigureKind = 'rider' | 'bandit' | 'boss' | 'engineer';
 
@@ -35,13 +39,22 @@ export interface Pose {
   /** In the air: > 0; the legs tuck. */
   air: number;
   stunned: boolean;
+  /**
+   * Thrown by a lurch (spec §5.2): 0..1, the body pitched toward `staggerDir` (in the world) and
+   * the legs stumbling after it.
+   */
+  stagger: number;
+  staggerDir: 1 | -1;
+  /** Extra lean of the upper body (radians, + forward): a horseman thrown back as his horse shies. */
+  tilt: number;
   /** 0..1 hurt flash. */
   hurt: number;
   /** Wind on the coat, 0..1.4, and which way it blows in the world (−1 = toward the rear). */
   wind: number;
   windDir: 1 | -1;
   loot: boolean;
-  hands: 'none' | 'up' | 'levers' | 'crack' | 'reach' | 'reins';
+  /** 'flail': arms flung out for balance (staggering, a horse rearing) or thrashing in the water. */
+  hands: 'none' | 'up' | 'levers' | 'crack' | 'reach' | 'reins' | 'flail';
   /** On horseback: hips on the saddle. */
   seated: boolean;
   /** Standing in the stirrups (boarding). */
@@ -68,6 +81,9 @@ export function defaultPose(kind: FigureKind): Pose {
     climbPhase: 0,
     air: 0,
     stunned: false,
+    stagger: 0,
+    staggerDir: 1,
+    tilt: 0,
     hurt: 0,
     wind: 0,
     windDir: -1,
@@ -265,15 +281,19 @@ export class FigurePainter {
   private body(p: Pose, L: Look, wx: number, wy: number, muzzle: Muzzle | null): void {
     const crouch = p.crouch;
     const run = p.gait;
-    // Hip height: crouch lowers it, a stride bobs it, the saddle holds it.
+    // Thrown by a lurch: sd +1 pitches the figure the way it faces, −1 over backward.
+    const st = p.seated ? 0 : clamp01(p.stagger);
+    const sd = st > 0 ? p.staggerDir * p.facing : 0;
+    // Hip height: crouch lowers it, a stride bobs it, the saddle holds it, a stumble drops it.
     let hipY = 0.95 - 0.44 * crouch - 0.035 * run * Math.abs(Math.sin(2 * Math.PI * 2 * p.phase));
     if (p.air > 0) hipY += 0.06;
+    else hipY -= 0.08 * st;
     let hipX = 0;
     if (p.seated) {
       hipY = 0.02 + 0.32 * p.stand;
       hipX = -0.02;
     }
-    const lean = p.seated ? 0.12 + 0.2 * p.stand : 0.12 * run + 0.5 * crouch + (p.stunned ? 0.35 : 0);
+    const lean = (p.seated ? 0.12 + 0.2 * p.stand : 0.12 * run + 0.5 * crouch + (p.stunned ? 0.35 : 0)) + p.tilt + 0.6 * st * sd;
     const sl = Math.sin(lean);
     const cl = Math.cos(lean);
     const shX = hipX + 0.47 * sl;
@@ -311,6 +331,17 @@ export class FigurePainter {
         aB = aB * (1 - crouch) + (th - 0.28) * crouch;
         bB = bB * (1 - crouch) + (2 * th - 0.1) * crouch;
       }
+      if (st > 0) {
+        // Stumbling after the throw: a long step the way it goes, the other leg trailing, bent.
+        const fa = sd >= 0 ? 0.62 : -0.1;
+        const fb = sd >= 0 ? 0.42 : 0.25;
+        const ba = sd >= 0 ? -0.45 : -0.62;
+        const bb = sd >= 0 ? 0.6 : 0.4;
+        aF += (fa - aF) * st;
+        bF += (fb - bF) * st;
+        aB += (ba - aB) * st;
+        bB += (bb - bB) * st;
+      }
     }
 
     const coat = this.col(L.coat);
@@ -341,6 +372,11 @@ export class FigurePainter {
     } else if (p.hands === 'crack') {
       farHandX = shX + 0.42;
       farHandY = shY - 0.12;
+    } else if (p.hands === 'flail') {
+      // Flung up and out: toward the throw when stumbling, overhead and thrashing otherwise.
+      const w = p.t * 8 + p.seed * 1.7;
+      farHandX = shX + (sd !== 0 ? 0.22 * sd : -0.18) + 0.08 * Math.sin(w);
+      farHandY = shY + 0.42 + 0.07 * Math.sin(w * 1.3);
     } else if (p.aim !== null && long) {
       // The far hand holds the fore-end of a long gun.
       farHandX = shX + 0.55 * Math.cos(gunA);
@@ -395,6 +431,12 @@ export class FigurePainter {
       hx = shX + 0.4;
       hy = shY - 0.2 + 0.02 * Math.sin(p.t * 9 + p.seed);
       gun = -1.3;
+      this.arm(shX + 0.03, shY, hx, hy, coat, skin, false);
+    } else if (p.hands === 'flail') {
+      const w = p.t * 9 + p.seed;
+      hx = shX + (sd !== 0 ? 0.44 * sd : 0.3) + 0.06 * Math.sin(w);
+      hy = shY + (sd !== 0 ? 0.08 : 0.36) + 0.1 * Math.sin(w + 1.3);
+      gun = sd < 0 ? 2.5 : 0.45;
       this.arm(shX + 0.03, shY, hx, hy, coat, skin, false);
     } else {
       // Lowered: the gun held low and forward, swinging a little with the stride.
@@ -885,32 +927,60 @@ export interface HorsePose {
   gallop: number;
   /** Head down grazing while standing (0..1). */
   graze: number;
+  /** Shying at a lurch's squeal (spec §5.2): 0..1, up on the hind legs, forelegs pawing. */
+  rear?: number;
   t: number;
   seed: number;
 }
 
+/** A rearing horse pivots on its hind hooves (local metres, the way it faces)… */
+const REAR_PIVOT_X = -0.68;
+const REAR_PIVOT_Y = 0.06;
+/** …up to this far (radians). */
+const REAR_ANGLE = 0.5;
+
+/**
+ * Tips the current transform up onto a horse's hind hooves for `rear` (0..1). The transform must be
+ * the horse's local frame: hooves at the origin, +x the way it faces. Riders use it too, so they
+ * stay in the saddle.
+ */
+export function rearTransform(ctx: CanvasRenderingContext2D, rear: number): void {
+  if (!(rear > 0)) return;
+  ctx.translate(REAR_PIVOT_X, REAR_PIVOT_Y);
+  ctx.rotate(REAR_ANGLE * Math.min(1, rear));
+  ctx.translate(-REAR_PIVOT_X, -REAR_PIVOT_Y);
+}
+
 /**
  * Draws a horse with its hooves at world (x, y). Returns the saddle height above y so a rider can
- * be seated on it.
+ * be seated on it (before any rear: see rearTransform).
  */
 export function drawHorse(ctx: CanvasRenderingContext2D, lit: Lit, look: HorseLook, p: HorsePose, x: number, y: number): number {
   const g = p.gallop;
+  const rear = clamp01(p.rear ?? 0);
   const legs = gallopLegs(p.phase);
-  const bob = g * 0.07 * Math.sin(TAU * p.phase * 2 + 0.6);
-  const pitch = g * 0.05 * Math.sin(TAU * p.phase + 0.3);
+  const bob = g * 0.07 * Math.sin(TAU * p.phase * 2 + 0.6) * (1 - rear);
+  const pitch = g * 0.05 * Math.sin(TAU * p.phase + 0.3) * (1 - rear);
   const coat = lit.c(look.coat);
   const pts = lit.c(look.points);
   const ink = lit.c(INK);
   ctx.save();
   ctx.translate(x, y + bob);
   ctx.scale(p.facing, 1);
+  rearTransform(ctx, rear);
   ctx.rotate(pitch);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   const leg = (hx: number, hy: number, a: number, fore: boolean, colour: string): void => {
     // Standing legs are straight; galloping legs fold on the recovery (swinging forward).
-    const sw = g > 0 ? a * g : 0;
-    const fold = g * (fore ? 0.9 : -0.8) * Math.max(0, Math.sin(TAU * (p.phase + (fore ? 0.47 : 0.04))));
+    let sw = g > 0 ? a * g : 0;
+    let fold = g * (fore ? 0.9 : -0.8) * Math.max(0, Math.sin(TAU * (p.phase + (fore ? 0.47 : 0.04))));
+    if (rear > 0) {
+      // Rearing: the hind legs straight down to the hooves it pivots on, the forelegs tucked up and pawing.
+      const paw = fore ? 0.2 * Math.sin(p.t * 10 + hx * 9 + p.seed) : 0;
+      sw += ((fore ? 1.15 + paw : 0) - sw) * rear;
+      fold += ((fore ? 1.85 + paw : 0) - fold) * rear;
+    }
     const kx = hx + 0.5 * Math.sin(sw);
     const ky = hy - 0.5 * Math.cos(sw);
     const fx = kx + 0.55 * Math.sin(sw - fold);
@@ -955,10 +1025,10 @@ export function drawHorse(ctx: CanvasRenderingContext2D, lit: Lit, look: HorseLo
   ctx.strokeStyle = ink;
   ctx.lineWidth = 0.045;
   ctx.stroke();
-  // Neck and head (lowered when grazing).
-  const gz = p.graze;
-  const pollX = 1.08 - 0.05 * gz;
-  const pollY = 2.02 - 0.85 * gz + g * 0.03 * Math.sin(TAU * p.phase * 2);
+  // Neck and head (lowered when grazing, flung up when rearing).
+  const gz = p.graze * (1 - rear);
+  const pollX = 1.08 - 0.05 * gz - 0.06 * rear;
+  const pollY = 2.02 - 0.85 * gz + g * 0.03 * Math.sin(TAU * p.phase * 2) + 0.1 * rear;
   const muzX = pollX + 0.42 - 0.2 * gz;
   const muzY = pollY - 0.42 - 0.3 * gz;
   ctx.beginPath();

@@ -8,22 +8,25 @@
 //  2. Events since the last frame become effects: tracers from each shooter's drawn muzzle, muzzle
 //     flashes, hit puffs, aim glints, explosions, tumbles, dust, steam, shake.
 //  3. The camera: 19 m of height, rail tops at 76 %, following the Rider with an eased lead in the
-//     facing direction, or panned ahead to the spyglass point (the loco's front + scopeDist).
+//     facing direction, or panned ahead to the spyglass point (the loco's front + scopeDist). On
+//     the lookout (the cab roof or the tender top, looking ahead) it leads far enough, zooming out a
+//     little if it must, to reach LOOKOUT_REACH past the loco's front.
 //  4. trackside() for everything around the train, then the layers back to front: sky, far mesas,
-//     ground and mid hills, the track, structures, other trains, the train (the Rider's car cut
-//     away), smoke, boarded bandits and the Rider, horsemen and dust, effects, tunnel rock and
-//     bridges, lights, wind, and the HUD.
+//     ground and mid hills, fords' far course and riverbed, the track, structures, other trains,
+//     the train (the Rider's car cut away), smoke, boarded bandits and the Rider, horsemen and dust,
+//     the fords' water over all of those, effects, tunnel rock and bridges, lights, wind, and the HUD.
 
 import { framePath, frameX, frontHead, mainPos, netIndex } from '../../sim/network';
-import { BANDIT_TELEGRAPH, CAR_SPECS, HORSEMAN_TELEGRAPH, TICK_HZ } from '../../sim/rules';
-import type { GameState, RunDef, SimEvent, SurfaceKind, TracksideItem } from '../../sim/types';
+import { BANDIT_TELEGRAPH, CAR_SPECS, FORD_WATER_Y, HORSE_SHY_SECONDS, HORSE_SHY_SECONDS_VETERAN, HORSEMAN_TELEGRAPH, TICK_HZ } from '../../sim/rules';
+import type { GameState, RiderState, RunDef, SimEvent, SurfaceKind, TracksideItem } from '../../sim/types';
 import { trackside } from '../../sim/views';
 import { HiDpiCanvas } from '../canvas';
 import { PALETTE } from '../palette';
-import { approach, halfWidthM, makeCamera, placeCamera, screenX, screenY, worldX, worldY, type Camera } from './camera';
-import { trainLook } from './cars';
-import { Effects, L_BEHIND, L_FRONT, L_LANE, P_BLOOD, P_CHIP, P_DUST, P_EMBER, P_POWDER, P_SPARK, P_SPLINTER, P_STEAM, P_SMOKE } from './effects';
-import { BOSS_HORSE, defaultPose, dollar, drawHorse, FigurePainter, HORSES, type Muzzle, type Pose } from './figures';
+import { approach, halfWidthM, lookoutCentre, lookoutZoom, makeCamera, placeCamera, screenX, screenY, VIEW_HEIGHT_M, worldX, worldY, type Camera } from './camera';
+import { trainLook, type CarLook } from './cars';
+import { Effects, L_BEHIND, L_FRONT, L_LANE, P_BLOOD, P_CHIP, P_DUST, P_EMBER, P_POWDER, P_SPARK, P_SPLINTER, P_SPRAY, P_STEAM, P_SMOKE, P_WATER } from './effects';
+import { BOSS_HORSE, defaultPose, dollar, drawHorse, FigurePainter, HORSES, rearTransform, type Muzzle, type Pose } from './figures';
+import { bowWaves, FordPainter, locoFaceX, wash, type Wave } from './ford';
 import { Hud } from './hud';
 import { LitCache } from './materials';
 import { advancePhase, TickInterp } from './motion';
@@ -62,6 +65,10 @@ const BEHIND = 80;
 /** Camera lead in the facing direction (m), at most this fraction of the half-width. */
 const LEAD_M = 4;
 const LEAD_FRAC = 0.24;
+/** The lookout holds this long (s) after the Rider leaves it (a hop, a stumble), so the view doesn't pump. */
+const LOOKOUT_HOLD = 0.4;
+/** A figure thrown by a lurch staggers for at most this long (s) after the event. */
+const THROWN_SECONDS = 1.4;
 
 interface FigAnim {
   ix: TickInterp;
@@ -82,6 +89,9 @@ interface FigAnim {
   y: number;
   seen: number;
   raise: number;
+  /** When a lurch threw this figure (the `thrown` event), and its eased stagger 0..1. */
+  thrownT: number;
+  stagger: number;
 }
 
 interface HorseAnim {
@@ -94,6 +104,8 @@ interface HorseAnim {
   seen: number;
   dustAcc: number;
   raise: number;
+  /** Eased 0..1: up on its hind legs, shying at a lurch's squeal. */
+  rear: number;
 }
 
 interface AiAnim {
@@ -123,7 +135,24 @@ function newFig(): FigAnim {
     y: 0,
     seen: 0,
     raise: 0,
+    thrownT: -Infinity,
+    stagger: 0,
   };
+}
+
+/**
+ * Standing lookout (round 2): on the cab roof or the tender top, facing and looking ahead, not
+ * scoped (the spyglass has its own view).
+ */
+export function onLookout(r: Pick<RiderState, 'mode' | 'scoped' | 'onGround' | 'surface' | 'facing' | 'aim'>): boolean {
+  return r.mode === 'active' && !r.scoped && r.onGround && (r.surface === 'cabRoof' || r.surface === 'tenderTop') && r.facing === 1 && Math.cos(r.aim) > -0.1;
+}
+
+/** Where a car's wheels touch the rail (train frame), as the train painter lays them out. */
+function wheelXs(c: CarLook): number[] {
+  if (c.kind === 'loco') return [c.x0 + 5.5, c.x0 + 7.75, c.x0 + 11, c.x0 + 12.85];
+  if (c.kind === 'tender') return [c.x0 + 0.9, c.x0 + 2.5, c.x0 + 5.6, c.x0 + 7.2];
+  return [c.bx0 + 1.1, c.bx0 + 2.7, c.bx1 - 2.7, c.bx1 - 1.1];
 }
 
 export class RiderRenderer {
@@ -135,6 +164,7 @@ export class RiderRenderer {
   private readonly fx = new Effects();
   private readonly hud = new Hud();
   private readonly fig = new FigurePainter();
+  private readonly ford = new FordPainter();
   private readonly lits = new LitCache();
   private destroyed = false;
 
@@ -147,21 +177,38 @@ export class RiderRenderer {
   private readonly ais = new Map<string, AiAnim>();
   private readonly aiDraw: AiDraw[] = [];
   private riderHurtT = -Infinity;
+  /** When the Rider was last washed off (riderHurt and riderOff both say so: one splash). */
+  private riderWashedT = -Infinity;
+  /** Why the Rider last went off the train, for the respawn countdown. */
+  private offCause: 'tunnel' | 'water' | 'fall' = 'fall';
   private scanFailed = false;
 
   private follow = Number.NaN;
   private lead = 0;
   private scope = 0;
+  /** The lookout: eased 0..1, and when the Rider last stood on it. */
+  private look = 0;
+  private lookSeen = -Infinity;
   private chuffAcc = 0;
   private readonly shake = { x: 0, y: 0 };
   private readonly pose: Pose = defaultPose('rider');
   private readonly tunnels: number[] = [];
   private readonly gaps: number[] = [];
+  /** Where the near ground stays bare: trestle gaps and the fords' river, with its banks. */
+  private readonly nearGaps: number[] = [];
+  /** Fords at render time, [x0, x1] pairs. */
+  private readonly fords: number[] = [];
+  private readonly waves: Wave[] = [];
   private readonly s: Scene;
   /** Draw time of the last frame (ms), for the dev harness. */
   lastDrawMs = 0;
-  /** Dev profiling: layer names to skip ('sky', 'far', 'ground', 'mid', 'near', 'track', 'back', 'train', 'fx', 'figures', 'horsemen', 'front', 'lights', 'hud'). */
+  /**
+   * Dev profiling: layer names to skip ('sky', 'far', 'ground', 'mid', 'near', 'fordBack', 'track',
+   * 'back', 'train', 'fx', 'figures', 'horsemen', 'fordFront', 'front', 'lights', 'hud').
+   */
   devSkip: ReadonlySet<string> = new Set();
+  /** Dev and tests: when set, the layer names are appended in the order they're drawn. */
+  devTrace: string[] | null = null;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.hc = new HiDpiCanvas(canvas);
@@ -257,7 +304,7 @@ export class RiderRenderer {
     for (const h of st.horsemen) {
       let a = this.horsemen.get(h.id);
       if (!a) {
-        a = { ix: new TickInterp(4), phase: hash01(h.id, 3), facing: 1, muzzle: { x: 0, y: 0 }, muzzleT: -Infinity, x: 0, seen: 0, dustAcc: 0, raise: 0 };
+        a = { ix: new TickInterp(4), phase: hash01(h.id, 3), facing: 1, muzzle: { x: 0, y: 0 }, muzzleT: -Infinity, x: 0, seen: 0, dustAcc: 0, raise: 0, rear: 0 };
         this.horsemen.set(h.id, a);
       }
       a.ix.update(st.tick, h.x);
@@ -270,33 +317,52 @@ export class RiderRenderer {
     this.onEvents(f, st);
 
     // 3. Camera.
+    const L = st.train.length;
     const scoped = r.scoped && r.mode === 'active';
     this.scope = approach(this.scope, scoped ? 1 : 0, realDt, 0.09);
     if (Math.abs(this.scope - (scoped ? 1 : 0)) < 0.002) this.scope = scoped ? 1 : 0;
-    placeCamera(this.cam, W, H, this.cam.x, 0, 0);
-    const half = halfWidthM(this.cam);
-    this.lead = approach(this.lead, r.facing * Math.min(LEAD_M, half * LEAD_FRAC), dt, 0.45);
+    // The lookout (not with a dev camera): the view reaches past the loco's front, zooming out if it must.
+    if (f.cameraX === undefined && onLookout(r)) this.lookSeen = this.t;
+    const lookWant = this.t - this.lookSeen < LOOKOUT_HOLD ? 1 : 0;
+    this.look = approach(this.look, lookWant, dt, 0.35);
+    if (Math.abs(this.look - lookWant) < 0.002) this.look = lookWant;
+    const lookW = smoothstep(0, 1, this.look);
+    const aspect = W / Math.max(1, H);
+    const zoom = lookW > 0 ? 1 + (lookoutZoom(rx, L, aspect) - 1) * lookW : 1;
+    // The usual lead is the unzoomed view's, so the lookout never changes the framing elsewhere.
+    const half1 = (VIEW_HEIGHT_M * aspect) / 2;
+    this.lead = approach(this.lead, r.facing * Math.min(LEAD_M, half1 * LEAD_FRAC), dt, 0.45);
     const followTarget = rx + this.lead;
-    this.follow = Number.isFinite(this.follow) ? approach(this.follow, followTarget, realDt, 0.07) : followTarget;
-    const scopeX = st.train.length + r.scopeDist;
+    const target = lookW > 0 ? followTarget + (lookoutCentre(rx, L, aspect, zoom) - followTarget) * lookW : followTarget;
+    this.follow = Number.isFinite(this.follow) ? approach(this.follow, target, realDt, 0.07) : target;
+    const scopeX = L + r.scopeDist;
     const blend = smoothstep(0, 1, this.scope);
     const camX = f.cameraX ?? this.follow + (scopeX - this.follow) * blend;
     if (f.settings.screenShake) this.fx.shakeAt(this.t, this.shake);
     else this.shake.x = this.shake.y = 0;
-    placeCamera(this.cam, W, H, camX, this.shake.x, this.shake.y);
+    placeCamera(this.cam, W, H, camX, this.shake.x, this.shake.y, zoom);
+    const half = halfWidthM(this.cam);
     s.left = worldX(this.cam, 0) - 1;
     s.right = worldX(this.cam, W) + 1;
 
     // 4. Trackside.
-    const L = st.train.length;
     const ahead = Math.max(60, s.right - L + 40, scoped ? r.scopeDist + half + 40 : 0);
     const behind = Math.max(BEHIND, -s.left + 40);
     const items = f.items ?? this.scan(st, f.run, behind, ahead);
     this.tunnels.length = 0;
     this.gaps.length = 0;
+    this.nearGaps.length = 0;
+    this.fords.length = 0;
     for (const it of items) {
       if (it.kind === 'tunnel') this.tunnels.push(it.x0 + s.shift, it.x1 + s.shift);
-      else if (it.kind === 'trestle') this.gaps.push(it.x0 + s.shift, it.x1 + s.shift);
+      else if (it.kind === 'trestle') {
+        this.gaps.push(it.x0 + s.shift, it.x1 + s.shift);
+        this.nearGaps.push(it.x0 + s.shift, it.x1 + s.shift);
+      } else if (it.kind === 'ford') {
+        this.fords.push(it.x0 + s.shift, it.x1 + s.shift);
+        // The river and its banks widen toward the viewer: no stones or tufts on them.
+        this.nearGaps.push(it.x0 + s.shift - 5, it.x1 + s.shift + 5);
+      }
     }
     this.gatherTrains(st, f.run, items, behind, ahead, alpha, dt);
 
@@ -305,7 +371,10 @@ export class RiderRenderer {
     this.train.lootStatus = st.loot.status;
 
     // Layers, back to front.
-    const on = (layer: string): boolean => !this.devSkip.has(layer);
+    const on = (layer: string): boolean => {
+      this.devTrace?.push(layer);
+      return !this.devSkip.has(layer);
+    };
     if (on('sky')) this.scenery.drawSky(s);
     else {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -315,7 +384,8 @@ export class RiderRenderer {
     if (on('far')) this.scenery.drawFar(s);
     if (on('ground')) this.scenery.drawGround(s, items);
     if (on('mid')) this.scenery.drawMid(s, items);
-    if (on('near')) this.scenery.drawNearGround(s, this.gaps);
+    if (on('near')) this.scenery.drawNearGround(s, this.nearGaps);
+    if (this.fords.length > 0 && on('fordBack')) this.ford.drawBack(s, items);
     if (on('back')) {
       this.side.drawGorges(s, items);
       this.side.drawBack(s, items, f.run);
@@ -344,7 +414,10 @@ export class RiderRenderer {
       this.drawHorsemen(s, st, dt);
       this.fx.drawRiderless(s);
     }
+    // The river over the line, in front of the train's lower part, the figures and the horses.
+    if (this.fords.length > 0 && on('fordFront')) this.ford.drawFront(s, items, trainLook(st.train.cars).cars, v);
     if (on('fx')) {
+      this.fx.drawSwept(s);
       this.fx.drawTumbles(s);
       this.fx.drawParticles(s, L_FRONT);
       this.fx.drawExplosions(s);
@@ -365,7 +438,8 @@ export class RiderRenderer {
       this.fx.drawHurt(s);
     }
     const head = r.mode === 'active' && this.scope < 0.5 ? { x: screenX(this.cam, rx), y: screenY(this.cam, ry + (r.crouch ? 1.4 : 2.2)) } : null;
-    if (on('hud')) this.hud.draw(s, { state: st, prompt: f.prompt, riderHead: head, scope: this.scope, viewX0: s.left, viewX1: s.right });
+    const wait = r.mode !== 'active' && r.respawnTicks <= 0 ? this.respawnWait(st) : null;
+    if (on('hud')) this.hud.draw(s, { state: st, prompt: f.prompt, riderHead: head, scope: this.scope, viewX0: s.left, viewX1: s.right, offCause: this.offCause, respawnWait: wait });
     this.lastDrawMs = performance.now() - t0;
   }
 
@@ -498,12 +572,16 @@ export class RiderRenderer {
           fx.explosion(s, e.x, e.y, e.what === 'powder' || e.what === 'boiler' ? 1.7 : 1.2);
           break;
         case 'riderOff':
-          fx.tumble(s, 'rider', 1, this.rider.x, this.rider.y + 0.9, e.cause === 'tunnel' ? -9 : -4, 2.5, st.rider.facing);
+          this.offCause = e.cause;
+          if (e.cause === 'water') this.washRider(s, st);
+          else fx.tumble(s, 'rider', 1, this.rider.x, this.rider.y + 0.9, e.cause === 'tunnel' ? -9 : -4, 2.5, st.rider.facing);
           break;
         case 'riderHurt':
           fx.hurtT0 = s.now;
           this.riderHurtT = t;
           if (f.settings.screenShake) fx.shake(t, 8, 0.32);
+          // Losing the last heart to the river puts the Rider down with no riderOff: wash off here.
+          if (e.cause === 'water') this.washRider(s, st);
           break;
         case 'riderDown':
           fx.downT0 = s.now;
@@ -518,9 +596,55 @@ export class RiderRenderer {
           const x = e.type === 'banditDown' ? e.x : a ? a.x : (b?.x ?? 0);
           const y = e.type === 'banditDown' ? e.y : a ? a.y : (b?.y ?? 0);
           const boss = b?.boss ?? (e.type === 'banditDown' ? e.boss : false);
-          fx.tumble(s, boss ? 'boss' : 'bandit', b?.tier ?? 1, x, y + 0.9, e.type === 'banditKnockedOff' ? -8 : -3, 2.5, b?.facing ?? 1);
+          if (e.type === 'banditKnockedOff' && e.cause === 'water') fx.swept(s, boss ? 'boss' : 'bandit', b?.tier ?? 1, x, y, b?.facing ?? 1);
+          else fx.tumble(s, boss ? 'boss' : 'bandit', b?.tier ?? 1, x, y + 0.9, e.type === 'banditKnockedOff' ? -8 : -3, 2.5, b?.facing ?? 1);
           if (e.type === 'banditDown') fx.burst(s, P_BLOOD, x, y + 1.2, 5, 1.2, 0.07, 0.4, 1);
           this.bandits.delete(e.id);
+          break;
+        }
+        case 'fordEnter': {
+          // The loco ploughs in: a wall of water off the smokebox, and a shudder through the train.
+          const k = wash(st.train.v);
+          const face = locoFaceX(trainLook(st.train.cars).cars[0]);
+          fx.splash(s, face + 0.5, FORD_WATER_Y, 0.8 + 1.4 * k, 0.45);
+          if (f.settings.screenShake && k > 0.1) fx.shake(t, 3 + 6 * k, 0.4);
+          break;
+        }
+        case 'fordExit': {
+          // The front comes out: water sheeting off the pilot.
+          const k = wash(st.train.v);
+          if (k > 0.05) fx.splash(s, st.train.length - 0.5, FORD_WATER_Y, 0.4 + 0.5 * k, 0.6);
+          break;
+        }
+        case 'lurch': {
+          // The brakes bite: sparks from every wheel, and everything aboard keeps going.
+          const dir = st.train.v >= 0 ? 1 : -1;
+          if (f.settings.screenShake) fx.jolt(t, 10 * dir, 0.6);
+          for (const c of trainLook(st.train.cars).cars) {
+            if (c.x1 < s.left - 2 || c.x0 > s.right + 2) continue;
+            for (const wx of wheelXs(c)) fx.burst(s, P_SPARK, wx - dir * 0.3, 0.06, 4, 4.5, 0.05, 0.35, 1, 1.2);
+          }
+          break;
+        }
+        case 'horseShy': {
+          // Hooves dug in: a spray of dirt, or of water in a ford.
+          const a = this.horsemen.get(e.id);
+          if (!a) break;
+          if (this.inFord(a.x)) fx.splash(s, a.x + a.facing * 0.5, FORD_WATER_Y, 0.6, 0.2);
+          else fx.burst(s, P_DUST, a.x - a.facing * 0.4, LANE_Y + 0.15, 14, 2.6, 0.3, 0.9, 0.35, 1.2);
+          break;
+        }
+        case 'thrown':
+          if (e.who === 'rider') this.rider.thrownT = t;
+          else if (e.id !== undefined) {
+            const a = this.bandits.get(e.id);
+            if (a) a.thrownT = t;
+          }
+          break;
+        case 'cattleScatter': {
+          // The herd bolts: a cloud of dust off the line.
+          const o = this.itemX(f, e.id);
+          if (o !== null) fx.burst(s, P_DUST, o, 0.4, 22, 3.2, 0.45, 1.6, 0, 1);
           break;
         }
         case 'horsemanDown': {
@@ -602,6 +726,31 @@ export class RiderRenderer {
     }
   }
 
+  /** The Rider washed off in a ford: into the water where they stood and carried away (once per wash). */
+  private washRider(s: Scene, st: GameState): void {
+    if (this.t - this.riderWashedT < 0.5) return;
+    this.riderWashedT = this.t;
+    this.fx.swept(s, 'rider', 1, this.rider.x, this.rider.y, st.rider.facing);
+  }
+
+  /**
+   * Why a respawn that is due is held (respawnTicks at 0, spec §6.3): the rear platform is still in
+   * a ford, or on a bare train the tender top is in a tunnel.
+   */
+  private respawnWait(st: GameState): 'water' | 'tunnel' | 'other' {
+    const p = trainLook(st.train.cars).geo.respawn;
+    if (this.inFord(p.x)) return 'water';
+    if (inTunnel(this.s, p.x)) return 'tunnel';
+    return 'other';
+  }
+
+  /** Is train-frame x (at render time) over one of the fords in view? */
+  private inFord(x: number): boolean {
+    const f = this.fords;
+    for (let i = 0; i < f.length; i += 2) if (x >= f[i] && x <= f[i + 1]) return true;
+    return false;
+  }
+
   private itemX(f: RiderFrame, id: string): number | null {
     const o = f.state.obstacles.find((x) => x.id === id);
     if (!o) return null;
@@ -673,6 +822,26 @@ export class RiderRenderer {
       if (car.kind === 'powder' && car.hp <= 3 && Math.random() < dt * (4 - car.hp) * 6) {
         fx.spawn(s, P_SMOKE, car.x0 + 1 + Math.random() * (car.x1 - car.x0 - 2), 3.8, 0, 1.5, 0.2, 0.9, 1.6, 1);
         if (car.hp <= 1) fx.spawn(s, P_EMBER, car.x0 + 1 + Math.random() * (car.x1 - car.x0 - 2), 3.5, 0, 2, 0.07, 0, 0.8, 1);
+      }
+    }
+    // Fords: spray thrown up at the bow waves, where the loco and each car's front cut the water.
+    const k = wash(t.v);
+    if (k > 0 && this.fords.length > 0) {
+      const dir = t.v >= 0 ? 1 : -1;
+      const floor = FORD_WATER_Y - 0.1;
+      for (let i = 0; i < this.fords.length; i += 2) {
+        bowWaves(tl.cars, this.fords[i], this.fords[i + 1], t.v, this.waves);
+        for (const w of this.waves) {
+          if (w.x < s.left - 6 || w.x > s.right + 6) continue;
+          const lead = w.h > 0.3;
+          const drops = (lead ? 75 : 16) * k * dt;
+          for (let n = 0; n < drops + Math.random() - 1; n++) {
+            fx.spawn(s, P_WATER, w.x + dir * Math.random() * 0.5, FORD_WATER_Y + w.h * 0.5, dir * (0.5 + 3 * Math.random()), (lead ? 2.5 : 1.5) + (lead ? 5 : 3) * k * Math.random(), 0.045 + 0.04 * Math.random(), 0, 0.6 + 0.5 * Math.random(), 0.55, floor);
+          }
+          if (Math.random() < (lead ? 22 : 5) * k * dt) {
+            fx.spawn(s, P_SPRAY, w.x + dir * 0.2, FORD_WATER_Y + 0.2, dir * Math.random() * 2, 1 + 2.5 * Math.random() * k, (lead ? 0.35 : 0.22) + 0.15 * k, 0.9, 0.8 + 0.4 * Math.random(), 0.55);
+          }
+        }
       }
     }
     // Burning trestles: embers and smoke.
@@ -791,6 +960,19 @@ export class RiderRenderer {
     a.climb = advancePhase(a.climb, Math.abs(dy), 0.75);
   }
 
+  /**
+   * The stagger of a figure a lurch threw (spec §5.2): while its hop and its stun last after the
+   * `thrown` event, eased in fast and out as it finds its feet. A low bridge's stun (no event)
+   * keeps the knocked-flat pose instead.
+   */
+  private stagger(a: FigAnim, stunTicks: number, onGround: boolean, dt: number): number {
+    const since = this.t - a.thrownT;
+    const want = since >= 0 && since < THROWN_SECONDS && (stunTicks > 0 || !onGround) ? 1 : 0;
+    a.stagger = approach(a.stagger, want, dt, want > a.stagger ? 0.04 : 0.14);
+    if (a.stagger < 0.01) a.stagger = 0;
+    return a.stagger;
+  }
+
   private drawRider(s: Scene, st: GameState): void {
     const r = st.rider;
     const a = this.rider;
@@ -804,6 +986,7 @@ export class RiderRenderer {
     const ca = Math.cos(r.aim);
     const facing: 1 | -1 = Math.abs(ca) > 0.15 ? (ca >= 0 ? 1 : -1) : r.facing;
     this.gait(a, x, y, facing, r.crouch, s.dt);
+    const stg = this.stagger(a, r.stunTicks, r.onGround, s.dt);
     const p = this.pose;
     p.kind = 'rider';
     p.tier = 1;
@@ -815,15 +998,18 @@ export class RiderRenderer {
     p.climb = r.ladder !== null;
     p.climbPhase = a.climb;
     p.air = !r.onGround && r.ladder === null ? 1 : 0;
-    p.stunned = r.stunTicks > 0;
-    p.aim = p.climb || p.stunned ? null : r.aim;
+    p.stunned = r.stunTicks > 0 && stg < 0.5;
+    p.stagger = stg;
+    p.staggerDir = s.v >= 0 ? 1 : -1;
+    p.tilt = 0;
+    p.aim = p.climb || r.stunTicks > 0 || stg > 0.3 ? null : r.aim;
     p.recoil = clamp01(1 - (this.t - (this.fx.shots.get('rider') ?? -Infinity)) / 0.14);
     p.weapon = r.weapon;
     p.hurt = this.t - this.riderHurtT < 0.12 ? 1 : 0;
     p.wind = this.exposed(r.surface) && r.inside === null ? s.wind : 0;
     p.windDir = s.v >= 0 ? -1 : 1;
     p.loot = false;
-    p.hands = 'none';
+    p.hands = stg > 0.3 ? 'flail' : 'none';
     p.seated = false;
     p.stand = 0;
     p.t = s.t;
@@ -866,6 +1052,7 @@ export class RiderRenderer {
         facing = riderChestX >= x ? 1 : -1;
       }
       this.gait(a, x, y, facing, b.crouch, s.dt);
+      const stg = this.stagger(a, b.stunTicks, b.onGround, s.dt);
       a.facing = facing;
       a.raise += ((aimAngle !== null ? 1 : 0) - a.raise) * (s.dt > 0 ? 1 - Math.exp(-s.dt / 0.06) : 0);
       p.facing = facing;
@@ -875,15 +1062,18 @@ export class RiderRenderer {
       p.climb = b.ladder !== null;
       p.climbPhase = a.climb;
       p.air = !b.onGround && b.ladder === null ? 1 : 0;
-      p.stunned = b.stunTicks > 0;
-      p.aim = p.climb || p.stunned ? null : aimAngle;
+      p.stunned = b.stunTicks > 0 && stg < 0.5;
+      p.stagger = stg;
+      p.staggerDir = s.v >= 0 ? 1 : -1;
+      p.tilt = 0;
+      p.aim = p.climb || b.stunTicks > 0 || stg > 0.3 ? null : aimAngle;
       p.recoil = clamp01(1 - (this.t - (this.fx.shots.get(`b${b.id}`) ?? -Infinity)) / 0.14);
       p.weapon = b.tier === 3 && !b.boss ? 'rifle' : 'revolver';
       p.hurt = this.t - a.hurtT < 0.12 ? 1 : 0;
       p.wind = this.exposed(b.surface ?? a.surface) ? s.wind : 0;
       p.windDir = s.v >= 0 ? -1 : 1;
       p.loot = b.hasLoot;
-      p.hands = b.mode === 'cracking' ? 'crack' : 'none';
+      p.hands = b.mode === 'cracking' ? 'crack' : stg > 0.3 ? 'flail' : 'none';
       p.seated = false;
       p.stand = 0;
       p.t = s.t;
@@ -929,14 +1119,24 @@ export class RiderRenderer {
       const gallop = clamp01(Math.abs(wv) / 7);
       const look = h.boss ? BOSS_HORSE : HORSES[h.id % HORSES.length];
       const grazing = h.mode === 'waiting' ? 0.5 + 0.5 * Math.sin(s.t * 0.4 + h.id) : 0;
-      // A soft shadow on the ground under the horse.
-      ctx.fillStyle = 'rgba(30,20,12,0.22)';
-      ctx.beginPath();
-      ctx.ellipse(x, LANE_Y - 0.02, 1.35, 0.13, 0, 0, TAU);
-      ctx.fill();
-      const saddle = drawHorse(ctx, s.litFig, look, { facing: a.facing, phase: a.phase, gallop, graze: gallop > 0.2 ? 0 : grazing, t: s.t, seed: h.id }, x, LANE_Y);
-      // The rider: seated, standing in the stirrups to board, gun up to shoot.
-      const aiming = h.aimTicks > 0 || this.t - (this.fx.aims.get(`h${h.id}`) ?? -Infinity) < HORSEMAN_TELEGRAPH[h.tier];
+      const wet = this.inFord(x);
+      // Shying at a lurch's squeal (spec §5.2): up on its hind legs at first, then skittering back.
+      const shyFor = h.tier === 3 || h.boss ? HORSE_SHY_SECONDS_VETERAN : HORSE_SHY_SECONDS;
+      const shyAge = h.shyTicks > 0 ? shyFor - h.shyTicks / TICK_HZ : Infinity;
+      const rearWant = shyAge < shyFor * 0.55 ? 1 : 0;
+      a.rear = approach(a.rear, rearWant, dt, rearWant > a.rear ? 0.09 : 0.2);
+      if (a.rear < 0.01) a.rear = 0;
+      const rear = a.rear;
+      // A soft shadow on the ground under the horse (none in the water).
+      if (!wet) {
+        ctx.fillStyle = 'rgba(30,20,12,0.22)';
+        ctx.beginPath();
+        ctx.ellipse(x, LANE_Y - 0.02, 1.35 * (1 - 0.3 * rear), 0.13, 0, 0, TAU);
+        ctx.fill();
+      }
+      const saddle = drawHorse(ctx, s.litFig, look, { facing: a.facing, phase: a.phase, gallop, graze: gallop > 0.2 ? 0 : grazing, rear, t: s.t, seed: h.id }, x, LANE_Y);
+      // The rider: seated, standing in the stirrups to board, gun up to shoot, thrown back when the horse rears.
+      const aiming = rear === 0 && (h.aimTicks > 0 || this.t - (this.fx.aims.get(`h${h.id}`) ?? -Infinity) < HORSEMAN_TELEGRAPH[h.tier]);
       let aim: number | null = null;
       let facing = a.facing;
       const shoulderY = LANE_Y + saddle + 0.5;
@@ -958,6 +1158,8 @@ export class RiderRenderer {
       p.climb = false;
       p.air = 0;
       p.stunned = false;
+      p.stagger = 0;
+      p.tilt = -0.32 * rear;
       p.aim = aim;
       p.recoil = clamp01(1 - (this.t - (this.fx.shots.get(`h${h.id}`) ?? -Infinity)) / 0.14);
       p.weapon = h.tier === 3 ? 'rifle' : 'revolver';
@@ -965,20 +1167,38 @@ export class RiderRenderer {
       p.wind = gallop * 0.8;
       p.windDir = (-a.facing) as 1 | -1;
       p.loot = false;
-      p.hands = h.mode === 'boarding' ? 'reach' : aim === null ? 'reins' : 'none';
+      p.hands = rear > 0.3 ? 'flail' : h.mode === 'boarding' ? 'reach' : aim === null ? 'reins' : 'none';
       p.seated = true;
-      p.stand = h.mode === 'boarding' ? 1 : 0;
+      p.stand = h.mode === 'boarding' && rear === 0 ? 1 : 0;
       p.t = s.t;
       p.seed = h.id * 2.1;
-      const bob = gallop * 0.07 * Math.sin(TAU * a.phase * 2 + 0.6);
-      this.fig.draw(ctx, s.litFig, p, x - 0.05 * a.facing, LANE_Y + saddle - 0.02 + bob * 0.4, a.muzzle);
-      a.muzzleT = this.t;
+      const bob = gallop * 0.07 * Math.sin(TAU * a.phase * 2 + 0.6) * (1 - rear);
+      if (rear > 0) {
+        // In the saddle of a rearing horse: drawn in the horse's own tipped frame, so he stays on it.
+        p.facing = 1;
+        ctx.save();
+        ctx.translate(x, LANE_Y + bob);
+        ctx.scale(a.facing, 1);
+        rearTransform(ctx, rear);
+        this.fig.draw(ctx, s.litFig, p, -0.05, saddle - bob - 0.02, null);
+        ctx.restore();
+        a.muzzleT = -Infinity;
+      } else {
+        this.fig.draw(ctx, s.litFig, p, x - 0.05 * a.facing, LANE_Y + saddle - 0.02 + bob * 0.4, a.muzzle);
+        a.muzzleT = this.t;
+      }
       if (h.pickup) {
         // A spare horse waiting for a looter.
         drawHorse(ctx, s.litFig, HORSES[(h.id + 2) % HORSES.length], { facing: a.facing, phase: (a.phase + 0.37) % 1, gallop, graze: 0, t: s.t, seed: h.id + 5 }, x - a.facing * 3.2, LANE_Y + 0.35);
       }
-      // Dust from the hooves.
-      if (dt > 0 && gallop > 0.3) {
+      if (dt > 0 && wet) {
+        // Wading: the river breaking round the horse's chest.
+        if (Math.random() < dt * (3 + 10 * gallop)) {
+          this.fx.spawn(s, P_WATER, x + a.facing * (0.7 + 0.3 * Math.random()), FORD_WATER_Y + 0.05, a.facing * Math.random() * 2, 1.5 + 2 * Math.random(), 0.05, 0, 0.5, wv / Math.max(1, Math.abs(s.v)), FORD_WATER_Y - 0.1);
+        }
+        if (Math.random() < dt * 2 * gallop) this.fx.spawn(s, P_SPRAY, x + a.facing * 0.8, FORD_WATER_Y + 0.15, 0, 0.8, 0.25, 0.6, 0.7, 0);
+      } else if (dt > 0 && gallop > 0.3) {
+        // Dust from the hooves.
         a.dustAcc += Math.abs(wv) * dt * 0.9;
         while (a.dustAcc > 1) {
           a.dustAcc -= 1;

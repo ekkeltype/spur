@@ -6,7 +6,7 @@
 
 import type { Terrain, TracksideItem } from '../../sim/types';
 import { PALETTE } from '../palette';
-import { screenY, worldX } from './camera';
+import { screenY, VIEW_HEIGHT_M, worldX } from './camera';
 import { hash01, layerRange, layerScreenX, noise1, tileSpan } from './parallax';
 import { clamp01, setScreen, setWorld, TAU, type Scene } from './scene';
 import { hexRgb, rgbStr, type RGB } from './sky';
@@ -28,8 +28,11 @@ export const BALLAST_Y = -0.95;
 export const LANE_Y = -0.08;
 /** Base of near-side signs and stands, just in front of the ballast. */
 export const NEAR_Y = -1.25;
-/** Below the bottom of any view (19 m tall with the rails at 76 %: −4.56 m), for fills that must reach it. */
-export const FLOOR_Y = -6;
+/**
+ * Below the bottom of any view, for fills that must reach it: 19 m tall with the rails at 76 % puts
+ * the bottom at −4.56 m, and the lookout's widest zoom (1.4×) at −6.4 m.
+ */
+export const FLOOR_Y = -7;
 
 const FAR_P = 0.05;
 const FARTHER_P = 0.022;
@@ -289,7 +292,9 @@ export class Scenery {
       ctx.fill();
     }
     const rs = Math.min(s.dpr, 1.5);
-    const key = `${cam.k.toFixed(3)}|${rs}|${Math.round(skyRgb[0] / 6)},${Math.round(skyRgb[1] / 6)},${Math.round(skyRgb[2] / 6)}|${s.night ? 1 : 0}|${hazeK}`;
+    // Tiles are painted at the unzoomed scale and drawn scaled, so the lookout's zoom never repaints them.
+    const kb = cam.h / VIEW_HEIGHT_M;
+    const key = `${kb.toFixed(3)}|${rs}|${Math.round(skyRgb[0] / 6)},${Math.round(skyRgb[1] / 6)},${Math.round(skyRgb[2] / 6)}|${s.night ? 1 : 0}|${hazeK}`;
     if (key !== this.tileKey) {
       this.tiles.length = 0;
       this.tileKey = key;
@@ -299,7 +304,7 @@ export class Scenery {
     const topY = screenY(cam, HORIZON_Y + FAR_TOP);
     const hPx = (FAR_TOP + 1) * cam.k;
     for (let i = i0; i <= i1; i++) {
-      const tile = this.tile(s, i, rs, skyRgb, hazeK);
+      const tile = this.tile(s, i, kb * rs, skyRgb, hazeK);
       if (!tile) continue;
       const x = layerScreenX(i * TILE_W, FAR_P, camWorld, cam.k, cam.w);
       const wPx = TILE_W * cam.k;
@@ -341,14 +346,14 @@ export class Scenery {
     ctx.globalAlpha = 1;
   }
 
-  private tile(s: Scene, i: number, rs: number, skyRgb: RGB, hazeK: number): Tile | null {
+  /** Far tile i, painted at `k` px per metre (cached). */
+  private tile(s: Scene, i: number, k: number, skyRgb: RGB, hazeK: number): Tile | null {
     for (const t of this.tiles) {
       if (t.i === i) {
         t.used = this.frame;
         return t;
       }
     }
-    const k = s.cam.k * rs;
     const w = Math.ceil(TILE_W * k) + 1;
     const h = Math.ceil((FAR_TOP + 1) * k);
     let canvas: HTMLCanvasElement;
