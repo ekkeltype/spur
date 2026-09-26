@@ -356,6 +356,19 @@ the runaway, a junction signal read before choosing a route. Everyday signals ar
 train passes them**, straight from the line: a yellow arm or lamp means the next signal is at stop,
 so the Engineer, who knows exactly where that signal is, can stop at it (§9).
 
+**The scout alert** says when to look. A "!" in a brass caution diamond comes up at the edge of the
+Rider's view when something worth a look lies past the end the train runs toward, from where the
+glass starts at its shortest reach (about 13 m) out to the spyglass's reach now: cattle, rocks or a
+barricade on the line, riders waiting in ambush, another train or the runaway on our own track, or a
+signal facing the train at stop. What the Engineer calls from the map (tunnels, bridges, fords) never
+raises it. There's one badge however many things there are, and it never says what or how far. A
+thing stops counting once it has been in plain view, or in the settled glass for 0.1 s, for the rest
+of the game (a signal seen at clear counts again when it drops to stop). The "!" sits at the right
+edge, or the left while the train backs faster than 0.3 m/s (until it's backing slower than
+0.1 m/s), and shows only to a Rider on the train and not at the spyglass. It pops for something new
+and fades back in after the spyglass. What the Rider has seen is presentation state, kept by the
+renderer per game (`render/rider/scout.ts`), never the sim's.
+
 ### 6.6 Interactions (E)
 
 - **Water spout:** §5.5.
@@ -832,7 +845,7 @@ scoped. Layers, back to front:
 9. effects: muzzle flashes, tracers, sparks, smoke, steam, wind streaks, tunnel darkness, night
    lighting
 10. HUD: hearts, ammo, weapon, a train strip at the top (cars, the Rider, bandits aboard, safe status,
-    hold-up), prompts, spyglass vignette and range, respawn countdown
+    hold-up), prompts, spyglass vignette and range, the scout alert's "!" (§6.5), respawn countdown
 
 Everything is drawn procedurally with Canvas 2D. There are no image assets.
 
