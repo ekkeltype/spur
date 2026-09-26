@@ -627,7 +627,9 @@ class RiderPlay {
     if (running) {
       this.runningSince ??= now;
       const t = now - this.runningSince;
-      if (t > 1500) this.hints.show('spyglass', 'Read each signal as the train passes it. To see things far down the line, hold Shift or the right mouse button on a roof: the spyglass.');
+      if (t > 1500) this.hints.show('spyglass', 'Read each signal as the train passes it. When a ! shows at the edge of the view, something down the line is worth a look through the spyglass.');
+      // The first scout alert ahead (round 3), once the opening hint has had its time.
+      if (t > 8500 && this.renderer.scoutBadge === 1) this.hints.show('scout', 'A ! means something ahead is worth a look: hold Shift or the right mouse button on a roof for the spyglass. The ! goes once you’ve had it in the glass.');
       if (t > 30000) this.hints.show('gaps', 'Jump the roof gaps with W or Space. The faster the train, the harder the wind pushes you back.');
     }
     if (import.meta.env.DEV && this.opts.debug) {

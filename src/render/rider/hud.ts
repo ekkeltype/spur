@@ -2,7 +2,8 @@
 // two shells, a rifle's tube), reload progress, a strip of the whole train at the top (cars, the
 // Rider, bandits aboard as red dots, horsemen alongside, the safe's status, HANDS UP on the loco,
 // the powder car's hp), the prompt by the Rider, the spyglass (vignette, range in yards,
-// crosshair, the flag) and the respawn countdown. Screen space, CSS px.
+// crosshair, the flag), the scout alert's "!" (round 3) and the respawn countdown. Screen space,
+// CSS px.
 //
 // There is no speedometer: the Rider feels speed through the wind and the scenery (spec §2).
 // Distances are the railroad's: yards below a mile, miles beyond (spec §0 note 6).
@@ -10,7 +11,8 @@
 import { FLAG_MAX, QUICK_RELOAD_FACTOR, TICK_HZ, WEAPONS, YARD } from '../../sim/rules';
 import type { GameState, Weapon } from '../../sim/types';
 import { PALETTE } from '../palette';
-import { font, roundRect, TAU, type Scene } from './scene';
+import { RAIL_FRACTION, VIEW_HEIGHT_M } from './camera';
+import { clamp01, font, roundRect, TAU, type Scene } from './scene';
 import { CAR_COLOURS, shadeHex } from './train';
 
 const INK = '#2A2118';
@@ -20,6 +22,36 @@ const RED = PALETTE.signalRed;
 
 const WEAPON_NAME: Record<Weapon, string> = { revolver: 'REVOLVER', shotgun: 'COACH GUN', rifle: 'WINCHESTER' };
 const MILE = 1609.34;
+
+/** The spyglass's glass, raised: its radius as a fraction of the view's smaller side… */
+export const SCOPE_GLASS = 0.43;
+/** …and its centre's height as a fraction of the view's height. */
+export const SCOPE_CY = 0.48;
+
+/**
+ * Half the width (m) of the world the raised glass shows at `y` metres above the rails, in a view
+ * `w` × `h` CSS px showing `zoom` times the usual height: the chord of the glass at that height.
+ */
+export function glassHalfWidth(w: number, h: number, zoom = 1, y = 1): number {
+  const k = h / (VIEW_HEIGHT_M * (zoom > 0 ? zoom : 1));
+  const R = Math.min(w, h) * SCOPE_GLASS;
+  const dy = h * (RAIL_FRACTION - SCOPE_CY) - y * k;
+  return Math.sqrt(Math.max(0, R * R - dy * dy)) / k;
+}
+
+/** The scout alert's badge (round 3): the edge it sits at, how far it's faded in, seconds since it popped. */
+export interface ScoutBadge {
+  side: 1 | -1;
+  alpha: number;
+  pop: number;
+}
+
+/** The badge's pop (s), its ring's spread (s), and the slow breath while it waits (s per breath). */
+const BADGE_POP = 0.45;
+const BADGE_RING = 0.9;
+const BADGE_BREATH = 1.8;
+/** The badge's centre, as a fraction of the view's height: the train's level, above the rails at 0.76. */
+const BADGE_Y = 0.635;
 
 /**
  * A distance as the railroad gives it (DECISIONS, round 2): yards under a mile, rounded to 1 yd under
@@ -50,6 +82,8 @@ export interface HudInput {
    * still in a ford, or on a bare train the tender top is in a tunnel. null when not held.
    */
   respawnWait?: 'water' | 'fire' | 'tunnel' | 'other' | null;
+  /** The scout alert's "!" (round 3), or null when it's down. */
+  scout?: ScoutBadge | null;
 }
 
 /** What the respawn countdown says while a due respawn is held. */
@@ -78,6 +112,7 @@ export class Hud {
     this.strip(s, h);
     this.hearts(s, h.state);
     this.weapon(s, h.state);
+    if (h.scout && h.scout.alpha > 0.01 && h.state.rider.mode === 'active') this.scout(s, h.scout);
     if (h.prompt && h.state.rider.mode === 'active') this.prompt(s, h.prompt, h.riderHead);
     if (h.state.rider.mode !== 'active') this.respawn(s, h.state, h.offCause ?? 'fall', h.respawnWait ?? null);
   }
@@ -524,9 +559,9 @@ export class Hud {
     const { ctx, cam } = s;
     const k = h.scope;
     const cx = cam.w / 2;
-    const cy = cam.h * 0.48;
+    const cy = cam.h * SCOPE_CY;
     const full = Math.hypot(cam.w, cam.h) * 0.6;
-    const R = full + (Math.min(cam.w, cam.h) * 0.43 - full) * easeOut(k);
+    const R = full + (Math.min(cam.w, cam.h) * SCOPE_GLASS - full) * easeOut(k);
     ctx.fillStyle = `rgba(8,6,5,${(0.97 * Math.min(1, k * 1.5)).toFixed(3)})`;
     ctx.beginPath();
     ctx.rect(0, 0, cam.w, cam.h);
@@ -594,6 +629,64 @@ export class Hud {
     ctx.fillStyle = PAPER;
     ctx.textAlign = 'left';
     ctx.fillText(flagText(st.flags.length), cx + tw / 2 + 24, ly + 1);
+    ctx.globalAlpha = 1;
+  }
+
+  // ---- Scout alert (round 3) ---------------------------------------------------------------------
+
+  /**
+   * The "!" at the edge of the view the train runs toward: something down the line is worth a look
+   * through the spyglass. It never says what, or how far. It pops in with a spreading ring when
+   * something new comes up, then breathes slowly while it waits. It sits at the train's level, clear
+   * of the hearts, the strip and the weapon plate.
+   */
+  private scout(s: Scene, b: ScoutBadge): void {
+    const { ctx, cam } = s;
+    // A caution diamond, `d` from its centre to each point: a brass plate, an ink border, an ink "!".
+    const d = Math.max(24, Math.min(54, cam.h * 0.052));
+    const pad = Math.max(12, cam.h * 0.018);
+    const cx = b.side === 1 ? cam.w - pad - d * 1.25 : pad + d * 1.25;
+    const cy = cam.h * BADGE_Y;
+    const pop = b.pop < BADGE_POP ? backOut(clamp01(b.pop / BADGE_POP)) : 1;
+    const breath = 0.5 - 0.5 * Math.cos((TAU * s.now) / BADGE_BREATH);
+    const D = d * pop * (1 + 0.035 * breath);
+    // A ring: bright and wide as it pops, then a faint one with each breath.
+    const fresh = b.pop < BADGE_RING;
+    const q = fresh ? b.pop / BADGE_RING : (s.now % BADGE_BREATH) / BADGE_BREATH;
+    ctx.globalAlpha = b.alpha * (fresh ? 0.95 : 0.4) * (1 - q) * (1 - q);
+    ctx.lineWidth = Math.max(2, d * (fresh ? 0.14 : 0.08));
+    ctx.strokeStyle = BRASS;
+    diamond(ctx, cx, cy, d * (1.08 + (fresh ? 0.9 : 0.45) * easeOut(q)), d * 0.16);
+    ctx.stroke();
+    ctx.globalAlpha = b.alpha;
+    if (D > 2) {
+      // A soft shadow, so the plate stands off a bright sky or a sunlit car.
+      ctx.fillStyle = 'rgba(20,16,12,0.3)';
+      diamond(ctx, cx + D * 0.05, cy + D * 0.08, D * 1.06, D * 0.16);
+      ctx.fill();
+      const g = ctx.createLinearGradient(cx, cy - D, cx, cy + D);
+      g.addColorStop(0, '#E6C98A');
+      g.addColorStop(0.55, BRASS);
+      g.addColorStop(1, '#A8823F');
+      ctx.fillStyle = g;
+      diamond(ctx, cx, cy, D, D * 0.16);
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = Math.max(3, D * 0.1);
+      diamond(ctx, cx, cy, D - ctx.lineWidth / 2, D * 0.13);
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1.2, D * 0.035);
+      diamond(ctx, cx, cy, D * 0.76, D * 0.1);
+      ctx.stroke();
+      // Rye's "!" is slender: a stroke of the same ink makes it bold.
+      ctx.font = font('rye', D * 1.02);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = Math.max(1.5, D * 0.08);
+      ctx.strokeText('!', cx, cy + D * 0.06);
+      ctx.fillStyle = INK;
+      ctx.fillText('!', cx, cy + D * 0.06);
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -696,6 +789,24 @@ export function flagText(placed: number): string {
 function easeOut(t: number): number {
   const u = Math.max(0, Math.min(1, t));
   return 1 - (1 - u) * (1 - u) * (1 - u);
+}
+
+/** 0 → 1 overshooting a little on the way (a pop). */
+function backOut(t: number): number {
+  const c = 2.2;
+  const u = Math.max(0, Math.min(1, t)) - 1;
+  return 1 + (c + 1) * u * u * u + c * u * u;
+}
+
+/** A diamond (a square on its point) of half-diagonal `d` with corners rounded by `r`: begins a path. */
+function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, d: number, r: number): void {
+  ctx.beginPath();
+  ctx.moveTo(x - d / 2, y - d / 2);
+  ctx.arcTo(x, y - d, x + d, y, r);
+  ctx.arcTo(x + d, y, x, y + d, r);
+  ctx.arcTo(x, y + d, x - d, y, r);
+  ctx.arcTo(x - d, y, x, y - d, r);
+  ctx.closePath();
 }
 
 function heartPath(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {
