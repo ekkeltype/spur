@@ -82,6 +82,8 @@ export const LURCH_HOP_VX = 4;
 export const LURCH_HOP_VY = 2.5;
 /** …then staggered this long: no control, no shooting. Crouching, ladders and interiors brace you. */
 export const LURCH_STAGGER_SECONDS = 0.6;
+/** …or this long for a bandit, who isn't expecting it (the slam is the crew's trick). */
+export const LURCH_BANDIT_STAGGER_SECONDS = 1.8;
 /** Horsemen alongside, within this far of either end of the train, shy at the squeal… */
 export const HORSE_SHY_RANGE = 40;
 /** …for this long (s): no boarding, no aim, no shots… */

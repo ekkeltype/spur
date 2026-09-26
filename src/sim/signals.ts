@@ -69,13 +69,14 @@ export function blockOf(state: GameState, run: RunDef, signalId: string): Block 
 }
 
 /**
- * Is anything in the way on this stretch? An obstacle still on the line (present, or cattle still
- * scattering; not one a train has already pushed aside or smashed through) and any other train on
- * the map, the runaway included. The player's own train never counts: a signal protects the track
- * ahead of it.
+ * Is anything in the way on this stretch? A rockslide or barricade still on the line (not one a
+ * train has already smashed through) and any other train on the map, the runaway included. Cattle
+ * don't count: nothing lineside can tell a herd is there, so the Rider has to spot them. The
+ * player's own train never counts: a signal protects the track ahead of it.
  */
 function obstructed(state: GameState, block: readonly Span[]): boolean {
   for (const o of state.obstacles) {
+    if (o.kind === 'cattle') continue;
     const onLine = o.state === 'present' || o.state === 'scattering';
     if (onLine && xOnSpans(block, { edge: o.edge, off: o.at }) !== null) return true;
   }

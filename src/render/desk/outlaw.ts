@@ -4,16 +4,27 @@
 
 const NS = 'http://www.w3.org/2000/svg';
 
-/** What he says as he comes in: one line per hold-up. */
-const GREETINGS = [
+/** What he says while he holds you: a line as he comes in, then another every so often. */
+const LINES = [
   'Easy, hogger. Hands where I can see ’em.',
   'Not one twitch on that throttle, friend.',
   'Keep ’em high, driver. This train’s mine now.',
   'Reach for the sky, and leave the brake be.',
+  'Nice and slow now. Nobody needs to get hurt.',
+  'Stand clear of them levers, old-timer.',
+  'That’s a fine engine. Shame if she stopped for good.',
+  'Your pardner up top ain’t coming. Sit tight.',
+  'Whistle all you like. Nobody’s listening.',
+  'Harlan sends his regards.',
+  'Ever been robbed before? It’s easy. You do nothing.',
+  'This here’s a hold-up, in case you wondered.',
 ];
 
 /** What he says when you reach for a lever anyway. */
-const WARNINGS = ['Uh-uh.', 'I said hands up!', 'Try that again, hogger.', 'Don’t make me.'];
+const WARNINGS = ['Uh-uh.', 'I said hands up!', 'Try that again, hogger.', 'Don’t make me.', 'Easy!', 'Keep reaching and you’ll lose the hand.'];
+
+/** A new line every this many ms while he holds you. */
+const LINE_MS = 6000;
 
 /** The outlaw, bottom-anchored in a 360×320 box: coat, head and hat, and the gun arm reaching at you. */
 const ART = `
@@ -73,6 +84,8 @@ export class OutlawView {
   private readonly vignette: HTMLElement;
   private shown = false;
   private hideTimer: number | undefined;
+  private lineTimer: number | undefined;
+  private lastLine = '';
 
   constructor() {
     this.el = document.createElement('div');
@@ -102,12 +115,14 @@ export class OutlawView {
     this.shown = held;
     window.clearTimeout(this.hideTimer);
     if (held) {
-      this.say.textContent = pick(GREETINGS);
+      this.speak(LINES);
+      this.lineTimer = window.setInterval(() => this.speak(LINES), LINE_MS);
       this.el.hidden = false;
       this.vignette.hidden = false;
       replay(this.el, 'dk-outlaw-in');
       this.el.classList.remove('dk-outlaw-out');
     } else {
+      window.clearInterval(this.lineTimer);
       this.el.classList.remove('dk-outlaw-in');
       replay(this.el, 'dk-outlaw-out');
       this.vignette.hidden = true;
@@ -120,20 +135,24 @@ export class OutlawView {
   /** The Engineer reached for a lever: the gun comes closer, with a word. */
   jab(): void {
     if (!this.shown) return;
-    this.say.textContent = pick(WARNINGS);
+    this.speak(WARNINGS);
     this.el.classList.remove('dk-outlaw-in');
     replay(this.el, 'dk-outlaw-jab');
   }
 
+  /** Says a line from `lines`, never the one he just said. */
+  private speak(lines: readonly string[]): void {
+    const fresh = lines.filter((l) => l !== this.lastLine);
+    this.lastLine = fresh[Math.floor(Math.random() * fresh.length)] ?? lines[0];
+    this.say.textContent = this.lastLine;
+  }
+
   destroy(): void {
     window.clearTimeout(this.hideTimer);
+    window.clearInterval(this.lineTimer);
     this.el.remove();
     this.vignette.remove();
   }
-}
-
-function pick(lines: readonly string[]): string {
-  return lines[Math.floor(Math.random() * lines.length)];
 }
 
 /** Restarts a CSS animation class. */

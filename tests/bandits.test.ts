@@ -13,7 +13,7 @@ import {
   HORSE_SHY_SECONDS,
   HORSE_SHY_SECONDS_VETERAN,
   HORSE_SPRINT,
-  LURCH_STAGGER_SECONDS,
+  LURCH_BANDIT_STAGGER_SECONDS,
   SCOPE_MAX,
   TICK_HZ,
 } from '../src/sim/rules';
@@ -757,11 +757,11 @@ describe('the lurch (spec §5.2)', () => {
     for (const b of [b1, b2]) {
       expect(b.onGround).toBe(false);
       expect(b.vx).toBeCloseTo(4, 1);
-      expect(b.stunTicks).toBe(Math.round(LURCH_STAGGER_SECONDS * TICK_HZ));
+      expect(b.stunTicks).toBe(Math.round(LURCH_BANDIT_STAGGER_SECONDS * TICK_HZ));
     }
     expect(b1.aimTicks).toBe(0);
     // Staggered: the shot he was taking never comes.
-    const staggered = tick(w, Math.round(LURCH_STAGGER_SECONDS * TICK_HZ) - 1, { down: true });
+    const staggered = tick(w, Math.round(LURCH_BANDIT_STAGGER_SECONDS * TICK_HZ) - 1, { down: true });
     expect(staggered.some((e) => e.type === 'shot')).toBe(false);
     expect(b1.x).toBeGreaterThan(22.8);
     expect([b1.onGround, b1.surface]).toEqual([true, 'roof']);
