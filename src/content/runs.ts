@@ -60,7 +60,7 @@ function firstLight(): RunDef {
         'Horsemen gallop up from behind. Shoot the riders (the horses can’t be hit) before they climb aboard.',
         'A tunnel sweeps off anyone above the car floors, the tender top too: get down onto a platform or inside a car. A ford washes off anyone below the roofs: get up on a roof or the tender top.',
         'Crouch (S) for the low bridges: standing on a roof or the tender top, the beam knocks you flat.',
-        'Hold Shift or the right mouse button for the spyglass to look far down the line; a click plants a flag on the Engineer’s map.',
+        'A ! at the edge of the view means something down the line is worth a look: hold Shift or the right mouse button for the spyglass. A click plants a flag on the Engineer’s map.',
       ],
       engineer: [
         'Ease the throttle up and brake early: from full speed she needs about 220 yards to stop.',

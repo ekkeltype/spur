@@ -499,12 +499,12 @@ describe('the autopilot', () => {
 });
 
 describe('the autopilot at the campaign’s cattle', () => {
-  // Runs 3 and 6 put a herd on the line. The autopilot must get each off it with one blast begun
-  // inside the scare window, never calming it first, wherever the plan's whistle point stands.
+  // Runs 2–6 put herds on the line. The autopilot must get each off it with one blast begun inside
+  // the scare window, never calming it first, wherever the plan's whistle point stands.
   const herdRuns = RUNS.filter((r) => r.obstacles.some((o) => o.kind === 'cattle'));
 
-  it('finds herds in runs 3 and 6', () => {
-    expect(herdRuns.map((r) => r.index + 1)).toEqual(expect.arrayContaining([3, 6]));
+  it('finds herds in runs 2 to 6', () => {
+    expect(herdRuns.map((r) => r.index + 1)).toEqual([2, 3, 4, 5, 6]);
   });
 
   for (const run of herdRuns) {

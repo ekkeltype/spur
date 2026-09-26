@@ -479,8 +479,9 @@ A signal governs trains moving in its `facing` direction. Its **block** runs fro
 next signal facing the same way along the current route (following the switches as they are now), at
 most 2.5 km.
 
-- **Block signal:** `stop` if the block contains an active obstacle or any part of another train (or
-  the runaway); else `approach` if the next signal shows `stop`; else `clear`.
+- **Block signal:** `stop` if the block contains a rockslide or barricade still on the line, or any
+  part of another train (or the runaway); else `approach` if the next signal shows `stop`; else
+  `clear`. Cattle never count: nothing lineside can tell a herd is there, so the Rider has to spot it.
 - **Junction signal** (for the junction just beyond it): the route is whichever leg the switch
   selects. `stop` if that route's block is obstructed. Otherwise:
   - normal leg: `clear` (or `approach` if the next signal shows `stop`);
@@ -651,8 +652,8 @@ Act I is Iron Horse (runs 1–3). Act II is Single Track (runs 4–6).
 | # | Run | New | Contract |
 |---|---|---|---|
 | 1 | First Light (Juniper → Coyote Bend, dawn) | Throttle and brake, station stop, tunnel, low-bridge and ford calls, a curve limit, horsemen | Mail, $120, not critical |
-| 2 | Payroll to Pale Rock | A junction: the long main line with a tunnel, or the short Dry Gulch cutoff (steep, bandit ambush). The safe. Water towers and the spout. The lurch. Starts with 55 water. | Payroll, $220, critical |
-| 3 | Signal Country | Block and junction signals and the rulebook. Two variants: a rockslide on one of two routes. Cattle and the whistle. Set piece: **the Devil's Trestle**, burning, crossed at ≥ 30 mph just after a 30 mph curve. | Silver, $260, critical |
+| 2 | Payroll to Pale Rock | A junction: the long main line with a tunnel, or the short Dry Gulch cutoff (steep, bandit ambush). The safe. Water towers and the spout. The lurch. Cattle and the whistle. Starts with 55 water. | Payroll, $220, critical |
+| 3 | Signal Country | Block and junction signals and the rulebook. Two variants: a rockslide on one of two routes. Set piece: **the Devil's Trestle**, burning, crossed at ≥ 30 mph just after a 30 mph curve. | Silver, $260, critical |
 | 4 | Single Track | Passing loops, the timetable chart, an opposing freight (meet at a loop), block signals protecting the single line. Side job: passengers. | Bank cash, $240, critical |
 | 5 | Night Freight | Night: lamps only, a shorter spyglass. Two meets: an opposing freight and an overtaking express. Dynamite: the powder car, with horsemen shooting at it. | Dynamite, $300, critical |
 | 6 | The Blackwater Line | Everything, plus **the Runaway** (divert it into the quarry spur) and the gang's boss, Black Jack Harlan (8 HP, goes for the safe). A barricade ambush. | Gold, $400, critical |
@@ -665,6 +666,15 @@ some margin.
 Difficulty rises through the network size, the number of simultaneous demands, wave sizes and tiers,
 timetable tightness and night. Waves grow from 3 tier-1 horsemen in run 1 to 5–6 mixed-tier horsemen
 plus the boss in run 6.
+
+**The bandits' rhythm.** Each plan meets 5, 5, 6, 5, 6 and 7 waves, chases from the rear and
+ambushes ahead, a new one at least every three minutes of driving (a meet's wait doesn't count) and
+none within 30 s of the last, save the boss's gang. Where the variants take different roads, each
+road gets its own waves. There are breathers at the set pieces: no wave rides in from 500 m short of
+a burning trestle's run-up until it's crossed, from a meet siding's junction signal until the hold is
+over, or from 500 m short of the runaway's trigger until past its switch (save the gang at the
+barricade). **Herds** stand on the line from run 2 (one there, two or three a run after that), each
+with a plan whistle point 170 m before it, 600 m or more from the next herd.
 
 **The Rider's rhythm.** Every run has at least 7 track hazards for the people on the train (tunnels,
 low bridges and fords), about one every minute of driving, mixing "get down" (tunnels), "get up"
@@ -906,6 +916,17 @@ The first playtest's notes, and what changed (details in the sections above; cho
 | Slamming the brakes should cost a heart if the Rider doesn't crouch | Thrown off their feet, the Rider loses a heart (§5.2) |
 | The flames should force the Rider into a certain position | A burning trestle burns everyone outside the cars: get inside (§4.3) |
 | The Engineer should see something when held up | An outlaw at the desk, gun levelled (§11) |
+
+Round 3 (the same day), from the user's own play:
+
+| Note | Change |
+|---|---|
+| A slammed bandit should stay down longer | A bandit thrown by the lurch staggers 1.8 s; the Rider still 0.6 s (§5.2) |
+| The outlaw should say different things | Twelve lines, a new one every 6 s, never the same twice running (§11) |
+| The Rider still spends most of the time in the spyglass; a "!" when there's something to scout | The scout alert (§6.5); signals no longer give a herd away (§9.2) |
+| More bandits and cattle | Half as many waves again; herds from run 2 on, up to three a run (§13) |
+| The world should run about 25% faster | `TIME_SCALE` 1.25: the host steps 75 ticks a real second (§16.1) |
+| Speed and power upgrades for the train, in tiers | Two lines of three loco tiers (§5.3, §12) |
 
 ## 22. Out of scope for v1
 

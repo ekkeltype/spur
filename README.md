@@ -43,7 +43,7 @@ Nowhere on the train is safe from everything. Tunnels sweep everyone above the c
 | Mouse, left click | Aim and fire |
 | R | Reload |
 | Q, or 1–3 | Switch weapon (revolver, coach gun, rifle, once bought) |
-| Shift or right mouse (hold) | Spyglass: look far down the line (cattle, a barricade, a runaway). Move the pointer right to look farther; click to plant a flag on the Engineer's map (one at a time). Signals you read as the train passes them |
+| Shift or right mouse (hold) | Spyglass: look far down the line when a **!** shows at the edge of the view (cattle, a barricade, a runaway, riders in wait, a red signal). Move the pointer right to look farther; click to plant a flag on the Engineer's map (one at a time). Signals you read as the train passes them |
 | E | On the tender by the hatch, at a water tower: lower the spout |
 | Esc | Pause |
 
