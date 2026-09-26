@@ -92,9 +92,13 @@ function firstLight(): RunDef {
     trestles: [line.trestle('sage-creek-trestle', 'Sage Creek Trestle', [5600, 5760])],
     curves: [line.curve('horseshoe-bend', [6500, 6900], 12.5)],
     grades: [line.grade([2700, 3000], 0.008), line.grade([3280, 4200], -0.006), line.grade([6000, 6500], 0.005)],
+    // Small bands of saddle tramps, one every minute or two of driving, mostly riding up behind us
+    // out of the tunnels and off the trestle, and a last pair waiting past Lookout Tunnel.
     waves: [
       line.wave('first-riders', 2200, 2, 'rear', 'hunt', 1),
+      line.wave('sage-hill-riders', 3550, 2, 'rear', 'hunt', 1),
       line.wave('creek-riders', 5900, 3, 'rear', 'hunt', 1),
+      line.wave('coyote-riders', 7650, 2, 'rear', 'hunt', 1),
       line.wave('bend-riders', 8600, 2, 'ahead', 'hunt', 1),
     ],
     telegrams: [
@@ -116,7 +120,8 @@ function firstLight(): RunDef {
 // ---------------------------------------------------------------------------------------------
 // 2. Payroll to Pale Rock: a junction (the long main line through Horsethief Tunnel and two fords,
 // or the short, steep Dry Gulch cutoff with an ambush), the safe, water towers and the spout, the
-// lurch, and only half a tender to start with. About 11 minutes the long way.
+// lurch, the first cattle and the whistle, and only half a tender to start with. About 11 minutes
+// the long way.
 // ---------------------------------------------------------------------------------------------
 
 function payroll(): RunDef {
@@ -154,6 +159,9 @@ function payroll(): RunDef {
       },
     ],
   });
+  // One blast for the herd as the loco passes 170 m short of it (spec §8). It grazes the last
+  // stretch before Pale Rock, which both ways share, so every crew meets it.
+  const whistles = [line.at(9380)];
   return makeRun(line, {
     id: 'payroll',
     index: 1,
@@ -165,13 +173,13 @@ function payroll(): RunDef {
         'The payroll is in the express car’s safe. A bandit who gets inside will crack it and run for his horse: shoot the one carrying the loot, then walk over it to pick it up.',
         'A horseman about to climb aboard? Crouch, then shout for the brake: a hard stop spooks the horses, and throws anyone standing, which costs a heart.',
         'At a water tower, stand on the tender by the hatch and press E to lower the spout.',
-        'If we take the Dry Gulch cutoff, riders will be waiting in the gulch. Use the spyglass and get your shots in first.',
+        'Cattle on the line? Watch the herd through the spyglass and call the moment for one blast, inside about 270 yards: whistle any sooner and they get used to it.',
       ],
       engineer: [
-        'You start with half a tender. Stop at Coyote tank with the tender’s hatch under the spout; the Ahead list counts down the distance.',
-        'At Dry Gulch Jct. choose: the long main line through Horsethief Tunnel, or the short, steep cutoff where a heavy train crawls.',
-        'Never let the water run out with the fire lit: the boiler blows. Watch the glass and stop at the tanks.',
+        'You start with half a tender. Stop at Coyote tank with the tender’s hatch under the spout (the Ahead list counts down the distance), and never let the water run out with the fire lit: the boiler blows.',
+        'At Dry Gulch Jct. choose: the long main line through Horsethief Tunnel, or the short, steep cutoff where a heavy train crawls and riders lie in wait.',
         'When the Rider calls for the brake, slam it on (Space) and the horses shy off. Warn the Rider first, and get her going again after.',
+        'For cattle, blow the whistle (H) once when the Rider calls it, not held down: a herd that hears it too soon gets used to it.',
       ],
     },
     startClock: clock(9, 0),
@@ -199,10 +207,16 @@ function payroll(): RunDef {
     fords: [line.ford('willow-creek-ford', 'Willow Creek ford', [3600, 3700]), line.ford('chalk-creek-ford', 'Chalk Creek ford', [6800, 6900])],
     curves: [line.curve('table-rock-curve', [7400, 7800], 14), line.curve('gulch-bend', ['gulch', 2500, 2800], 12)],
     grades: [line.grade(['gulch', 0, 1500], 0.018), line.grade(['gulch', 2300, 3600], -0.016), line.grade([4400, 5100], 0.006)],
+    obstacles: [line.obstacle('pale-rock-herd', 'cattle', 9550)],
+    // The long way meets more riders but mostly green ones, and an ambush waiting at Table Rock;
+    // the gulch keeps its ambush and a chase down the grade, all seasoned men.
     waves: [
       line.wave('tank-riders', 2300, 3, 'rear', 'safe', 1),
       line.wave('tunnel-riders', 4500, 3, 'rear', 'hunt', 1),
+      line.wave('table-rock-ambush', 5380, 3, 'ahead', 'safe', 1),
       line.wave('gulch-ambush', ['gulch', 700], 4, 'ahead', 'safe', 2),
+      line.wave('gulch-riders', ['gulch', 2600], 3, 'rear', 'safe', 2),
+      line.wave('echo-riders', 7900, 3, 'rear', 'hunt', 2),
       line.wave('pale-rock-riders', 9600, 3, 'rear', 'safe', 2),
     ],
     telegrams: [
@@ -216,7 +230,7 @@ function payroll(): RunDef {
     requiredCars: ['express'],
     par: 690,
     plan: {
-      main: { cruise: 20, switches: [], stops: ['coyote-tank', 'table-rock', 'pale-rock'], holds: [], whistles: [], minSpeeds: [] },
+      main: { cruise: 20, switches: [], stops: ['coyote-tank', 'table-rock', 'pale-rock'], holds: [], whistles, minSpeeds: [] },
     },
   });
 }
@@ -224,8 +238,8 @@ function payroll(): RunDef {
 // ---------------------------------------------------------------------------------------------
 // 3. Signal Country: block and junction signals and the rulebook; a rockslide on one of the two
 // routes past Buzzard Rock (variant A: the main line through Red Cut, B: the Lone Pine loop), which
-// the junction signal gives away; cattle and the whistle; and the burning Devil's Trestle, crossed at
-// 30 mph or better just after the 30 mph Devil's Elbow. About 13 minutes.
+// the junction signal gives away; three herds on the line; and the burning Devil's Trestle, crossed
+// at 30 mph or better just after the 30 mph Devil's Elbow. About 13 minutes.
 // ---------------------------------------------------------------------------------------------
 
 function signalCountry(): RunDef {
@@ -263,9 +277,10 @@ function signalCountry(): RunDef {
   });
   const buzzard = line.junction('lone-pine', 'w');
   const stops = ['buzzard-tank', 'cedar-wash', 'mesa'];
-  // One blast for the cattle as the loco passes 170 m short of them: well inside the scare window
-  // (70–270 yards), and heard from nowhere farther off, so they don't get used to it (spec §8).
-  const whistles = [line.at(1930)];
+  // One blast for each herd as the loco passes 170 m short of it: well inside the scare window
+  // (70–270 yards), and heard by no herd from farther off, so none gets used to it (spec §8). The
+  // herds stand miles apart, past Pale Rock, outside Cedar Wash and outside Mesa, on both ways.
+  const whistles = [line.at(1930), line.at(6680), line.at(11530)];
   // Out of Devil's Elbow at 30 mph, then open her up down the grade: the trestle wants 30 mph or more.
   const minSpeeds = [{ from: line.at(9400), speed: 15.5 }];
   return makeRun(line, {
@@ -278,13 +293,11 @@ function signalCountry(): RunDef {
       rider: [
         'Read each signal as it goes by and call it out: arm up and green is clear, 45° and yellow means the next one is at stop, level and red is stop.',
         'At Buzzard Rock the junction signal tells which way the rockslide is: scope it before the switch. Red means that route is blocked: say so, and read it again after the Engineer throws the switch.',
-        'Cattle on the line? Watch the herd through the spyglass and call the moment for one blast, inside about 270 yards: whistle any sooner and they get used to it.',
         'The Devil’s Trestle is burning: the flames burn anyone outside the cars. Get inside a car or the cab before we cross.',
       ],
       engineer: [
         'Signals are grey posts on your map; only the Rider can see what they show (Tab for the rulebook). After a yellow, hold 20 mph and stop at the next signal: the Ahead list shows exactly where.',
         'Set Buzzard Rock Jct. early and ask what its signal shows. If it’s red, that route is blocked: throw the switch and ask again.',
-        'For cattle, blow the whistle (H) once when the Rider calls it, not held down: a herd that hears it too soon gets used to it.',
         'Take the 30 mph Devil’s Elbow at 30, then open her up: cross the burning trestle any slower than 30 and it comes down under you. Get the Rider inside first.',
       ],
     },
@@ -329,9 +342,17 @@ function signalCountry(): RunDef {
       line.obstacle('red-cut-slide', 'rocks', 4700, ['A']),
       line.obstacle('lone-pine-slide', 'rocks', ['lone-pine', 1300], ['B']),
       line.obstacle('longhorns', 'cattle', 2100),
+      line.obstacle('cedar-herd', 'cattle', 6850),
+      line.obstacle('mesa-strays', 'cattle', 11700),
     ],
+    // A pair waits at Buzzard tank; riders come for the cab whichever way we go past Buzzard Rock
+    // (Red Cut or the loop); then the chase into Cedar Wash and the ambush past Cedar Tunnel. The
+    // Devil's Elbow and the trestle are left to the crew, and the last band rides in after.
     waves: [
       line.wave('pale-rock-riders', 1300, 3, 'rear', 'safe', 1),
+      line.wave('buzzard-ambush', 2500, 2, 'ahead', 'hunt', 1),
+      line.wave('red-cut-riders', 4300, 3, 'rear', 'cab', 2),
+      line.wave('lone-pine-riders', ['lone-pine', 900], 3, 'rear', 'cab', 2),
       line.wave('cedar-riders', 6600, 3, 'rear', 'hunt', 2),
       line.wave('elbow-ambush', 8000, 3, 'ahead', 'safe', 2),
       line.wave('mesa-riders', 10800, 4, 'rear', 'mixed', 2),
@@ -357,8 +378,9 @@ function signalCountry(): RunDef {
 
 // ---------------------------------------------------------------------------------------------
 // 4. Single Track: passing loops, the timetable chart, an opposing freight to meet at Dry Wash
-// siding, block signals guarding the single line, and passengers for a side job. Dry Wash's
-// platform is on the siding, so the station stop and the meet overlap. About 13 minutes.
+// siding, block signals guarding the single line, passengers for a side job, and cattle loose along
+// the line. Dry Wash's platform is on the siding, so the station stop and the meet overlap. About 13
+// minutes.
 // ---------------------------------------------------------------------------------------------
 
 function singleTrack(): RunDef {
@@ -399,6 +421,9 @@ function singleTrack(): RunDef {
     charted: true,
   };
   const dryWash = line.junction('dry-wash', 'w');
+  // One blast for each herd, 170 m short of it (spec §8): out of Mesa, past Dry Wash once No. 7 has
+  // gone by, and on the Sidewinder curve.
+  const whistles = [line.at(830), line.at(6580), line.at(8730)];
   return makeRun(line, {
     id: 'single-track',
     index: 3,
@@ -451,10 +476,15 @@ function singleTrack(): RunDef {
       line.signal('sidewinder-signal', 8000),
       line.signal('silver-flats-home', 9700, undefined, 'Silver Flats home signal'),
     ],
+    obstacles: [line.obstacle('mesa-herd', 'cattle', 1000), line.obstacle('hat-rock-herd', 'cattle', 6750), line.obstacle('sidewinder-herd', 'cattle', 8900)],
+    // Riders out of Mesa and into Red Butte, and an ambush after it; none on the way into the meet,
+    // where a gun in the cab could leave us on the main; then two bands once No. 7 has gone by.
     waves: [
       line.wave('mesa-riders', 1500, 3, 'rear', 'safe', 2),
+      line.wave('butte-riders', 3350, 3, 'rear', 'hunt', 2),
       line.wave('butte-ambush', 4400, 3, 'ahead', 'cab', 2),
-      line.wave('canyon-riders', 7600, 4, 'rear', 'mixed', 2),
+      line.wave('hat-rock-riders', 6900, 3, 'rear', 'safe', 2),
+      line.wave('canyon-riders', 8100, 4, 'rear', 'mixed', 2),
     ],
     aiTrains: [no7],
     telegrams: [
@@ -477,7 +507,7 @@ function singleTrack(): RunDef {
         switches: [{ junction: dryWash, state: 'reverse' }],
         stops: ['red-butte', 'dry-wash', 'silver-flats'],
         holds: [{ at: line.at(['dry-wash', 400]), until: after(line.clearsSection(no7, 'dry-wash'), 30) }],
-        whistles: [],
+        whistles,
         minSpeeds: [],
       },
     },
@@ -487,8 +517,8 @@ function singleTrack(): RunDef {
 // ---------------------------------------------------------------------------------------------
 // 5. Night Freight: by lamplight, with a short spyglass. No. 4 Express overtakes us (we let it by at
 // Coyote Wells siding before it turns off for Red Rock), then we meet No. 7 Freight at Dry Creek
-// siding, taking water at each while we wait. Dynamite in the powder car, and horsemen shooting at
-// it. About 14 minutes.
+// siding, taking water at each while we wait. Dynamite in the powder car, horsemen shooting at it,
+// and cattle on the line in the dark. About 14 minutes.
 // ---------------------------------------------------------------------------------------------
 
 function nightFreight(): RunDef {
@@ -545,6 +575,8 @@ function nightFreight(): RunDef {
   };
   const coyoteWells = line.junction('coyote-wells', 'w');
   const dryCreek = line.junction('dry-creek', 'w');
+  // One blast for each herd, 170 m short of it (spec §8): the short spyglass still finds them first.
+  const whistles = [line.at(930), line.at(7630)];
   return makeRun(line, {
     id: 'night-freight',
     index: 4,
@@ -598,11 +630,16 @@ function nightFreight(): RunDef {
       line.signal('dry-creek-siding-exit', ['dry-creek', 375]),
       line.signal('tanners-home', 8600, undefined, 'Tanner’s Pass home signal'),
     ],
+    obstacles: [line.obstacle('flats-herd', 'cattle', 1100), line.obstacle('canyon-herd', 'cattle', 7800)],
+    // Nobody rides in on the way into either siding, where a gun in the cab could leave us on the
+    // main: the powder riders come early, the rest between the meets and after them.
     waves: [
       line.wave('flats-riders', 1600, 3, 'rear', 'powder', 2),
+      line.wave('wells-riders', 3520, 3, 'rear', 'hunt', 2),
       line.wave('red-rock-ambush', 4200, 3, 'ahead', 'cab', 2),
       line.wave('canyon-riders', 5300, 3, 'rear', 'hunt', 2),
       line.wave('pass-riders', 7000, 4, 'rear', 'powder', 3),
+      line.wave('pass-ambush', 8000, 3, 'ahead', 'cab', 3),
     ],
     aiTrains: [no4, no7],
     telegrams: [
@@ -628,7 +665,7 @@ function nightFreight(): RunDef {
           { at: line.at(['coyote-wells', 355]), until: after(Math.max(line.clearsSection(no4, 'coyote-wells'), line.clears(no4, ['red-rock', 0])), 20) },
           { at: line.at(['dry-creek', 355]), until: after(line.clearsSection(no7, 'dry-creek'), 30) },
         ],
-        whistles: [],
+        whistles,
         minSpeeds: [],
       },
     },
@@ -721,9 +758,10 @@ function blackwater(): RunDef {
   const quarry = line.junction('quarry', 'j');
   const stops = ['tanners-tank', 'blackwater', 'quarry', 'summit'];
   const holds = [{ at: line.at(['blackwater', 400]), until: after(line.clearsSection(no7, 'blackwater'), 30) }];
-  // One blast for the strays as the loco passes 170 m short of them (spec §8). They stand 350 m past
-  // Tanner's Tunnel, in reach of the spyglass before it: spot them, get down, come up and call it.
-  const whistles = [line.at(1730)];
+  // One blast for each herd as the loco passes 170 m short of it (spec §8). The strays stand 350 m
+  // past Tanner's Tunnel, in reach of the spyglass before it: spot them, get down, come up and call
+  // it. A second herd grazes whichever way through the canyon the rockslide leaves open, on a curve.
+  const strays = line.at(1730);
   return makeRun(line, {
     id: 'blackwater',
     index: 5,
@@ -784,14 +822,22 @@ function blackwater(): RunDef {
       line.obstacle('canyon-slide', 'rocks', 3600, ['A']),
       line.obstacle('hangman-slide', 'rocks', ['hangman', 600], ['B']),
       line.obstacle('strays', 'cattle', 1900),
+      line.obstacle('gallows-herd', 'cattle', ['hangman', 960], ['A']),
+      line.obstacle('bend-herd', 'cattle', 4000, ['B']),
       line.obstacle('barricade', 'barricade', 8480),
     ],
+    // Riders out of the tunnels whichever way we go through the canyon, the chase to Blackwater,
+    // Harlan and his gang, and the barricade. Nobody else rides in while the runaway is loose: it
+    // wants the crew's eyes. The last of the gang chase us up to Summit once it's in the spur.
     waves: [
       line.wave('tanner-riders', 1700, 3, 'rear', 'safe', 2),
+      line.wave('narrows-riders', 3450, 3, 'rear', 'hunt', 2),
+      line.wave('hangman-riders', ['hangman', 450], 3, 'rear', 'hunt', 2),
       line.wave('canyon-riders', 5000, 4, 'rear', 'mixed', 2),
       line.wave('harlan-gang', 6700, 3, 'rear', 'hunt', 2),
       line.wave('harlan', 6750, 3, 'rear', 'safe', 3, { boss: true }),
       line.wave('barricade-ambush', 8030, 4, 'ahead', 'cab', 3),
+      line.wave('summit-riders', 8950, 3, 'rear', 'hunt', 3),
     ],
     aiTrains: [no7, runaway],
     telegrams: [
@@ -816,7 +862,7 @@ function blackwater(): RunDef {
         ],
         stops,
         holds,
-        whistles,
+        whistles: [strays, line.at(['hangman', 790])],
         minSpeeds: [],
       },
       // B: the slide is on the cutoff; stay on the canyon main line.
@@ -828,7 +874,7 @@ function blackwater(): RunDef {
         ],
         stops,
         holds,
-        whistles,
+        whistles: [strays, line.at(3830)],
         minSpeeds: [],
       },
     },
