@@ -197,8 +197,8 @@ While **held up** (a bandit in the cab, §7.4), every command except the whistle
 up! There's a gun on you"). The sim eases the throttle to 0 and the brake to 0.5, and the fire is let
 down, so a hold-up costs time and pressure but can't boil the boiler dry.
 
-**Slamming the brakes** (the lurch). When the brake lever goes into emergency (from below
-`EMERGENCY_BRAKE` to at least it) with the train at `LURCH_MIN_SPEED` (8 m/s, 18 mph) or more, and at
+**Slamming the brakes** (the lurch). When the brake lever goes into emergency (from `EMERGENCY_BRAKE`,
+full service, or below to above it) with the train at `LURCH_MIN_SPEED` (8 m/s, 18 mph) or more, and at
 most once per `LURCH_COOLDOWN_SECONDS` (8 s), the train lurches (`lurch` event, `train.lurchTick`):
 - The squeal spooks the horses. Every horseman riding alongside (approach, pace or boarding, within
   `HORSE_SHY_RANGE` of either end of the train) shies for `HORSE_SHY_SECONDS` (2.5 s; tier 3 and the
