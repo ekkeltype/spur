@@ -116,8 +116,11 @@ export function newGame(run: RunDef, opts: NewGameOptions): GameState {
 // The train frame around the train, for the people on it (spec §6.1)
 // ---------------------------------------------------------------------------------------------
 
-/** How far behind the rear hazards are looked for (a portal passing over the last car, a Rider fallen off a trestle). */
-const HAZARD_BEHIND = 60;
+/**
+ * How far behind the rear hazards are looked for (a portal passing over the last car, a Rider fallen
+ * off a trestle, a ford a horseman is still wading): as far back as riders are followed.
+ */
+const HAZARD_BEHIND = 100;
 /** …and ahead of the loco's front (a portal or beam about to reach the cab roof). */
 const HAZARD_AHEAD = 40;
 
