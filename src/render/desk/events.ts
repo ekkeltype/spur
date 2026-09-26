@@ -69,11 +69,15 @@ export function describeEvent(e: EngineerEvent, c: LogContext): LogText | null {
       return { text: `Into ${c.tunnelName(e.id)}`, tone: 'quiet' };
     case 'tunnelExit':
       return { text: `Out of ${c.tunnelName(e.id)}`, tone: 'quiet' };
+    case 'fordEnter':
+      return { text: 'Into the water', tone: 'quiet' };
+    case 'fordExit':
+      return { text: 'Out of the water', tone: 'quiet' };
     case 'signalPassed':
       return { text: `Passed ${c.signalName(e.id)}`, tone: 'quiet' };
     case 'fine':
       return {
-        text: `Fined ${formatMoney(e.amount)}: ${e.reason === 'redSignal' ? 'passed a signal at stop' : 'too fast under a caution signal'}`,
+        text: `Fined ${formatMoney(e.amount)}: ${e.reason === 'redSignal' ? 'passed a signal at stop' : e.reason === 'junction' ? 'too fast through the junction' : 'too fast under a caution signal'}`,
         tone: 'danger',
       };
     case 'telegram':

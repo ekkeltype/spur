@@ -34,6 +34,7 @@ import type {
   CarType,
   CurveDef,
   Dir,
+  FordDef,
   GradeDef,
   JunctionDef,
   LowBridgeDef,
@@ -377,6 +378,11 @@ export class Line {
     return { id, edge: p.edge, at: p.off, ...(name ? { name } : {}) };
   }
 
+  /** A ford: the river over the line along a stretch (spec §4.3). */
+  ford(id: string, name: string, s: Stretch): FordDef {
+    return { id, name, ...this.span(s) };
+  }
+
   /** A trestle; `minSpeed` sets it burning (the loco must enter it at least that fast). */
   trestle(id: string, name: string, s: Stretch, minSpeed?: number): TrestleDef {
     return { id, name, ...this.span(s), ...(minSpeed !== undefined ? { burning: { minSpeed } } : {}) };
@@ -515,7 +521,7 @@ function need<T>(v: T | undefined): T {
 // Assembling a run
 // ---------------------------------------------------------------------------------------------
 
-type OptionalLists = 'tunnels' | 'lowBridges' | 'trestles' | 'waterTowers' | 'curves' | 'grades' | 'signals' | 'obstacles' | 'waves' | 'aiTrains' | 'telegrams' | 'sideJobs';
+type OptionalLists = 'tunnels' | 'lowBridges' | 'trestles' | 'fords' | 'waterTowers' | 'curves' | 'grades' | 'signals' | 'obstacles' | 'waves' | 'aiTrains' | 'telegrams' | 'sideJobs';
 
 /** Everything a run file writes: the RunDef minus what the Line and the origin provide. */
 export type RunSpec = Omit<RunDef, 'nodes' | 'edges' | 'junctions' | 'mainLine' | 'mileposts' | 'start' | 'maxCars' | OptionalLists> &
@@ -529,6 +535,7 @@ export function makeRun(line: Line, spec: RunSpec): RunDef {
     tunnels: [],
     lowBridges: [],
     trestles: [],
+    fords: [],
     waterTowers: [],
     curves: [],
     grades: [],

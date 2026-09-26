@@ -77,7 +77,7 @@ describe('toEngineerView leaks nothing hidden', () => {
     const r = b.rider;
     b.horsemen.push({
       id: 9, x: -20, worldV: 12, hp: 2, tier: 2, boss: false, goal: 'safe', mode: 'approach', modeTicks: 5,
-      stamina: 8, targetX: 40, aimTicks: 10, cooldownTicks: 0, behindTicks: 0, pickup: false,
+      stamina: 8, targetX: 40, aimTicks: 10, cooldownTicks: 0, behindTicks: 0, pickup: false, shyTicks: 0,
     });
     b.bandits.push({
       id: 10, x: 30, y: 4.2, vx: 1, vy: 0, onGround: true, surface: 'roof', ladder: null, crouch: false, facing: 1,

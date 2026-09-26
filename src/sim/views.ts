@@ -97,6 +97,8 @@ const ENGINEER_EVENTS = new Set<SimEvent['type']>([
   'waterFull',
   'tunnelEnter',
   'tunnelExit',
+  'fordEnter',
+  'fordExit',
   'signalPassed',
   'fine',
   'telegram',
@@ -177,6 +179,10 @@ export function trackside(state: GameState, run: RunDef, behind: number, ahead: 
       const r = frameRange(fp, tr.edge, tr.from, tr.to);
       if (r && once(`r:${tr.id}`)) items.push({ kind: 'trestle', id: tr.id, x0: r[0], x1: r[1], name: tr.name, burning: !!tr.burning });
     }
+    for (const fd of f.fords) {
+      const r = frameRange(fp, fd.edge, fd.from, fd.to);
+      if (r && once(`f:${fd.id}`)) items.push({ kind: 'ford', id: fd.id, x0: r[0], x1: r[1], name: fd.name });
+    }
     for (const st of f.stations) {
       const x = frameX(fp, { edge: st.edge, off: st.at });
       if (x !== null && once(`s:${st.id}`)) items.push({ kind: 'station', id: st.id, x, platform: st.platform, name: st.name });
@@ -204,7 +210,7 @@ export function trackside(state: GameState, run: RunDef, behind: number, ahead: 
   for (const o of state.obstacles) {
     if (o.state === 'gone') continue;
     const x = frameX(fp, { edge: o.edge, off: o.at });
-    if (x !== null) items.push({ kind: 'obstacle', id: o.id, x, obstacle: o.kind, state: o.state });
+    if (x !== null) items.push({ kind: 'obstacle', id: o.id, x, obstacle: o.kind, state: o.state, calm: o.kind === 'cattle' && o.state === 'present' && o.calmTicks > 0 });
   }
 
   // Other trains: on our own track they're placed along the path; on a parallel track (a loop or

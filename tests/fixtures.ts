@@ -36,6 +36,7 @@ export function baseRun(parts: Partial<RunDef> & Pick<RunDef, 'nodes' | 'edges' 
     night: false,
     junctions: [],
     tunnels: [],
+    fords: [],
     lowBridges: [],
     trestles: [],
     stations: [],

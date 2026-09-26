@@ -104,6 +104,7 @@ function horseman(p: Partial<HorsemanState> = {}): HorsemanState {
     cooldownTicks: 600,
     behindTicks: 0,
     pickup: false,
+    shyTicks: 0,
     ...p,
   };
 }

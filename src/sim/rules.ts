@@ -14,6 +14,8 @@ export const COUNTDOWN_SECONDS = 3;
 export const MPH = 2.23694;
 /** Metres per mile. */
 export const MILE = 1609.34;
+/** Metres per yard. Players read speeds in mph and distances in yards and miles (spec §0 note 6). */
+export const YARD = 0.9144;
 
 export const secondsToTicks = (s: number): number => Math.round(s * TICK_HZ);
 
@@ -67,6 +69,27 @@ export const BRAKE_MAX = 1.1; // m/s² at brake = 1
 export const AIR_BRAKES_FACTOR = 1.35;
 /** Brake lever above this is the emergency application (sparks, louder squeal). */
 export const EMERGENCY_BRAKE = 0.85;
+
+// ---- The lurch: slamming the brakes (spec §5.2) ------------------------------------------------------
+
+/** The brake going into emergency lurches the train only at this speed or more (m/s, 18 mph)… */
+export const LURCH_MIN_SPEED = 8;
+/** …and at most once in this many seconds. */
+export const LURCH_COOLDOWN_SECONDS = 8;
+/** Anyone standing outside is thrown toward the loco: a hop this fast forward (m/s)… */
+export const LURCH_HOP_VX = 4;
+/** …and up (m/s)… */
+export const LURCH_HOP_VY = 2.5;
+/** …then staggered this long: no control, no shooting. Crouching, ladders and interiors brace you. */
+export const LURCH_STAGGER_SECONDS = 0.6;
+/** Horsemen alongside, within this far of either end of the train, shy at the squeal… */
+export const HORSE_SHY_RANGE = 40;
+/** …for this long (s): no boarding, no aim, no shots… */
+export const HORSE_SHY_SECONDS = 2.5;
+/** …or this long for tier 3 and the boss… */
+export const HORSE_SHY_SECONDS_VETERAN = 1.5;
+/** …while the horse drops to this much below the train's speed (m/s), falling back. */
+export const HORSE_SHY_REL = 8;
 /** The reverser can only be moved below this speed. */
 export const REVERSER_MAX_SPEED = 0.5;
 /** Below this speed with no net force the train is stopped. */
@@ -98,6 +121,9 @@ export const DRY_EXPLODE_SECONDS = 6;
 export const GOVERNOR_TARGET_PSI = 175;
 export const FIRE_MAX = 3;
 
+/** Blowing the whistle draws this much steam (psi/s), so leaning on it costs pressure (spec §5.2). */
+export const WHISTLE_STEAM = 3;
+
 export const WATER_FILL_RATE = 12; // per second
 export const SPOUT_WINDOW = 3; // ± m between the tender hatch and the spout
 export const SPOUT_REACH = 1.5; // ± m between the Rider and the hatch
@@ -116,9 +142,17 @@ export const OBSTACLE_SAFE: Record<'rocks' | 'cattle' | 'barricade', number> = {
   cattle: 10,
   barricade: 7,
 };
-export const WHISTLE_SCARE_MIN = 40;
-export const WHISTLE_SCARE_MAX = 350;
+/**
+ * Cattle and the whistle (spec §8): a blast of WHISTLE_SCARE_SECONDS with the loco between these
+ * distances short of the herd scatters it (70–270 yards)…
+ */
+export const WHISTLE_SCARE_MIN = 70 * YARD;
+export const WHISTLE_SCARE_MAX = 270 * YARD;
 export const WHISTLE_SCARE_SECONDS = 0.5;
+/** …but a herd hears it from this far (m), and one that hears it from beyond the window gets used to it… */
+export const WHISTLE_EARSHOT = 700;
+/** …ignoring the whistle until this long after the last sound of it (s). */
+export const CATTLE_CALM_SECONDS = 8;
 export const OBSTACLE_SCATTER_SECONDS = 4;
 
 // ---- Signals (spec §9) ---------------------------------------------------------------------------
@@ -129,6 +163,8 @@ export const DIVERGE_LIMIT = 13.4; // m/s (30 mph) through the junction on diver
 export const SPEED_FINE_TOLERANCE = 1.1;
 export const RED_SIGNAL_FINE = 50;
 export const SPEED_FINE = 10;
+
+// ---- Round 2: the train, cattle, signals and the autopilot (train.ts, signals.ts, autopilot.ts) ----
 
 // ---- Other trains (spec §10) ---------------------------------------------------------------------
 
@@ -168,14 +204,24 @@ export const CABOOSE_HEAL_SECONDS = 20;
 export const FAST_MOVE = 3; // m/s: bandits aim worse at a Rider moving faster than this…
 export const FAST_MOVE_WINDOW = 0.3; // …within the last this-many seconds
 
-/** Low bridge clearance above the roof the figure stands on: standing figures hit it, crouching ones pass. */
+/** Low bridge clearance above the roof (or tender top) the figure stands on: standing figures hit it, crouching ones pass. */
 export const LOW_BRIDGE_CLEARANCE = 1.2;
 
-export const SCOPE_MIN = 60;
+/**
+ * Fords (spec §4.3): the water stands this deep over the rails (m). Feet below it (platforms, the
+ * tender deck, the cab, interiors) are washed off; the roofs, the cab roof and the tender top are dry.
+ */
+export const FORD_WATER_Y = 2.0;
+/** Horses wade through a ford at this speed at most (m/s), so they fall behind the train. */
+export const FORD_HORSE_SPEED = 5;
+
+/** The spyglass's near end: close enough to check a signal the train is standing at (spec §6.5). */
+export const SCOPE_MIN = 20;
 export const SCOPE_MAX = 650;
 export const SCOPE_MAX_NIGHT = 300;
 export const SCOPE_MAX_HEADLAMP = 450;
-export const FLAG_MAX = 3;
+/** One flag: a new one replaces it (spec §6.5). */
+export const FLAG_MAX = 1;
 export const FLAG_TTL_SECONDS = 90;
 
 export const AIM_ASSIST_DEGREES = 6;
@@ -238,9 +284,17 @@ export const BANDIT_CROUCH_ACCURACY = 0.7;
 export const CRACK_SECONDS: Record<1 | 2 | 3, number> = { 1: 18, 2: 18, 3: 14 };
 export const POWDER_HIT_CHANCE = 0.4;
 
+// ---- Round 2: figures, hazards and horses (fight.ts, rider.ts, bandits.ts, body.ts) ---------------
+
 // ---- Economy (spec §12) --------------------------------------------------------------------------
 
 export const REPLAY_PAY_FACTOR = 0.5;
+
+/**
+ * What an optional cargo car earns on a win (spec §12): parcels, fares, freight. Required cars carry
+ * the contract and earn nothing extra; the armored car and the caboose carry no cargo.
+ */
+export const CARGO_PAY: Readonly<Partial<Record<CarType, number>>> = { express: 40, passenger: 30, boxcar: 30 };
 
 export interface ShopItem {
   id: UpgradeId;
@@ -303,10 +357,11 @@ export const FALL_OFF_Y = 0.6;
 // ---- Fighting (fight.ts) -------------------------------------------------------------------
 
 /**
- * Feet higher than this inside a tunnel hit its roof (spec §4.3): standing or crouching on a car
- * roof (3.9–4.7 m) or the cab roof (4.0 m) does, the tender top (2.8 m) doesn't — unless you jump.
+ * Feet higher than this inside a tunnel hit its roof (spec §4.3): anything above floor level does —
+ * a car roof (3.9–4.7 m), the cab roof (4.0 m) and the tender top (2.8 m). Platforms, the tender
+ * deck, the cab floor (1.2–1.4 m) and interiors are safe.
  */
-export const TUNNEL_FEET_Y = 3.5;
+export const TUNNEL_FEET_Y = 2.3;
 /** A horseman's rider as a target (spec §7.2: riders can be hit, horses can't): half-width, saddle to hat. */
 export const HORSEMAN_HALF_W = 0.35;
 export const HORSEMAN_Y0 = 1.5;

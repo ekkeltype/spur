@@ -6,6 +6,7 @@ import type {
   CurveDef,
   Dir,
   EngineerRun,
+  FordDef,
   GradeDef,
   JunctionDef,
   LowBridgeDef,
@@ -35,6 +36,7 @@ export interface EdgeFeatures {
   tunnels: TunnelDef[];
   lowBridges: LowBridgeDef[];
   trestles: TrestleDef[];
+  fords: FordDef[];
   stations: StationDef[];
   waterTowers: WaterTowerDef[];
   curves: CurveDef[];
@@ -62,7 +64,7 @@ export interface NetIndex {
 const cache = new WeakMap<AnyRun, NetIndex>();
 
 function emptyFeatures(): EdgeFeatures {
-  return { tunnels: [], lowBridges: [], trestles: [], stations: [], waterTowers: [], curves: [], grades: [], mileposts: [], signals: [], obstacles: [] };
+  return { tunnels: [], lowBridges: [], trestles: [], fords: [], stations: [], waterTowers: [], curves: [], grades: [], mileposts: [], signals: [], obstacles: [] };
 }
 
 /** The index for a run, built once per run object. */
@@ -86,6 +88,7 @@ export function netIndex(run: AnyRun): NetIndex {
   add('tunnels', run.tunnels);
   add('lowBridges', run.lowBridges);
   add('trestles', run.trestles);
+  add('fords', run.fords);
   add('stations', run.stations);
   add('waterTowers', run.waterTowers);
   add('curves', run.curves);

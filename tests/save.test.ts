@@ -107,9 +107,10 @@ function result(runId: string, outcome: 'won' | 'lost', timeSec: number, medals:
     deadline: 13 * 3600 + 600,
     pay,
     latePenalty,
+    cargoPay: money.cargoPay ?? 0,
     sideJobPay,
     fines,
-    total: money.total ?? Math.max(0, pay - latePenalty) + sideJobPay - fines,
+    total: money.total ?? Math.max(0, pay - latePenalty) + (money.cargoPay ?? 0) + sideJobPay - fines,
     medals,
     stats: {
       shotsFired: 10,

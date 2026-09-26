@@ -41,7 +41,7 @@ function aspects(s: GameState, run: RunDef): Record<string, Aspect> {
 }
 
 function addObstacle(s: GameState, edge: string, at: number, kind: ObstacleKind = 'rocks', state: ObstacleState['state'] = 'present'): ObstacleState {
-  const o: ObstacleState = { id: `o${s.obstacles.length + 1}`, kind, edge, at, state, ticks: 0 };
+  const o: ObstacleState = { id: `o${s.obstacles.length + 1}`, kind, edge, at, state, ticks: 0, calmTicks: 0 };
   s.obstacles.push(o);
   return o;
 }

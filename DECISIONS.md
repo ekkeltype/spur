@@ -35,7 +35,7 @@ Where the spec was silent or ambiguous, these are the choices made (spec §0). E
 
 ## Information
 
-- **The spyglass exists because a side view is narrow.** The screen shows about 35 m of track, but braking from speed takes about 200 m. The spyglass lets the Rider read signals and spot obstacles in time, at the cost of standing still on a roof.
+- **The spyglass exists because a side view is narrow.** The screen shows about 35 m of track, but braking from speed takes about 200 m. Since round 2 it's for the few things that must be seen far off (cattle, the barricade, the runaway, a junction signal before choosing a route). Signals are read as they pass: every stop is warned by an `approach` on the signal before, and the Engineer knows where the next signal is. Its near end is 20 m (was 60 m), so a signal the train is standing at can be checked.
 - **What leaks, deliberately.** The Engineer's view includes the hold-up (the Engineer has a gun on them), the loss of the cargo, and the Rider's whereabouts (car, roof or not, off the train), since the Engineer could plausibly see or hear these. Gunfire reaches the Engineer as loudness only, at most once per 15 ticks. `tests/views.test.ts` checks that nothing else leaks.
 - **The runaway's trailing moves** (if a layout gave it any) would visibly throw a switch on the Engineer's map. The campaign only gives it facing moves.
 - **Scheduled trains show on the Engineer's map only within 1.5 km.** The timetable chart is the planning tool; the map shows a train only once its smoke would be in sight.
@@ -46,7 +46,8 @@ Where the spec was silent or ambiguous, these are the choices made (spec §0). E
 
 - **Standing.** You stand on a surface while any part of your 0.6 m width is on it, so at 27 m/s a forward roof-gap jump from the very edge just clears; at the wind's maximum it drops you on the platform. There's no steering in the air, only the wind.
 - **Controls.** W beside a ladder grabs it rather than jumping. S at a ladder's top climbs down; S on a hatch drops you in; anywhere else it crouches.
-- **Tunnels** knock off anyone whose feet are above 3.5 m inside one: roofs and the cab roof, and the tender top only mid-jump. A low bridge's beam is 1.2 m above the roof you're on.
+- **Tunnels** knock off anyone whose feet are above 2.3 m inside one: roofs, the cab roof and the tender top (round 2; it used to be 3.5 m, which left the tender top safe). A low bridge's beam is 1.2 m above the roof or tender top you're on; over a gap or a platform it's above the highest roof.
+- **Fords** wash off anyone whose feet are below 2.0 m in one, inside or out, the cab included: the water pours through. Bandits too, like tunnels and bridges; a bandit carrying the loot drops it where he stood. A respawn waits until the rear platform is out of the water.
 - **Hurt and respawn.** Falling off always costs a heart (except in god mode). A fall from a trestle puts you down, even in god mode. You get 0.8 s of invulnerability after respawning.
 - **Exposure.** You're exposed to horsemen unless inside a car or the cab: the tender deck, ladders and mid-air count as exposed. In the armored car you can shoot out and horsemen can't hit you.
 - **Weapons.** Holding the trigger fires at the weapon's rate. `stats.hits` counts trigger pulls that hit anything. Switching weapons cancels a reload. Aim assist snaps the aim before spread.
@@ -83,6 +84,18 @@ Tuned against `tests/balance.test.ts`: the autopilot drives while a bot Rider fi
 - **The depot.** Either player can do everything in the depot, including picking the run and both assists; only the Rider can Start or Continue. Depot changes don't clear Ready (the briefing is the real gate). Optional cars couple in a fixed order (express, passenger, boxcar, armored, caboose); a car chosen for a bigger train shows as "no room" on a smaller run.
 - **Save codes** leave out the checkpoint. Importing one replaces the whole campaign.
 - **Local test mode.** Only the Rider's audio plays (one set of speakers). The Engineer's pane auto-readies. If both seats pause at once, the first pause wins.
+
+## Round 2: after the first playtest
+
+- **Units: mph, yards and miles**, the railroad's own, like the mileposts and the rulebook's limits. Distances under a mile are in yards (rounded: to 1 yd under 100, to 5 under 1,000, to 10 beyond), a mile and up in miles with one decimal. The sim stays metric; only text changes. Numbers quoted in briefings are rounded the same way ("about 220 yards to stop").
+- **No safe place.** The tender top used to be safe from tunnels and low bridges while still in the open to shoot horsemen, so a Rider could stand there all run. Now tunnels sweep it and bridges hit it, and fords make floor level unsafe, so each hazard sends the Rider somewhere different.
+- **Fords have no speed limit.** They're a Rider hazard the Engineer calls, not a driving one; at speed a ford is over in seconds. Horses wade at 5 m/s, so a ford sheds horsemen for a while.
+- **The lurch** fires when the brake lever crosses into emergency, not while it's held there, at 8 m/s or more, at most every 8 s. Shying horses drop 8 m/s below the train for 2.5 s (veterans 1.5 s), so they fall back 10–20 m and must catch up. Figures thrown forward hop 4 m/s forward and 2.5 m/s up, then stagger 0.6 s; inside, on ladders and crouching they're braced. A hold-up can't lurch: the Engineer's hands are up.
+- **Cattle get used to the whistle.** A blast heard from beyond the scare window (270 yd) calms the herd for 8 s after the whistle stops, renewed while it sounds, so holding the whistle down never works; the blast must begin inside 70–270 yd. The whistle draws 3 psi/s of steam, so leaning on it costs pressure too.
+- **One flag.** A new flag replaces the old one.
+- **Cargo cars pay** $40 (express), $30 (passenger), $30 (boxcar) each when they're optional; the contract's own cars and the armored car and caboose pay nothing. The replay half-pay applies to cargo like everything else.
+- **The diverging restriction ends when the train's rear passes the junction beyond the signal** (by odometer: the distance to the junction plus the train's length), or at the next signal. Its fine is its own reason (`junction`), so the log can say what happened.
+- **The balance bot heeds the Engineer's calls.** The GuardBot now gets down for tunnels, up for fords and crouches for bridges, as a sharp Rider would when the Engineer calls them; with a hazard every minute, a Rider who ignored them all would stand for a distracted player, not a sharp one.
 
 ## Audio
 

@@ -105,6 +105,18 @@ export interface TrestleDef {
   burning?: { minSpeed: number };
 }
 
+/**
+ * A ford (spec §4.3): the river runs over the line here, FORD_WATER_Y deep. Anyone on the train
+ * whose feet are below the water is washed off; horses wade.
+ */
+export interface FordDef {
+  id: string;
+  edge: string;
+  from: number;
+  to: number;
+  name: string;
+}
+
 export interface StationDef {
   id: string;
   name: string;
@@ -312,6 +324,7 @@ export interface RunDef {
   tunnels: TunnelDef[];
   lowBridges: LowBridgeDef[];
   trestles: TrestleDef[];
+  fords: FordDef[];
   stations: StationDef[];
   waterTowers: WaterTowerDef[];
   curves: CurveDef[];
@@ -439,6 +452,12 @@ export interface TrainState {
   /** The water tower the spout is lowered from. */
   spoutTower: string | null;
 
+  /**
+   * The tick of the last lurch (spec §5.2): the brake slammed into emergency at speed. The Rider and
+   * bandit modules react on the tick it happens (lurchTick === state.tick). Far in the past at the start.
+   */
+  lurchTick: number;
+
   /** Standing at a station: ticks stopped and whether the stop completed. */
   stationStop: { stationId: string; ticks: number; done: boolean } | null;
   /** The last station whose stop completed. */
@@ -455,6 +474,11 @@ export interface ObstacleState {
   /** 'scattering' = cattle leaving (gone after OBSTACLE_SCATTER_SECONDS); 'hit' = pushed or smashed through. */
   state: 'present' | 'scattering' | 'gone' | 'hit';
   ticks: number;
+  /**
+   * Cattle only (spec §8): ticks left during which the herd ignores the whistle, having got used to
+   * it by hearing it from too far off. 0 = it will listen.
+   */
+  calmTicks: number;
 }
 
 export interface AiTrainState {
@@ -474,8 +498,11 @@ export interface AiTrainState {
 }
 
 export interface SignalMemo {
-  /** An approach restriction in force until the loco passes the next signal. */
-  restriction: { signalId: string; limit: number; fined: boolean } | null;
+  /**
+   * A speed restriction in force until the loco passes the next signal. A diverging-clear one also
+   * lifts once the train's odometer reaches `liftAt` (its rear past the junction, spec §9.3).
+   */
+  restriction: { signalId: string; limit: number; fined: boolean; liftAt?: number } | null;
   /** Signal id → tick the loco's front last crossed it (debounces repeated crossings). */
   passed: Record<string, number>;
 }
@@ -549,6 +576,8 @@ export interface HorsemanState {
   behindTicks: number;
   /** A horse waiting for a looter to jump down to. */
   pickup: boolean;
+  /** Ticks left shying from a lurch's brake squeal (spec §5.2): no boarding, no shooting, falling back. */
+  shyTicks: number;
 }
 
 export interface BanditState {
@@ -680,7 +709,7 @@ export interface TickMotion {
 
 /** A track hazard for the people on the train, in the train frame (lowBridge: x0 = x1). */
 export interface FrameHazard {
-  kind: 'tunnel' | 'lowBridge' | 'trestle';
+  kind: 'tunnel' | 'lowBridge' | 'trestle' | 'ford';
   id: string;
   x0: number;
   x1: number;
@@ -759,7 +788,7 @@ export type DebugCmd =
 // =============================================================================================
 
 export type ShotLayer = 'train' | 'trackside';
-export type HurtCause = 'bullet' | 'bridge' | 'tunnel' | 'fall' | 'explosion';
+export type HurtCause = 'bullet' | 'bridge' | 'tunnel' | 'water' | 'fall' | 'explosion';
 
 export type SimEvent =
   // Engineer commands
@@ -777,9 +806,19 @@ export type SimEvent =
   | { type: 'waterFull' }
   | { type: 'tunnelEnter'; id: string }
   | { type: 'tunnelExit'; id: string }
+  /** The loco's front enters or leaves a ford (either way, like tunnels). */
+  | { type: 'fordEnter'; id: string }
+  | { type: 'fordExit'; id: string }
   | { type: 'trestleEnter'; id: string; burning: boolean }
+  /** The brake slammed into emergency at speed (spec §5.2): horses shy, standing figures are thrown. */
+  | { type: 'lurch' }
   | { type: 'signalPassed'; id: string; aspect: Aspect }
-  | { type: 'fine'; reason: 'redSignal' | 'speeding'; amount: number }
+  /** redSignal: passed a stop; speeding: over 20 mph after a caution; junction: over 30 mph through a diverging junction. */
+  | { type: 'fine'; reason: 'redSignal' | 'speeding' | 'junction'; amount: number }
+  /** A herd heard the whistle from too far off and got used to it (spec §8). */
+  | { type: 'cattleCalm'; id: string }
+  /** A herd starts to leave the line. */
+  | { type: 'cattleScatter'; id: string }
   | { type: 'obstacleCleared'; id: string; kind: ObstacleKind }
   | { type: 'obstacleHit'; id: string; kind: ObstacleKind; severe: boolean }
   | { type: 'telegram'; id: string; text: string }
@@ -797,7 +836,9 @@ export type SimEvent =
   | { type: 'jump' }
   | { type: 'land'; hard: boolean }
   | { type: 'riderHurt'; cause: HurtCause; hearts: number }
-  | { type: 'riderOff'; cause: 'tunnel' | 'fall' }
+  | { type: 'riderOff'; cause: 'tunnel' | 'water' | 'fall' }
+  /** Thrown forward by a lurch (spec §5.2): the Rider, or a bandit by id. */
+  | { type: 'thrown'; who: 'rider' | 'bandit'; id?: number }
   | { type: 'riderDown' }
   | { type: 'riderBack' }
   | { type: 'flagPlaced'; flag: FlagState }
@@ -805,7 +846,9 @@ export type SimEvent =
   | { type: 'horsemanDown'; id: number; x: number; boss: boolean }
   | { type: 'banditBoarded'; id: number; x: number; y: number; into: 'platform' | 'cab' }
   | { type: 'banditDown'; id: number; x: number; y: number; boss: boolean }
-  | { type: 'banditKnockedOff'; id: number; cause: 'tunnel' | 'bridge' }
+  | { type: 'banditKnockedOff'; id: number; cause: 'tunnel' | 'bridge' | 'water' }
+  /** A horseman's horse shies at a lurch's squeal (spec §5.2). */
+  | { type: 'horseShy'; id: number }
   | { type: 'heldUp' }
   | { type: 'holdupEnded' }
   | { type: 'safeCracking'; progress: number }
@@ -838,6 +881,8 @@ export type EngineerEvent =
           | 'waterFull'
           | 'tunnelEnter'
           | 'tunnelExit'
+          | 'fordEnter'
+          | 'fordExit'
           | 'fine'
           | 'telegram'
           | 'sideJob'
@@ -912,6 +957,8 @@ export type TracksideItem =
   | { kind: 'tunnel'; id: string; x0: number; x1: number; name: string }
   | { kind: 'lowBridge'; id: string; x: number }
   | { kind: 'trestle'; id: string; x0: number; x1: number; name: string; burning: boolean }
+  /** The river over the line (spec §4.3): water FORD_WATER_Y deep between x0 and x1. */
+  | { kind: 'ford'; id: string; x0: number; x1: number; name: string }
   | { kind: 'station'; id: string; x: number; platform: number; name: string }
   | { kind: 'water'; id: string; x: number; spoutDown: boolean }
   /** facing: 'toward' = it governs the train's direction of travel (the Rider sees its face). */
@@ -919,7 +966,8 @@ export type TracksideItem =
   | { kind: 'milepost'; x: number; mile: number }
   | { kind: 'curve'; id: string; x0: number; x1: number; limit: number }
   | { kind: 'junction'; id: string; x: number; state: SwitchState; name: string }
-  | { kind: 'obstacle'; id: string; x: number; obstacle: ObstacleKind; state: ObstacleState['state'] }
+  /** `calm`: cattle that got used to the whistle, heads up and ignoring it (spec §8). */
+  | { kind: 'obstacle'; id: string; x: number; obstacle: ObstacleKind; state: ObstacleState['state']; calm: boolean }
   /** lane 'same' = on the train's own track (ahead or behind); 'adjacent' = a parallel track (sidings, loops). */
   | { kind: 'train'; id: string; x0: number; x1: number; lane: 'same' | 'adjacent'; ai: AiKind; v: number; cars: number };
 
@@ -977,9 +1025,11 @@ export interface RunResult {
   deadline: number;
   pay: number;
   latePenalty: number;
+  /** The optional cargo cars' own pay (spec §12, CARGO_PAY). */
+  cargoPay: number;
   sideJobPay: number;
   fines: number;
-  /** pay − latePenalty (≥ 0) + sideJobPay − fines, before any replay discount. */
+  /** pay − latePenalty (≥ 0) + cargoPay + sideJobPay − fines, before any replay discount. */
   total: number;
   medals: Medal[];
   stats: RunStats;

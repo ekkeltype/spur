@@ -45,6 +45,7 @@ import {
   HOLDUP_BRAKE,
   HOLDUP_EASE,
   LOW_WATER,
+  LURCH_COOLDOWN_SECONDS,
   MPH,
   OBSTACLE_SAFE,
   OBSTACLE_SCATTER_SECONDS,
@@ -150,6 +151,8 @@ export function initialTrain(run: RunDef, consist: readonly CarType[], upgrades:
     overspeedTicks: 0,
     spout: 'up',
     spoutTower: null,
+    // Long enough ago that the first lurch isn't held back by the cooldown.
+    lurchTick: -secondsToTicks(LURCH_COOLDOWN_SECONDS),
     // Nobody dwells at the origin: the run starts with that stop complete.
     stationStop: { stationId: run.origin, ticks: secondsToTicks(DWELL_SECONDS), done: true },
     lastStation: run.origin,

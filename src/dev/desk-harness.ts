@@ -145,6 +145,7 @@ const BENCH: RunDef = {
   ],
   lowBridges: [{ id: 'b1', edge: 'm1', at: 2000, name: 'Ranch road bridge' }],
   trestles: [{ id: 'r1', edge: 'm4', from: 800, to: 1000, name: 'Sage Creek Trestle' }],
+  fords: [],
   stations: [
     { id: 'juniper', name: 'Juniper', edge: 'm1', at: 350, platform: 80, checkpoint: false },
     { id: 'mesa', name: 'Mesa', edge: 'm3', at: 450, platform: 70, checkpoint: true },

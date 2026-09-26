@@ -7,12 +7,13 @@ import { banditAlive, damageBandit, damageHorseman, horsemanAlive, type FightCtx
 import { frameRange, framePath, framePoint, frameX, moveSpans, netIndex, pathCrosses, type FramePath } from './network';
 import { initialLoot, initialRider, stepRider } from './rider';
 import { seedRng } from './rng';
-import { SCOPE_MAX, SCOPE_MAX_HEADLAMP, SCOPE_MAX_NIGHT, TICK_HZ } from './rules';
+import { CARGO_PAY, SCOPE_MAX, SCOPE_MAX_HEADLAMP, SCOPE_MAX_NIGHT, TICK_HZ } from './rules';
 import { initialSignals, stepSignals } from './signals';
 import { initialTraffic, stepTelegrams, stepTraffic } from './traffic';
 import { applyEngineerCmd, initialTrain, stepTrain, tryLowerSpout } from './train';
 import type {
   Assists,
+  CarKind,
   CarType,
   DebugCmd,
   EngineerCmd,
@@ -79,7 +80,7 @@ export function newGame(run: RunDef, opts: NewGameOptions): GameState {
     switches,
     obstacles: run.obstacles
       .filter((o) => !o.variants || o.variants.includes(variant))
-      .map((o) => ({ id: o.id, kind: o.kind, edge: o.edge, at: o.at, state: 'present' as const, ticks: 0 })),
+      .map((o) => ({ id: o.id, kind: o.kind, edge: o.edge, at: o.at, state: 'present' as const, ticks: 0, calmTicks: 0 })),
     ai: initialTraffic(run),
     signals: initialSignals(),
     rider: initialRider(train.cars, opts.upgrades, opts.assists),
@@ -120,7 +121,7 @@ const HAZARD_BEHIND = 60;
 /** …and ahead of the loco's front (a portal or beam about to reach the cab roof). */
 const HAZARD_AHEAD = 40;
 
-/** Tunnels, low bridges and trestles near the train, in the train frame. */
+/** Tunnels, low bridges, trestles and fords near the train, in the train frame. */
 export function hazardsNear(state: GameState, run: RunDef, ahead: number): FrameHazard[] {
   const ix = netIndex(run);
   const fp = framePath(ix, state.switches, state.train.spans, HAZARD_BEHIND, ahead);
@@ -143,6 +144,11 @@ export function hazardsNear(state: GameState, run: RunDef, ahead: number): Frame
       const r = frameRange(fp, t.edge, t.from, t.to);
       if (r && !seen.has(t.id)) out.push({ kind: 'trestle', id: t.id, x0: r[0], x1: r[1], burning: !!t.burning });
       seen.add(t.id);
+    }
+    for (const fd of f.fords) {
+      const r = frameRange(fp, fd.edge, fd.from, fd.to);
+      if (r && !seen.has(fd.id)) out.push({ kind: 'ford', id: fd.id, x0: r[0], x1: r[1] });
+      seen.add(fd.id);
     }
   }
   return out;
@@ -256,10 +262,16 @@ export function medalsFor(state: GameState, run: RunDef): Medal[] {
   return out;
 }
 
+/** What the optional cargo cars in a consist earn on a win (spec §12): the contract's own cars earn nothing extra. */
+export function cargoPayFor(run: RunDef, cars: readonly CarKind[]): number {
+  return cars.reduce((n, k) => (k === 'loco' || k === 'tender' || run.requiredCars.includes(k) ? n : n + (CARGO_PAY[k] ?? 0)), 0);
+}
+
 export function runResult(state: GameState, run: RunDef): RunResult {
   const won = state.phase === 'won';
   const c = run.contract;
   const pay = won ? c.pay : 0;
+  const cargoPay = won ? cargoPayFor(run, state.train.cars.map((car) => car.kind)) : 0;
   const lateSec = won && state.arrivedClock !== null ? state.arrivedClock - c.deadline : 0;
   const latePenalty = won && lateSec > 0 ? Math.min(pay, Math.ceil(lateSec / 60) * c.latePenaltyPerMin) : 0;
   const sideJobPay = won
@@ -276,9 +288,10 @@ export function runResult(state: GameState, run: RunDef): RunResult {
     deadline: c.deadline,
     pay,
     latePenalty,
+    cargoPay,
     sideJobPay,
     fines,
-    total: won ? pay - latePenalty + sideJobPay - fines : 0,
+    total: won ? pay - latePenalty + cargoPay + sideJobPay - fines : 0,
     medals: medalsFor(state, run),
     stats: { ...state.stats },
   };

@@ -361,6 +361,7 @@ function horseman(id: number, x: number, extra: Partial<HorsemanState> = {}): Ho
     cooldownTicks: 0,
     behindTicks: 0,
     pickup: false,
+    shyTicks: 0,
     ...extra,
   };
 }
@@ -407,7 +408,7 @@ function aiOnOurTrack(id: string, kind: AiTrainDef['kind'], ahead: number, len: 
 
 function obstacle(id: string, kind: ObstacleKind, ahead: number, st: 'present' | 'scattering' | 'hit' = 'present', ticks = 0): void {
   const p = walk(netIndex(run), state.switches, frontHead(state.train.spans), ahead).end;
-  state.obstacles.push({ id, kind, edge: p.edge, at: p.off, state: st, ticks });
+  state.obstacles.push({ id, kind, edge: p.edge, at: p.off, state: st, ticks, calmTicks: 0 });
 }
 
 function emit(...ev: SimEvent[]): void {

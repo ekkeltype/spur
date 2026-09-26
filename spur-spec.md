@@ -35,8 +35,10 @@ campaign (Acts I and II). Money earned from contracts buys cars and upgrades bet
 5. **Reuse Clew.** The transport, PeerJS layer, room codes, save helpers, DOM helpers, toasts and
    hints, settings store, canvas helper and Pages workflow are copied from `C:\claude\clew` and
    renamed (`clew` → `spur`, Theseus → Rider, Ariadne → Engineer).
-6. Units: metres, seconds, m/s inside the sim. The UI shows mph (`MPH = 2.23694` per m/s) and
-   miles (`1609.34` m). The game clock is seconds since midnight, shown as `2:15 PM`.
+6. Units: metres, seconds, m/s inside the sim. Everything a player reads is in one system, the
+   railroad's: speeds in mph (`MPH = 2.23694` per m/s), distances in yards (`YARD = 0.9144` m)
+   below a mile and in miles (`1609.34` m) from a mile up. No metres, kilometres or km/h appear in
+   the game. The game clock is seconds since midnight, shown as `2:15 PM`.
 
 ## 1. Design pillars
 
@@ -63,6 +65,7 @@ campaign (Acts I and II). Money earned from contracts buys cars and upgrades bet
 | Signal positions | sees the posts | ✓ on the map |
 | Signal aspects (arms, lamps) | ✓ | ✗ |
 | Obstacles on the line (rocks, cattle, barricades) | ✓ | ✗ |
+| Fords (the river over the line) | ✓ (as they arrive) | ✓ (map, "Ahead" list) |
 | Bandits (horsemen and boarded) | ✓ | ✗ (hears gunfire; knows only when held up at gunpoint) |
 | Other trains, scheduled | ✗ | ✓ timetable; ✓ on the map within sight (1.5 km) |
 | The runaway (unscheduled) | ✓ (spyglass) | ✗ (a telegram warns that one is loose) |
@@ -134,8 +137,9 @@ Features are flat lists in the `RunDef`, each on one edge:
 
 | Feature | Fields | Effect |
 |---|---|---|
-| Tunnel | `from`, `to`, name | Anyone standing *on a roof* (including the loco cab roof) when the portal reaches them is knocked off the train. The tender top, platforms, cab floor and interiors are safe. It's dark inside. |
-| Low bridge | `at` | An overhead beam. A Rider or bandit standing on a roof is knocked down (1 heart, 1 s stun). Crouching passes under it. |
+| Tunnel | `from`, `to`, name | Anyone above floor level (feet higher than `TUNNEL_FEET_Y`, 2.3 m: the roofs, the cab roof *and the tender top*) when the portal reaches them is knocked off the train. Platforms, the tender deck, the cab floor and interiors are safe. It's dark inside. |
+| Low bridge | `at` | An overhead beam, 1.2 m above the roof or tender top under it. A Rider or bandit standing on a roof or the tender top is knocked down (1 heart, 1 s stun). Crouching passes under it. |
+| Ford | `from`, `to`, name | The river runs over the line. Water stands `FORD_WATER_Y` (2.0 m) deep over the rails: anyone whose feet are below it (platforms, the tender deck, the cab, interiors) is washed off the train. Only the roofs, the cab roof and the tender top are dry. Horsemen wade at `FORD_HORSE_SPEED`. Both seats see fords: the Engineer on the map, the Rider as water ahead. |
 | Trestle | `from`, `to`, optional `burning: { minSpeed }` | A bridge over a gorge. Falling off the train here counts as a long fall. A burning trestle collapses if the loco's front enters it below `minSpeed` (loss: `trestle`). |
 | Station | `at` (stop mark), `platform` length, name, `checkpoint` flag, optional water column | Stop here (§5.6). |
 | Water tower | `at` (spout position) | Stop with the tender hatch under the spout, and the Rider lowers the spout (§5.5). |
@@ -186,12 +190,27 @@ third), armored and powder 3.9.
 | Brake | 0–1 (0 release, up to 0.85 service, above 0.85 emergency) | Emergency shows sparks and squeals louder |
 | Reverser | forward, neutral, reverse | Can only change below 0.5 m/s |
 | Firebox | 0–3 | Steam production and water use |
-| Whistle | on or off (hold) | Scares cattle; a signal to the Rider |
+| Whistle | on or off (hold) | Scares cattle (§8); a signal to the Rider. Blowing draws `WHISTLE_STEAM` (3 psi/s) from the boiler |
 | Switches | normal or reverse per junction | Refused while any part of a train occupies the junction's edges within 20 m of the node |
 
 While **held up** (a bandit in the cab, §7.4), every command except the whistle is refused ("Hands
 up! There's a gun on you"). The sim eases the throttle to 0 and the brake to 0.5, and the fire is let
 down, so a hold-up costs time and pressure but can't boil the boiler dry.
+
+**Slamming the brakes** (the lurch). When the brake lever goes into emergency (from below
+`EMERGENCY_BRAKE` to at least it) with the train at `LURCH_MIN_SPEED` (8 m/s, 18 mph) or more, and at
+most once per `LURCH_COOLDOWN_SECONDS` (8 s), the train lurches (`lurch` event, `train.lurchTick`):
+- The squeal spooks the horses. Every horseman riding alongside (approach, pace or boarding, within
+  `HORSE_SHY_RANGE` of either end of the train) shies for `HORSE_SHY_SECONDS` (2.5 s; tier 3 and the
+  boss 1.5 s): boarding is abandoned, aim is lost, no shots, and the horse drops to `HORSE_SHY_REL`
+  (8 m/s) below the train's speed, so he falls back along the train.
+- Everyone standing outside on the train (a roof, the tender top, the cab roof or a platform, not
+  crouching, not on a ladder, not inside) is thrown toward the loco: a hop of `LURCH_HOP_VX` forward
+  and `LURCH_HOP_VY` up, then `LURCH_STAGGER_SECONDS` (0.6 s) staggered (no control, no shooting).
+  Near a roof's front end that can mean dropping onto the platform. Crouching braces you.
+
+It's the Rider's call: a horseman about to climb aboard, "Brake!", and crouch. It costs speed, and a
+slower train is easier to board.
 
 ### 5.3 Motion
 
@@ -275,9 +294,14 @@ on the right. Scenery and trackside things are placed in this frame by their tra
   gets `−2.4w` m/s² (pushing toward the rear when moving forward, the other way when reversing). At
   full speed a forward roof-gap jump barely makes it. Missing a jump drops you onto the platform
   below, which costs time but not health.
-- Falling off the train (off either end, knocked off by a tunnel, or blown off the rear) puts the
-  Rider **off the train**: −1 heart, respawn at the rear-most platform after `RESPAWN_OFF` (6 s, 4 s
-  with a caboose). Off a trestle it's a long fall: the Rider goes **down**.
+- Falling off the train (off either end, knocked off by a tunnel, washed off in a ford, or blown off
+  the rear) puts the Rider **off the train**: −1 heart, respawn at the rear-most platform after
+  `RESPAWN_OFF` (6 s, 4 s with a caboose). Off a trestle it's a long fall: the Rider goes **down**. A
+  respawn waits while the rear platform is still in a ford.
+- **No place is safe from everything.** Tunnels sweep everything above floor level, including the
+  tender top; fords wash off everything below the car roofs, including interiors and the cab; low
+  bridges hit anyone standing on a roof or the tender top. The Rider keeps moving: down for tunnels,
+  up for fords, crouched for bridges.
 - At 0 hearts the Rider is **down**: respawn at the rear after `RESPAWN_DOWN` (10 s) with full hearts.
   The run goes on without you.
 - Hearts: 5 (+1 with `extraHeart`, +2 with the Rider assist). After a hit you're invulnerable for 0.8 s.
@@ -308,11 +332,16 @@ target snaps to it.
 
 Hold Shift or the right mouse button while on a roof, the tender top or the cab roof (not inside,
 not in a tunnel). The Rider stops. The view pans ahead of the loco to a look-ahead distance set by the
-pointer's horizontal position: from `SCOPE_MIN` (60 m) at the left edge to `SCOPE_MAX` (650 m) at the
-right, or 300 m at night (450 m with `headlamp`). A left click while scoped places a **flag** at the
-centre of the view: a marker on the Engineer's map at that track position. There are at most 3 flags,
-and each disappears after 90 s or once the train passes it. The spyglass is how the Rider reads signals
-and spots obstacles in time to stop: braking from 20 m/s takes about 200 m.
+pointer's horizontal position: from `SCOPE_MIN` (20 m, so a signal the train is waiting at can be
+checked) at the left edge to `SCOPE_MAX` (650 m) at the right, or 300 m at night (450 m with
+`headlamp`). A left click while scoped places a **flag** at the centre of the view: a marker on the
+Engineer's map at that track position. There is **one flag** (`FLAG_MAX`): a new one replaces it. It
+disappears after 90 s or once the train passes it.
+
+The spyglass is for the few things that must be seen far ahead: cattle on the line, a barricade,
+the runaway, a junction signal read before choosing a route. Everyday signals are read **as the
+train passes them**, straight from the line: a yellow arm or lamp means the next signal is at stop,
+so the Engineer, who knows exactly where that signal is, can stop at it (§9).
 
 ### 6.6 Interactions (E)
 
@@ -336,6 +365,9 @@ a goal (`safe`, `cab`, `hunt`, `powder` or `mixed`), a tier (1–3), an optional
 - World speed up to `HORSE_MAX` (21 m/s, 47 mph), sprinting at up to 25 m/s for 8 s of stamina. Stamina
   refills at one third of that rate. They accelerate at 3 m/s².
 - A horseman who can't keep up for 12 s, or falls 70 m behind the rear, gives up.
+- In a ford a horse wades at `FORD_HORSE_SPEED` (5 m/s) at most, so a train taking a ford leaves its
+  horsemen behind for a while.
+- A lurch (§5.2) makes them shy.
 - They move to a boarding point that suits their goal:
   - `safe`: the express car's ends.
   - `cab`: the cab's side, boarding straight into the cab.
@@ -356,7 +388,8 @@ a goal (`safe`, `cab`, `hunt`, `powder` or `mixed`), a tier (1–3), an optional
   top, the cab).
 - They shoot the Rider when there's line of sight within 25 m: every 2–3.5 s, 0.5 s telegraph, hit
   chance `0.55 − 0.015 × distance` (crouch ×0.7).
-- Tunnels and low bridges hit them exactly as they hit the Rider.
+- Tunnels, low bridges and fords hit them exactly as they hit the Rider (a bandit washed off in a
+  ford drops any loot where he stood), and a lurch throws them like the Rider.
 
 ### 7.4 Goals
 
@@ -377,10 +410,20 @@ Obstacles are checked when the loco's front reaches them:
 | Kind | Safe speed | Otherwise | Clearing |
 |---|---|---|---|
 | Rocks (a rockslide) | 1.5 m/s: the train stops against it | `obstacle` loss | Can't be cleared in v1: back up and take another route |
-| Cattle | 10 m/s: pushed aside with a jolt | `obstacle` loss | The whistle blown for ≥ 0.5 s while the loco is 40–350 m away scatters them over 4 s |
+| Cattle | 10 m/s: pushed aside with a jolt | `obstacle` loss | One blast of the whistle, timed (below) |
 | Barricade | 7 m/s: smashed through | `obstacle` loss | — |
 
 An obstacle with `variants` exists only in those variants of the run (the seed picks one).
+
+**Cattle and the whistle are about timing.** A herd hears the whistle from `WHISTLE_EARSHOT`
+(700 m). A blast of at least `WHISTLE_SCARE_SECONDS` (0.5 s) while the loco is between
+`WHISTLE_SCARE_MIN` and `WHISTLE_SCARE_MAX` (70–270 yards) short of them scatters them over 4 s
+(`cattleScatter`). But a herd that hears the whistle from farther off gets used to it: it lifts its
+heads (`cattleCalm`, `calmTicks`) and ignores the whistle until `CATTLE_CALM_SECONDS` (8 s) after the
+last sound it heard. So whistling early, or holding the whistle down all the way in, leaves them
+standing on the line; the blast has to begin inside the window. The Engineer can't see the herd: the
+Rider spots it with the spyglass and calls "now!" (a flag on the herd gives the Engineer the distance
+too). Too late, and the only way through is under 22 mph.
 
 ## 9. Signals and the rulebook
 
@@ -392,10 +435,17 @@ An obstacle with `variants` exists only in those variants of the run (the seed p
 | `approach` | arm up 45°, yellow | upper 45° yellow, lower horizontal red | Proceed at ≤ 20 mph (9 m/s) until the next signal |
 | `clear` | arm vertical, green | upper vertical green, lower red | Proceed |
 | `divergeApproach` | — | upper red, lower 45° yellow | The diverging route is set; ≤ 20 mph until the next signal |
-| `divergeClear` | — | upper red, lower vertical green | The diverging route is set; proceed at ≤ 30 mph through the junction |
+| `divergeClear` | — | upper red, lower vertical green | The diverging route is set; proceed at ≤ 30 mph until the whole train is through the junction |
 
 At night the arms can't be seen, only the lamps. The Engineer's rulebook shows both: arm pictures
 and lamp colours with their meanings.
+
+The Rider reads a signal **as the train passes it**; it sweeps past the whole train, so it crosses
+the Rider's view wherever they are. That's enough, because every stop is warned: a signal shows
+`approach` when the next one shows `stop`. The Engineer's Ahead list says when each signal is
+coming ("Signal in 8 s: what does it show?"), and where the next one stands, so after a yellow the
+train can stop at it. Only a signal with no signal before it (the first on a line, a junction signal
+read before choosing a route) needs the spyglass.
 
 ### 9.2 How a signal decides
 
@@ -419,6 +469,9 @@ Engineer learns whether that route is clear. This is the intended puzzle.
   $50 and `redSignals++`.
 - Exceeding 9 m/s (plus 10%) after passing `approach` or `divergeApproach`, before the next signal:
   `fine` $10, once per signal.
+- Exceeding 13.4 m/s (plus 10%) after passing `divergeClear`, until the train's rear has passed the
+  junction beyond it (or the next signal, if that comes first): `fine` $10 (reason `junction`), once.
+  Past the junction the diverging track's own limit applies, as the Ahead list and map show.
 
 The Engineer's desk never shows aspects.
 
@@ -483,10 +536,13 @@ The desk is one screen at 1280×720 and up:
     sight.
   - Zoom: fit the whole run, or follow the train.
 - **Ahead list.** The next 6 items along the current route (following switches): name, distance and
-  ETA at the current speed. Covers tunnels, low bridges, trestles, curves (with limits), signals,
-  junctions (with the set leg, and that leg's limit when it's slower track), stations, water towers,
-  and the end of track. A slower limit coming up says "slow down", then "brake now!" once service
-  braking only just makes it. The map puts a speed plate on every slower leg beyond a switch.
+  ETA at the current speed. Covers tunnels, low bridges, fords, trestles, curves (with limits),
+  signals, junctions (with the set leg, and that leg's limit when it's slower track), stations, water
+  towers, and the end of track. A slower limit coming up says "slow down", then "brake now!" once
+  service braking only just makes it. The map puts a speed plate on every slower leg beyond a switch.
+  A signal's row asks the Rider to read it as it passes; a junction signal's row adds that red means
+  the road the switch is set for is blocked. Fords are drawn on the map as water over the line.
+- **Distances** everywhere on the desk are in yards below a mile and miles beyond; speeds in mph.
 - **Timetable (Marey chart).**
   - Axes: clock across (from the run start to the deadline plus 5 minutes), main-line distance down
     (origin at the top), with stations and sidings labelled.
@@ -521,7 +577,13 @@ In local test mode, only the arrows, H, 1–9 and Tab work, since the Rider has 
   pay, destination station, deadline (clock), late penalty per minute, and `critical` (losing the
   cargo fails the run).
 - **Side jobs:** e.g. "4 passengers Mesa → Juniper, +$80", which needs a passenger car and both stops.
-- **Payout** on a win: pay − late penalty (never below 0) + side jobs − fines. A replayed run pays 50%.
+- **Cargo cars pay.** Each optional express, passenger or boxcar coupled for a run carries paying
+  cargo of its own (`CARGO_PAY`: express parcels $40, passenger fares $30, boxcar freight $30), paid
+  on a win. Required cars carry the contract and pay nothing extra; the armored car and the caboose
+  carry nothing. That's the other side of the weight trade-off: more cars pay more, but a heavier
+  train is slower, late more easily, and boarded more easily.
+- **Payout** on a win: pay − late penalty (never below 0) + cargo + side jobs − fines. A replayed
+  run pays 50%.
 - **Medals:**
   - **On time:** arrived by the deadline.
   - **Clean:** no fines.
@@ -569,6 +631,10 @@ some margin.
 Difficulty rises through the network size, the number of simultaneous demands, wave sizes and tiers,
 timetable tightness and night. Waves grow from 3 tier-1 horsemen in run 1 to 5–6 mixed-tier horsemen
 plus the boss in run 6.
+
+**The Rider's rhythm.** Every run has at least 7 track hazards for the people on the train (tunnels,
+low bridges and fords), about one every minute of driving, mixing "get down" (tunnels), "get up"
+(fords) and "crouch" (bridges). Fords arrive in run 1.
 
 ## 14. Tunables
 
@@ -671,7 +737,7 @@ Engineer events: `switchThrown`, `whistle`, `stationArrived`, `stationDone`, `ch
 `waterFilling`, `waterFull`, `lowWater`, `safetyValve`, `overspeed`, `fine`, `signalPassed` (no
 aspect), `flagPlaced`, `telegram`, `heldUp`, `holdupEnded`, `gunfire` (intensity only, rate-limited),
 `riderOff`, `riderDown`, `riderBack`, `lootStolen`, `lootRecovered`, `tunnelEnter`, `tunnelExit`,
-`collision`, `won` and `lost`.
+`fordEnter`, `fordExit`, `collision`, `won` and `lost`.
 
 A leak test checks that `EngineerView` and the filtered events never change when bandits, horsemen,
 obstacles or the runaway change, apart from the documented fields (held up, loot stolen or recovered,
@@ -719,7 +785,8 @@ scoped. Layers, back to front:
 3. mid hills, cacti and telegraph poles (0.35)
 4. ground, ballast and ties (1.0)
 5. trackside structures: signals, mileposts, stations, water towers, tunnel portals and mountains,
-   trestles over gorges, low bridges
+   trestles over gorges, low bridges, fords (the river over the line: the water surface is drawn in
+   front of the train's lower 2 m, with spray where the cars cut through)
 6. the train (the car the Rider is inside is cut away)
 7. boarded bandits and the Rider
 8. the foreground lane of horsemen and dust
@@ -736,6 +803,8 @@ Everything is synthesized with WebAudio (Clew's approach): the engine chuff (its
 speed, its level follows throttle), rail clicks, the whistle, the bell, brake squeal, the
 safety-valve hiss, the water column, revolver, shotgun and rifle shots, ricochets, hits, horse gallops,
 the tunnel rumble, wind, explosions, a telegraph ticker, UI clicks, and stingers for win and loss.
+Also: rushing water and splashes in a ford, the jolt of a lurch, horses whinnying as they shy, and
+cattle lowing (a questioning low when they get used to the whistle, a bellow when they scatter).
 The Engineer hears the cab (muffled gunfire from outside). In local test mode, only the Rider's
 audio plays.
 
@@ -766,7 +835,23 @@ audio plays.
 5. **End-to-end checks** in a real browser (local test mode, and two browsers online), then docs and
    deploy to GitHub Pages.
 
-## 21. Out of scope for v1
+## 21. Round 2: after the first playtest (2026-09-26)
+
+The first playtest's notes, and what changed (details in the sections above; choices in
+`DECISIONS.md`):
+
+| Note | Change |
+|---|---|
+| Units were mixed (miles, yards, metres) | One system: mph, yards, miles (§0) |
+| More interaction between the Engineer and the Rider; fool the bandits by slamming the brakes | The lurch (§5.2), cattle timing (§8), more hazard calls (§13) |
+| Less spyglass; things should be seen straight from the line | Signals are read as they pass (§9.1), the spyglass reaches down to 20 m (§6.5); it's kept for a few far-off things |
+| One flag is enough | `FLAG_MAX` 1 (§6.5) |
+| The Rider could camp on the tender; more times to get down, and times to get up | Tunnels sweep the tender top, low bridges hit it, fords wash off everything below the roofs (§4.3, §6.3); more hazards per run (§13) |
+| Cattle: holding the whistle down worked | Herds get used to an early whistle; the whistle costs steam (§5.2, §8) |
+| Extra cars earned nothing | Cargo cars pay (§12) |
+| The 30 mph diverging limit lasted to the next signal | It ends once the train is through the junction (§9.3) |
+
+## 22. Out of scope for v1
 
 Act III (fog runs with mileposts, coded telegrams with the Rider's cipher wheel, the gang's armored
 train duel, the Golden Spike finale), uncoupling and recoupling cars, fires on cars, dynamite thrown

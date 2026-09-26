@@ -174,6 +174,7 @@ function addHorseman(state: GameState, goal: BanditGoal, boss: boolean, tier: Ti
     cooldownTicks: interval(state, HORSEMAN_INTERVAL[tier]),
     behindTicks: 0,
     pickup,
+    shyTicks: 0,
   };
   state.horsemen.push(h);
   return h;
