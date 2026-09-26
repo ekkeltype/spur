@@ -20,7 +20,7 @@
 
 import { scopeMaxFor } from '../../sim/game';
 import { framePath, frameX, frontHead, mainPos, netIndex } from '../../sim/network';
-import { BANDIT_TELEGRAPH, CAR_SPECS, FORD_WATER_Y, HORSE_SHY_SECONDS, HORSE_SHY_SECONDS_VETERAN, HORSEMAN_TELEGRAPH, SCOPE_MIN, TICK_HZ } from '../../sim/rules';
+import { BANDIT_TELEGRAPH, CAR_SPECS, FORD_WATER_Y, HORSE_SHY_SECONDS, HORSE_SHY_SECONDS_VETERAN, HORSEMAN_TELEGRAPH, SCOPE_MIN, TICK_HZ, TIME_SCALE } from '../../sim/rules';
 import type { GameState, RiderState, RunDef, SimEvent, SurfaceKind, TracksideItem } from '../../sim/types';
 import { trackside } from '../../sim/views';
 import { HiDpiCanvas } from '../canvas';
@@ -277,7 +277,9 @@ export class RiderRenderer {
     const nowS = f.now / 1000;
     const realDt = Number.isFinite(this.lastNow) ? Math.min(0.1, Math.max(0, nowS - this.lastNow)) : 1 / 60;
     this.lastNow = nowS;
-    const dt = f.frozen ? 0 : realDt;
+    // What moves in the world (smoke, sparks, figures' gait) keeps the world's time: it runs
+    // TIME_SCALE times the wall clock (spec §16.1). The camera and the HUD ease in real time.
+    const dt = f.frozen ? 0 : realDt * TIME_SCALE;
     this.t += dt;
     const alpha = clamp01(Number.isFinite(f.alpha) ? f.alpha : 0);
     this.odo.update(st.tick, st.train.odometer);

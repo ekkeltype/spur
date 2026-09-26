@@ -30,7 +30,7 @@ import { trainGeometry } from '../sim/geometry';
 import { spawnWave } from '../sim/bandits';
 import { fightContext, newGame, step } from '../sim/game';
 import { framePath, framePoint, frontHead, mainPos, netIndex, rearHead, spansFromFront, walk } from '../sim/network';
-import { CAR_SPECS, DT, FLAG_MAX, RIDER_SHOULDER, RIDER_SHOULDER_CROUCH, SCOPE_MAX, SCOPE_MIN, TICK_HZ, WEAPONS } from '../sim/rules';
+import { CAR_SPECS, DT, FLAG_MAX, RIDER_SHOULDER, RIDER_SHOULDER_CROUCH, SCOPE_MAX, SCOPE_MIN, TICK_HZ, TIME_SCALE, WEAPONS } from '../sim/rules';
 import { NO_INPUT } from '../sim/types';
 import type {
   AiTrainDef,
@@ -1626,7 +1626,7 @@ function frame(ms: number): void {
   // Automation pauses the loop, so the canvas keeps the frame a scene settled on.
   if (running) {
     nowMs += dt * 1000;
-    acc += dt;
+    acc += dt * TIME_SCALE; // the world's pace, as in the game (spec §16.1)
     let n = 0;
     while (acc >= DT && n < 8) {
       acc -= DT;

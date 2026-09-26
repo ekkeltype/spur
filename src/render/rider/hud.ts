@@ -8,7 +8,7 @@
 // There is no speedometer: the Rider feels speed through the wind and the scenery (spec §2).
 // Distances are the railroad's: yards below a mile, miles beyond (spec §0 note 6).
 
-import { FLAG_MAX, QUICK_RELOAD_FACTOR, TICK_HZ, WEAPONS, YARD } from '../../sim/rules';
+import { FLAG_MAX, QUICK_RELOAD_FACTOR, TICK_HZ, TIME_SCALE, WEAPONS, YARD } from '../../sim/rules';
 import type { GameState, Weapon } from '../../sim/types';
 import { PALETTE } from '../palette';
 import { RAIL_FRACTION, VIEW_HEIGHT_M } from './camera';
@@ -700,7 +700,8 @@ export class Hud {
       ctx.fillStyle = 'rgba(12,8,6,0.45)';
       ctx.fillRect(0, 0, cam.w, cam.h);
     }
-    const secs = Math.max(0, Math.ceil(r.respawnTicks / TICK_HZ));
+    // Counted on the wall clock: the world runs TIME_SCALE times it (spec §16.1).
+    const secs = Math.max(0, Math.ceil(r.respawnTicks / (TICK_HZ * TIME_SCALE)));
     const total = down ? 10 : st.train.cars.some((c) => c.kind === 'caboose') ? 4 : 6;
     const p = 1 - r.respawnTicks / (total * TICK_HZ);
     const cx = cam.w / 2;
