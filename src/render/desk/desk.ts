@@ -22,7 +22,7 @@ import { CabPanel, type CabLook, type LeverKind } from './cab';
 import { MareyChart, type ChartTrain } from './chart';
 import { btn, capitalise, el, isTyping, kbd, setClass, setHtml, setText } from './dom';
 import { describeEvent, type LogTone } from './events';
-import { formatClock, junctionNumbers } from './format';
+import { formatClock, junctionNumbers, secondsTo } from './format';
 import { brakeStep, CmdThrottle, stepThrottle } from './levers';
 import { RouteMap, type MapFlash, type MapModel } from './map';
 import { OutlawView } from './outlaw';
@@ -398,14 +398,14 @@ export class EngineerDesk {
   }
 
   /**
-   * The nearest item of a kind on the Ahead list now, and the seconds to it at the current speed
+   * The nearest item of a kind on the Ahead list now, and the real seconds to it at the current speed
    * (Infinity standing), or null: for the app's hints ("near the first signal").
    */
   nearest(kind: AheadKind): { item: AheadItem; secs: number } | null {
     const item = this.ahead.find((i) => i.kind === kind);
     const v = this.view?.train.v ?? 0;
     const speed = this.reversing ? -v : v;
-    return item ? { item, secs: speed > 0.3 ? item.dist / speed : Infinity } : null;
+    return item ? { item, secs: secondsTo(item.dist, speed) } : null;
   }
 
   // -------------------------------------------------------------------------------------------

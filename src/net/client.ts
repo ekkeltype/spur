@@ -2,7 +2,7 @@
 // the host, sends commands with sequence numbers, and surfaces the host's refusals. Everything it
 // knows arrives through the messages in protocol.ts.
 
-import { TICK_HZ } from '../sim/rules';
+import { TICK_HZ, TIME_SCALE } from '../sim/rules';
 import type {
   Assists,
   CampaignProgress,
@@ -39,7 +39,8 @@ export interface Refusal {
   t: number;
 }
 
-const TICK_MS = 1000 / TICK_HZ;
+/** Real milliseconds per host tick: the world runs TIME_SCALE times the wall clock. */
+const TICK_MS = 1000 / (TICK_HZ * TIME_SCALE);
 const PING_MS = 2000;
 
 export interface ClientOptions {

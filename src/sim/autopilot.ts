@@ -30,7 +30,7 @@ import {
   APPROACH_LIMIT,
   BRAKE_MAX,
   DIVERGE_LIMIT,
-  DRAG,
+  dragCoef,
   DT,
   FULL_POWER_PSI,
   GRAVITY,
@@ -41,7 +41,7 @@ import {
   SPOUT_WINDOW,
   STATION_WINDOW,
   TICK_HZ,
-  TRACTIVE_MAX,
+  tractiveMax,
   WHISTLE_EARSHOT,
   WHISTLE_SCARE_MAX,
   secondsToTicks,
@@ -618,10 +618,10 @@ function leversFor(ix: NetIndex, state: GameState, dirT: 1 | -1, aDes: number, b
   const t = state.train;
   const front = frontHead(t.spans);
   const u = Math.max(0, t.v * dirT);
-  const natural = -GRAVITY * gradeAt(ix, front) * front.dir * dirT - ROLL - DRAG * u * u;
+  const natural = -GRAVITY * gradeAt(ix, front) * front.dir * dirT - ROLL - dragCoef(state.upgrades) * u * u;
   if (aDes > natural) {
     const power = Math.max(0.05, Math.min(1, t.pressure / FULL_POWER_PSI));
-    return { throttle: clamp01(((aDes - natural) * t.mass) / (TRACTIVE_MAX * power)), brake: 0 };
+    return { throttle: clamp01(((aDes - natural) * t.mass) / (tractiveMax(state.upgrades) * power)), brake: 0 };
   }
   return { throttle: 0, brake: clamp01((natural - aDes) / bMax) };
 }

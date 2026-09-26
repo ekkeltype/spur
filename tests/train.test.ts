@@ -20,6 +20,7 @@ import {
   WHISTLE_STEAM,
 } from '../src/sim/rules';
 import { applyEngineerCmd, initialTrain, layoutConsist, limitHere, spoutPrompt, stepTrain, tryLowerSpout } from '../src/sim/train';
+import { topSpeed } from '../src/ui/text';
 import type { Assists, CarType, EngineerCmd, EngineerCmdBody, GameState, ObstacleKind, RunDef, SimEvent, TickMotion, UpgradeId } from '../src/sim/types';
 import { baseRun, yRun } from './fixtures';
 
@@ -216,6 +217,43 @@ describe('motion (spec §5.3)', () => {
     runFor(loose, steep, 5, steady);
     expect(loose.train.v).toBeLessThan(0); // facing uphill: it rolls backward
     expect(loose.train.odometer).toBeLessThan(0);
+  });
+
+  it('pulls harder with the power tiers: the whole gain over stock is the top tier owned', () => {
+    const run = straight();
+    // A second away from a stand at full throttle: too slow for drag to matter.
+    const pull = (upgrades: UpgradeId[]): number => {
+      const s = game(run, LIGHT, upgrades);
+      s.train.throttle = 1;
+      runFor(s, run, 1, steady);
+      return s.train.v + 0.02; // what the loco gave, rolling resistance back
+    };
+    const stock = pull([]);
+    expect(stock).toBeCloseTo(60 / 115, 2);
+    expect(pull(['power1'])).toBeCloseTo(stock * 1.15, 2);
+    expect(pull(['power1', 'power2'])).toBeCloseTo(stock * 1.3, 2);
+    expect(pull(['power1', 'power2', 'power3'])).toBeCloseTo(stock * 1.5, 2);
+  });
+
+  it('runs faster with the speed tiers, as fast as the depot says', () => {
+    const run = straight();
+    const top = (upgrades: UpgradeId[]): number => {
+      const s = game(run, LIGHT, upgrades);
+      s.train.throttle = 1;
+      runFor(s, run, 300, steady);
+      return s.train.v;
+    };
+    const mass = 70 + 20 + 25;
+    const stock = top([]);
+    expect(stock).toBeCloseTo(topSpeed(mass), 1);
+    const tiers: UpgradeId[] = ['speed1', 'speed2', 'speed3'];
+    [1.054, 1.118, 1.195].forEach((gain, i) => {
+      const owned = tiers.slice(0, i + 1);
+      expect(top(owned) / stock).toBeCloseTo(gain, 2);
+      expect(top(owned)).toBeCloseTo(topSpeed(mass, owned), 1);
+    });
+    // Power raises the top speed too, less than it raises the pull.
+    expect(top(['power1', 'power2', 'power3'])).toBeCloseTo(topSpeed(mass, ['power1', 'power2', 'power3']), 1);
   });
 
   it('stops from 20 m/s in well under 200 m on full brake, and shorter still with air brakes', () => {

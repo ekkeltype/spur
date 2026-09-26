@@ -6,7 +6,7 @@
 
 import type { DebugInfo } from '../../net/protocol';
 import { edgeOf, fouls, spanDir, type NetIndex } from '../../sim/network';
-import { FLAG_TTL_SECONDS, SWITCH_FOUL_DISTANCE, TICK_HZ } from '../../sim/rules';
+import { FLAG_TTL_SECONDS, SWITCH_FOUL_DISTANCE, TICK_HZ, TIME_SCALE } from '../../sim/rules';
 import type { AiTrainDef, EdgeKind, EngineerView, Span, SwitchState } from '../../sim/types';
 import { PALETTE, withAlpha } from '../palette';
 import { limitMph } from './format';
@@ -1246,7 +1246,7 @@ export class RouteMap {
       c.fillStyle = '#FFB4A6';
       c.textAlign = 'left';
       c.textBaseline = 'middle';
-      c.fillText(`${Math.round(age)} s`, p.x + 15 * u, p.y - top + 4.5 * u);
+      c.fillText(`${Math.round(age / TIME_SCALE)} s`, p.x + 15 * u, p.y - top + 4.5 * u);
       c.globalAlpha = 1;
       c.beginPath();
       c.arc(p.x, p.y, 2.5 * u, 0, TAU);

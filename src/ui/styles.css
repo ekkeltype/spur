@@ -968,6 +968,42 @@ h3.section {
   opacity: 0.72;
 }
 
+/* The loco's tier lines: a name over a pip per tier, filled when owned. */
+.tier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 44px;
+  flex: none;
+}
+
+.tier-name {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.tier-pips {
+  display: flex;
+  gap: 3px;
+}
+
+.tier-pips .pip {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--ink-2);
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+
+.tier-pips .pip.on {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
 .owned-tag {
   font-size: 11.5px;
   font-weight: 700;

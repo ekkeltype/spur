@@ -6,7 +6,7 @@
 import { RUNS } from '../content/runs';
 import { buyItem, campaignWithin, checkpointOf, cleanIncomingCampaign, isUnlocked, restoreCheckpoint, setAssist, toggleCar, type DepotResult } from '../save/save';
 import { composeConsist, isOver, newGame, runResult, step } from '../sim/game';
-import { COUNTDOWN_SECONDS, SNAPSHOT_HZ, TICK_HZ } from '../sim/rules';
+import { COUNTDOWN_SECONDS, SNAPSHOT_HZ, TICK_HZ, TIME_SCALE } from '../sim/rules';
 import { aspectOf } from '../sim/signals';
 import { NO_INPUT } from '../sim/types';
 import type {
@@ -83,11 +83,12 @@ export interface HostOptions {
 
 export type DepotOutcome = { ok: true } | { ok: false; reason: string };
 
+/** A tick in the world's milliseconds; the frame loop feeds it real ones sped up by TIME_SCALE. */
 const TICK_MS = 1000 / TICK_HZ;
-const SNAPSHOT_EVERY = Math.max(1, Math.round(TICK_HZ / SNAPSHOT_HZ));
+const SNAPSHOT_EVERY = Math.max(1, Math.round((TICK_HZ * TIME_SCALE) / SNAPSHOT_HZ));
 const PING_MS = 2000;
-/** The Engineer hears gunfire at most once per this many ticks: 4 times a second (spec §16.3). */
-export const GUNFIRE_MIN_TICKS = Math.ceil(TICK_HZ / 4);
+/** The Engineer hears gunfire at most once per this many ticks: 4 times a real second (spec §16.3). */
+export const GUNFIRE_MIN_TICKS = Math.ceil((TICK_HZ * TIME_SCALE) / 4);
 
 export function randomSeed(): number {
   const a = new Uint32Array(1);
@@ -703,7 +704,7 @@ export class HostSession {
       this.alpha = 0;
       return;
     }
-    this.acc += dt * this.simSpeed;
+    this.acc += dt * this.simSpeed * TIME_SCALE;
     let ticks = 0;
     while (this.acc >= TICK_MS && ticks < 16) {
       this.acc -= TICK_MS;

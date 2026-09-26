@@ -33,7 +33,7 @@ import {
   DERAIL_FACTOR,
   DERAIL_INSTANT,
   DERAIL_SECONDS,
-  DRAG,
+  dragCoef,
   DRY_EXPLODE_SECONDS,
   DT,
   DWELL_SECONDS,
@@ -72,7 +72,7 @@ import {
   SWITCH_FOUL_DISTANCE,
   TENDER_HATCH_FROM_REAR,
   TICK_HZ,
-  TRACTIVE_MAX,
+  tractiveMax,
   WATER_CAP,
   WATER_FILL_RATE,
   WATER_PER_PSI,
@@ -344,7 +344,7 @@ function accelerate(ix: NetIndex, state: GameState): void {
   const front = frontHead(t.spans);
   const power = Math.min(1, t.pressure / FULL_POWER_PSI);
   // kN / t = m/s². The grade is under the loco, signed by the way the train faces on that edge.
-  const drive = (TRACTIVE_MAX * t.throttle * power * t.reverser) / t.mass - GRAVITY * gradeAt(ix, front) * front.dir;
+  const drive = (tractiveMax(state.upgrades) * t.throttle * power * t.reverser) / t.mass - GRAVITY * gradeAt(ix, front) * front.dir;
   const brake = t.brake * BRAKE_MAX * (state.upgrades.includes('airBrakes') ? AIR_BRAKES_FACTOR : 1);
   const hold = ROLL + brake;
   if (t.v === 0) {
@@ -352,7 +352,7 @@ function accelerate(ix: NetIndex, state: GameState): void {
     return;
   }
   const dir = Math.sign(t.v);
-  let v = t.v + (drive - dir * (ROLL + DRAG * t.v * t.v + brake)) * DT;
+  let v = t.v + (drive - dir * (ROLL + dragCoef(state.upgrades) * t.v * t.v + brake)) * DT;
   if (Math.sign(v) !== dir) v = 0;
   if (Math.abs(v) < STOP_EPSILON && Math.abs(drive) <= hold) v = 0;
   t.v = v;

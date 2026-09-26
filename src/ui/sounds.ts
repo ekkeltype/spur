@@ -13,7 +13,7 @@
 
 import type { Sfx } from '../audio/sfx';
 import { framePath, frameX, netIndex } from '../sim/network';
-import { CAB_LENGTH, CAR_SPECS, EMERGENCY_BRAKE, LURCH_COOLDOWN_SECONDS, LURCH_MIN_SPEED, QUICK_RELOAD_FACTOR, TICK_HZ, WEAPONS, WIND_MAX, WIND_REF_SPEED } from '../sim/rules';
+import { CAB_LENGTH, CAR_SPECS, EMERGENCY_BRAKE, LURCH_COOLDOWN_SECONDS, LURCH_MIN_SPEED, QUICK_RELOAD_FACTOR, TICK_HZ, TIME_SCALE, WEAPONS, WIND_MAX, WIND_REF_SPEED } from '../sim/rules';
 import type { EngineerCmdBody, EngineerEvent, EngineerView, GameState, LossReason, RiderState, RunDef, SimEvent, SurfaceKind, Weapon } from '../sim/types';
 import { trackside } from '../sim/views';
 
@@ -269,7 +269,8 @@ export class RiderSounds {
       if (item.kind === 'tunnel' && r.mode === 'active' && r.x >= item.x0 && r.x <= item.x1) tunnel = true;
       else if (item.kind === 'ford') this.fords.push({ x0: item.x0, x1: item.x1 });
     }
-    sfx.engine({ speed, throttle: t.throttle, tunnel, listener: 'rider' });
+    // The beats and clicks keep the wall clock's pace: the world runs TIME_SCALE times it.
+    sfx.engine({ speed: speed * TIME_SCALE, throttle: t.throttle, tunnel, listener: 'rider' });
     sfx.wind(windLevel(r, speed));
     sfx.brakes(brakeLevel(t.brake, t.v));
     sfx.safetyValve(t.safetyValve);
@@ -412,7 +413,7 @@ export class CabSounds {
     const dt = this.lastTick === null ? 0 : Math.max(0, view.tick - this.lastTick) / TICK_HZ;
     this.lastTick = view.tick;
     if (this.fordLeft > 0) this.fordLeft = Math.max(0, this.fordLeft - speed * dt);
-    this.sfx.engine({ speed, throttle: t.throttle, tunnel: this.inTunnel, listener: 'cab' });
+    this.sfx.engine({ speed: speed * TIME_SCALE, throttle: t.throttle, tunnel: this.inTunnel, listener: 'cab' });
     this.sfx.whistle(t.whistle, 'cab');
     this.sfx.brakes(brakeLevel(t.brake, t.v));
     this.sfx.safetyValve(t.safetyValve);

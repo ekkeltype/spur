@@ -9,7 +9,7 @@ import { cleanCmd, GUNFIRE_MIN_TICKS, HostSession, runCard, type HostOptions } f
 import { createLocalPair } from '../src/net/local';
 import type { Msg, SwitchSave } from '../src/net/protocol';
 import { defaultCampaign, defaultSave, recordResult, type SaveV1 } from '../src/save/save';
-import { COUNTDOWN_SECONDS, TICK_HZ } from '../src/sim/rules';
+import { COUNTDOWN_SECONDS, TICK_HZ, TIME_SCALE } from '../src/sim/rules';
 import type { CampaignProgress, EngineerCmdBody, RunDef, SimEvent } from '../src/sim/types';
 import { toEngineerRun, toEngineerView } from '../src/sim/views';
 import { yRun } from './fixtures';
@@ -164,6 +164,28 @@ describe('host and client sessions', () => {
     expect(host.game!.state.tick).toBeGreaterThanOrEqual(TICK_HZ - 2);
     expect(client.view?.tick).toBeGreaterThan(0);
     expect(Object.keys(client.view!).sort()).toEqual(Object.keys(toEngineerView(host.game!.state, RUNS3[0])).sort());
+  });
+
+  it('runs the world TIME_SCALE times the wall clock, and the desk keeps pace with it', async () => {
+    const ctx = setup();
+    await toPlaying(ctx);
+    const { host, client, advance } = ctx;
+    // The client stamps snapshots with performance.now(): make that the test's clock.
+    const clock = vi.spyOn(performance, 'now');
+    const t0 = host.game!.state.tick;
+    // The desk's estimate of the host's tick, between snapshots, stays where the host is.
+    let worst = 0;
+    for (let i = 0; i < 60; i++) {
+      advance(1000 / 60);
+      clock.mockReturnValue(ctx.time());
+      await flush(1);
+      if (i >= 10) worst = Math.max(worst, Math.abs(client.estTick(ctx.time()) - host.game!.state.tick));
+    }
+    const ran = host.game!.state.tick - t0;
+    expect(ran).toBeGreaterThanOrEqual(Math.round(TICK_HZ * TIME_SCALE) - 2);
+    expect(ran).toBeLessThanOrEqual(Math.round(TICK_HZ * TIME_SCALE) + 1);
+    expect(worst).toBeLessThan(1.5);
+    clock.mockRestore();
   });
 
   it('applies commands with acks, and refuses them while paused or malformed', async () => {

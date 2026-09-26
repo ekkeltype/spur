@@ -6,7 +6,13 @@ import type { CarKind, CarType, UpgradeId, Weapon } from './types';
 
 export const TICK_HZ = 60;
 export const DT = 1 / TICK_HZ;
-/** EngineerView snapshots per second. */
+/**
+ * Seconds of the world per second of the wall clock (spec §16.1): the host runs TICK_HZ × TIME_SCALE
+ * ticks a real second. The sim never sees it; what shows the players a duration (an ETA, a respawn
+ * count) or a rate (the engine's beats) converts at the edge.
+ */
+export const TIME_SCALE = 1.25;
+/** EngineerView snapshots per real second. */
 export const SNAPSHOT_HZ = 15;
 export const COUNTDOWN_SECONDS = 3;
 
@@ -60,10 +66,20 @@ export const DEFAULT_MAX_CARS = 5;
 
 // ---- Train motion (spec §5.3, §5.4) --------------------------------------------------------------
 
-export const TRACTIVE_MAX = 60; // kN
+export const TRACTIVE_MAX = 60; // kN, stock
 export const FULL_POWER_PSI = 160;
 export const ROLL = 0.02; // m/s²
-export const DRAG = 0.0007; // per (m/s)²
+export const DRAG = 0.0007; // per (m/s)², stock
+
+/** The loco's tractive effort at full throttle and pressure (kN), with its power tiers (spec §12). */
+export function tractiveMax(upgrades: readonly UpgradeId[]): number {
+  return TRACTIVE_MAX * tierFactor(POWER_TIERS, upgrades);
+}
+
+/** The train's drag coefficient (per (m/s)²), with the loco's speed tiers (spec §12). */
+export function dragCoef(upgrades: readonly UpgradeId[]): number {
+  return DRAG * tierFactor(SPEED_TIERS, upgrades);
+}
 export const GRAVITY = 9.81;
 export const BRAKE_MAX = 1.1; // m/s² at brake = 1
 export const AIR_BRAKES_FACTOR = 1.35;
@@ -304,12 +320,20 @@ export const REPLAY_PAY_FACTOR = 0.5;
  */
 export const CARGO_PAY: Readonly<Partial<Record<CarType, number>>> = { express: 40, passenger: 30, boxcar: 30 };
 
+/** The loco's two lines of tiered upgrades (spec §12): how hard she pulls, and how fast she runs. */
+export type LocoLine = 'power' | 'speed';
+
 export interface ShopItem {
   id: UpgradeId;
   name: string;
   cost: number;
-  seat: 'rider' | 'engineer' | 'train';
+  /** Who it's for; 'loco' is the locomotive's tiers. */
+  seat: 'rider' | 'engineer' | 'train' | 'loco';
   blurb: string;
+  /** A loco tier's line; its tiers are listed in order. */
+  line?: LocoLine;
+  /** The tier that must be owned first. */
+  requires?: UpgradeId;
 }
 
 export const SHOP: readonly ShopItem[] = [
@@ -323,7 +347,35 @@ export const SHOP: readonly ShopItem[] = [
   { id: 'headlamp', name: 'Carbide headlamp', cost: 90, seat: 'engineer', blurb: 'The spyglass sees 490 yards at night instead of 330.' },
   { id: 'armored', name: 'Armored car', cost: 220, seat: 'train', blurb: 'A roof parapet for cover and gun slits to shoot from inside. Heavy.' },
   { id: 'caboose', name: 'Caboose', cost: 160, seat: 'train', blurb: 'Respawn faster, and heal while inside.' },
+  { id: 'power1', name: 'Bored-out cylinders', cost: 120, seat: 'loco', line: 'power', blurb: 'Pulls 15% harder: quicker away, stronger up grades.' },
+  { id: 'power2', name: 'Balanced slide valves', cost: 240, seat: 'loco', line: 'power', requires: 'power1', blurb: 'Pulls 30% harder than stock.' },
+  { id: 'power3', name: 'Vauclain compound', cost: 400, seat: 'loco', line: 'power', requires: 'power2', blurb: 'Uses its steam twice: pulls 50% harder than stock.' },
+  { id: 'speed1', name: 'Babbitt bearings', cost: 100, seat: 'loco', line: 'speed', blurb: 'Less friction: top speed about 5% over stock.' },
+  { id: 'speed2', name: 'Balanced drivers', cost: 200, seat: 'loco', line: 'speed', requires: 'speed1', blurb: 'Counterweighted wheels: top speed about 12% over stock.' },
+  { id: 'speed3', name: 'Tall drivers', cost: 350, seat: 'loco', line: 'speed', requires: 'speed2', blurb: 'Seventy-inch wheels: top speed about 20% over stock.' },
 ];
+
+/**
+ * The loco's tiers (spec §12), each the whole gain over stock: the power tiers multiply the
+ * tractive effort, the speed tiers the drag (top speed goes as 1/√ of it: +5%, +12%, +20%).
+ */
+export const POWER_TIERS: readonly (readonly [UpgradeId, number])[] = [
+  ['power1', 1.15],
+  ['power2', 1.3],
+  ['power3', 1.5],
+];
+export const SPEED_TIERS: readonly (readonly [UpgradeId, number])[] = [
+  ['speed1', 0.9],
+  ['speed2', 0.8],
+  ['speed3', 0.7],
+];
+
+/** The factor of the highest tier owned, or 1 for stock. */
+function tierFactor(tiers: readonly (readonly [UpgradeId, number])[], upgrades: readonly UpgradeId[]): number {
+  let f = 1;
+  for (const [id, factor] of tiers) if (upgrades.includes(id)) f = factor;
+  return f;
+}
 
 /** Cars anyone can add to a consist without buying them. */
 export const FREE_CARS: readonly CarType[] = ['express', 'passenger', 'boxcar'];
