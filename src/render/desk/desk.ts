@@ -17,7 +17,7 @@ import { fouls, frontHead, netIndex, rearHead, spansLength, walk, xOnSpans, type
 import { CAR_SPECS, FIRE_MAX, REVERSER_MAX_SPEED, SWITCH_FOUL_DISTANCE } from '../../sim/rules';
 import type { CarType, EngineerCmdBody, EngineerEvent, EngineerRun, EngineerView, Span, SwitchState, TrackHead } from '../../sim/types';
 import { HiDpiCanvas } from '../canvas';
-import { buildAhead, stopTarget, type AheadItem, type StopTarget } from './ahead';
+import { buildAhead, stopTarget, type AheadItem, type AheadKind, type StopTarget } from './ahead';
 import { CabPanel, type CabLook, type LeverKind } from './cab';
 import { MareyChart, type ChartTrain } from './chart';
 import { btn, capitalise, el, isTyping, kbd, setClass, setHtml, setText } from './dom';
@@ -239,6 +239,7 @@ export class EngineerDesk {
       stationName: (id) => this.run.stations.find((s) => s.id === id)?.name ?? id,
       switchLabel: (id) => this.switchLabel(id),
       tunnelName: (id) => this.run.tunnels.find((t) => t.id === id)?.name ?? 'the tunnel',
+      fordName: (id) => this.run.fords.find((f) => f.id === id)?.name ?? 'the ford',
       signalName: (id) => {
         const s = this.run.signals.find((g) => g.id === id);
         return s?.name ?? (s?.kind === 'junction' ? 'a junction signal' : 'a block signal');
@@ -391,6 +392,17 @@ export class EngineerDesk {
     this.mapDirty = true;
   }
 
+  /**
+   * The nearest item of a kind on the Ahead list now, and the seconds to it at the current speed
+   * (Infinity standing), or null: for the app's hints ("near the first signal").
+   */
+  nearest(kind: AheadKind): { item: AheadItem; secs: number } | null {
+    const item = this.ahead.find((i) => i.kind === kind);
+    const v = this.view?.train.v ?? 0;
+    const speed = this.reversing ? -v : v;
+    return item ? { item, secs: speed > 0.3 ? item.dist / speed : Infinity } : null;
+  }
+
   // -------------------------------------------------------------------------------------------
   // Assembly
 
@@ -505,6 +517,8 @@ export class EngineerDesk {
       hatchBack: this.reversing ? hatchX : L - hatchX,
       flags: view.flags,
       destination: this.run.contract.destination,
+      // Tunnels, fords and low bridges stay listed until the last car is past them.
+      trainLength: L,
     });
     this.target = stopTarget(this.ix, switches, t.spans, t.hatch, { done: t.lastStation });
     this.route = walk(this.ix, switches, head, ROUTE_RANGE).spans;

@@ -1,12 +1,31 @@
 // The rulebook (spec §9, §11): signal aspects drawn by day (semaphore arms and lamps) and by night
-// (the lamps alone), what each means, the speed rules, and the run's timetable as a table. The
-// Engineer never sees a real signal: this page is how they make sense of what the Rider calls out.
+// (the lamps alone), what each means, the rules of the road and the calls to make to the Rider,
+// and the run's timetable as a table. The Engineer never sees a real signal: this page is how they
+// make sense of what the Rider calls out.
 
 import { netIndex } from '../../sim/network';
-import { APPROACH_LIMIT, BUFFER_SAFE, DERAIL_FACTOR, DERAIL_INSTANT, DERAIL_SECONDS, DIVERGE_LIMIT, DWELL_SECONDS, OVERSPEED_WARN, RED_SIGNAL_FINE, SPEED_FINE, SPEED_FINE_TOLERANCE, SPOUT_WINDOW, STATION_WINDOW, SWITCH_FOUL_DISTANCE } from '../../sim/rules';
+import {
+  APPROACH_LIMIT,
+  BUFFER_SAFE,
+  DERAIL_FACTOR,
+  DERAIL_INSTANT,
+  DERAIL_SECONDS,
+  DIVERGE_LIMIT,
+  DWELL_SECONDS,
+  LURCH_MIN_SPEED,
+  OVERSPEED_WARN,
+  RED_SIGNAL_FINE,
+  SPEED_FINE,
+  SPEED_FINE_TOLERANCE,
+  SPOUT_WINDOW,
+  STATION_WINDOW,
+  SWITCH_FOUL_DISTANCE,
+  WHISTLE_SCARE_MAX,
+  WHISTLE_SCARE_MIN,
+} from '../../sim/rules';
 import type { Aspect, EngineerRun } from '../../sim/types';
 import { PALETTE } from '../palette';
-import { formatClock, formatMoney, limitMph } from './format';
+import { formatClock, formatDistance, formatMoney, limitMph, roundYards, windowYards } from './format';
 import { lineTimeAt, scheduleLine, sidingBands, type LinePt } from './marey';
 
 type Ctx = CanvasRenderingContext2D;
@@ -31,11 +50,69 @@ const LAMP: Record<Arm, { color: string; letter: string }> = {
 
 const ROWS: { aspect: Aspect; name: string; rule: string }[] = [
   { aspect: 'stop', name: 'Stop', rule: `Stop before the signal. Passing it costs ${formatMoney(RED_SIGNAL_FINE)}.` },
-  { aspect: 'approach', name: 'Approach', rule: `Proceed at ${limitMph(APPROACH_LIMIT)} mph or less until the next signal.` },
+  { aspect: 'approach', name: 'Approach', rule: `The next signal is at stop. ${limitMph(APPROACH_LIMIT)} mph or less, and stop at it.` },
   { aspect: 'clear', name: 'Clear', rule: 'Proceed at track speed.' },
-  { aspect: 'divergeApproach', name: 'Diverging approach', rule: `The switch is set for the diverging road. ${limitMph(APPROACH_LIMIT)} mph or less until the next signal.` },
-  { aspect: 'divergeClear', name: 'Diverging clear', rule: `The switch is set for the diverging road. ${limitMph(DIVERGE_LIMIT)} mph or less through the junction.` },
+  { aspect: 'divergeApproach', name: 'Diverging approach', rule: `Set for the diverging road, and the next signal is at stop. ${limitMph(APPROACH_LIMIT)} mph or less, and stop at it.` },
+  { aspect: 'divergeClear', name: 'Diverging clear', rule: `Set for the diverging road. ${limitMph(DIVERGE_LIMIT)} mph or less until the whole train is through the junction.` },
 ];
+
+/** A rule: its name in bold, then the rule. */
+type Rule = [name: string, text: string];
+
+/** Reading signals (spec §9): first on the page, since the desk never shows an aspect. */
+const SIGNAL_RULES: Rule[] = [
+  ['As you pass', 'The Rider reads each signal as the train passes it. Ask what it shows: the Ahead list says when.'],
+  [
+    'After a yellow',
+    `The next signal is at stop: stop at it (the Ahead list shows exactly where). Under ${limitMph(APPROACH_LIMIT)} mph till then; ${formatMoney(SPEED_FINE)} fine over ${limitMph(APPROACH_LIMIT * SPEED_FINE_TOLERANCE)}.`,
+  ],
+  [
+    'Diverging clear',
+    `${limitMph(DIVERGE_LIMIT)} mph until the whole train is through the junction (${formatMoney(SPEED_FINE)} fine over ${limitMph(DIVERGE_LIMIT * SPEED_FINE_TOLERANCE)}), then the track’s own limit.`,
+  ],
+  ['Junction signals', 'Ask early: the Rider’s spyglass reaches them. Red means the road the switch is set for is blocked: throw it and ask again.'],
+];
+
+/** What to call to the Rider, who can't see the map (spec §4.3, §5.2, §8). */
+const CALLS: Rule[] = [
+  ['Tunnels', 'Everyone above the car floors is swept off, the tender top too. Call “get down”.'],
+  ['Low bridges', 'The beam knocks down anyone standing on a roof or the tender top. Call “duck”.'],
+  ['Fords', 'The water washes everyone below the car roofs off the train, inside too. Call them early: “get up top”.'],
+  [
+    'Cattle',
+    `One blast when the Rider calls it, begun ${roundYards(WHISTLE_SCARE_MIN)}–${roundYards(WHISTLE_SCARE_MAX)} yards from the herd. Whistle early or hold it down and they get used to it and won’t budge. The whistle uses steam.`,
+  ],
+  [
+    'Slamming the brakes',
+    `Emergency (Space) at ${limitMph(LURCH_MIN_SPEED)} mph or more spooks the horses alongside and throws anyone standing outside. Tell the Rider to crouch first.`,
+  ],
+];
+
+/** The rest of the rules of the road. */
+const ROAD_RULES: Rule[] = [
+  ['Speed limits', `Posted on the map and in the Ahead list. ${Math.round((OVERSPEED_WARN - 1) * 100)}% over and the wheels squeal; ${Math.round((DERAIL_FACTOR - 1) * 100)}% over for ${DERAIL_SECONDS} s, or ${Math.round((DERAIL_INSTANT - 1) * 100)}% over at once, and she derails.`],
+  ['Stations', `Stop the loco's front within ${windowYards(STATION_WINDOW)} of the mark and stand ${DWELL_SECONDS} s.`],
+  ['Water', `Stop with the tender hatch within ${windowYards(SPOUT_WINDOW)} of the spout. The Rider lowers it.`],
+  ['Switches', `Won't move with a train within ${formatDistance(SWITCH_FOUL_DISTANCE)} of the points. Running through one set against you springs it over.`],
+  ['End of track', `Reach the buffers under ${Math.max(1, limitMph(BUFFER_SAFE))} mph.`],
+  ['Reverser', 'Moves only when the train is stopped.'],
+  ['Hands up', 'With a gun on you only the whistle works, until the Rider clears the cab.'],
+];
+
+/** Every rule the rulebook states, as plain text: the aspects' meanings, then the lists. */
+export function rulebookText(): string[] {
+  return [...ROWS.map((r) => `${r.name}. ${r.rule}`), ...[...SIGNAL_RULES, ...CALLS, ...ROAD_RULES].map(([k, v]) => `${k}. ${v}`)];
+}
+
+function ruleList(rules: readonly Rule[]): HTMLElement {
+  const ul = el('ul', 'rb-list');
+  for (const [k, v] of rules) {
+    const li = el('li');
+    li.append(el('b', undefined, `${k}. `), document.createTextNode(v));
+    ul.append(li);
+  }
+  return ul;
+}
 
 /**
  * One signal picture: a mast with one or two arms and their lamps (day), or the lamps alone on a
@@ -144,7 +221,7 @@ export class Rulebook {
     this.el.setAttribute('aria-label', 'Rulebook');
     const head = el('header', 'rb-head');
     const title = el('h2', 'rb-title', 'Rulebook');
-    const sub = el('span', 'rb-sub', 'Signals are for the Rider’s eyes. Your desk never shows them: ask.');
+    const sub = el('span', 'rb-sub', 'Signals are for the Rider’s eyes. Your desk never shows them: ask as you pass each one.');
     const close = el('button', 'desk-btn rb-close');
     close.type = 'button';
     close.innerHTML = 'Close <kbd>Tab</kbd>';
@@ -199,24 +276,9 @@ export class Rulebook {
 
   private buildRules(): HTMLElement {
     const sec = el('div', 'rb-col rb-rules');
-    sec.append(el('h3', undefined, 'Rules of the road'));
-    const ul = el('ul', 'rb-list');
-    const items: [string, string][] = [
-      ['Speed limits', `Posted on the map and in the Ahead list. ${Math.round((OVERSPEED_WARN - 1) * 100)}% over and the wheels squeal; ${Math.round((DERAIL_FACTOR - 1) * 100)}% over for ${DERAIL_SECONDS} s, or ${Math.round((DERAIL_INSTANT - 1) * 100)}% over at once, and she derails.`],
-      ['Caution signals', `After an approach aspect, keep under ${limitMph(APPROACH_LIMIT)} mph to the next signal (${formatMoney(SPEED_FINE)} fine over ${limitMph(APPROACH_LIMIT * SPEED_FINE_TOLERANCE)} mph).`],
-      ['Stations', `Stop the loco's front within ${STATION_WINDOW} m of the mark and stand ${DWELL_SECONDS} s.`],
-      ['Water', `Stop with the tender hatch within ${SPOUT_WINDOW} m of the spout. The Rider lowers it.`],
-      ['Switches', `Won't move with a train within ${SWITCH_FOUL_DISTANCE} m of the points. Running through one set against you springs it over.`],
-      ['End of track', `Reach the buffers under ${Math.max(1, limitMph(BUFFER_SAFE))} mph.`],
-      ['Reverser', 'Moves only when the train is stopped. Space throws the emergency brake.'],
-      ['Hands up', 'With a gun on you only the whistle works, until the Rider clears the cab.'],
-    ];
-    for (const [k, v] of items) {
-      const li = el('li');
-      li.append(el('b', undefined, `${k}. `), document.createTextNode(v));
-      ul.append(li);
-    }
-    sec.append(ul);
+    sec.append(el('h3', undefined, 'Reading signals'), ruleList(SIGNAL_RULES));
+    sec.append(el('h3', undefined, 'Calls to the Rider'), ruleList(CALLS));
+    sec.append(el('h3', undefined, 'Rules of the road'), ruleList(ROAD_RULES));
     sec.append(el('h3', undefined, 'Timetable'));
     sec.append(this.buildTimetable());
     return sec;

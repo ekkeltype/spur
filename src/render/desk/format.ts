@@ -1,7 +1,8 @@
-// Text for the Engineer's desk (spec §0 note 6: the sim is metric, the desk shows mph, miles and a
-// 12-hour clock). Pure: tests/desk.test.ts imports this under Node.
+// Text for the Engineer's desk (spec §0 note 6: the sim is metric, the desk shows mph, yards and
+// miles, and a 12-hour clock). Pure: tests/desk.test.ts imports this under Node. The menus use
+// the same distance format (ui/text.ts).
 
-import { MILE, MPH } from '../../sim/rules';
+import { MILE, MPH, YARD } from '../../sim/rules';
 import type { AnyRun } from '../../sim/network';
 
 const DAY = 24 * 3600;
@@ -43,13 +44,40 @@ export function formatMoney(n: number): string {
 
 export const toMph = (ms: number): number => ms * MPH;
 
-/** Metres below a kilometre, where a stop is judged ("850 m"), miles beyond ("1.5 mi"). */
+/** Yards in a mile (1,760). */
+const MILE_YARDS = Math.round(MILE / YARD);
+
+/**
+ * Metres as whole yards, rounded as a distance is read out: to 1 yd under 100, to 5 under 1,000 and
+ * to 10 beyond (DECISIONS.md, round 2). Unsigned.
+ */
+export function roundYards(m: number): number {
+  const yd = Math.abs(m) / YARD;
+  const step = yd < 100 ? 1 : yd < 1000 ? 5 : 10;
+  return Math.round(yd / step) * step;
+}
+
+/**
+ * A distance as the railroad reads it (spec §0 note 6): yards below a mile ("85 yd", "1,240 yd"),
+ * miles with one decimal from a mile up ("1.2 mi"). Never metres.
+ */
 export function formatDistance(m: number): string {
-  const sign = m < 0 ? MINUS : '';
-  const a = Math.abs(m);
-  if (a < 999.5) return `${sign}${Math.round(a)} m`;
-  const mi = a / MILE;
-  return `${sign}${mi < 9.95 ? mi.toFixed(1) : Math.round(mi)} mi`;
+  const yd = roundYards(m);
+  if (Math.abs(m) >= MILE || yd >= MILE_YARDS) return `${m < 0 ? MINUS : ''}${(Math.abs(m) / MILE).toFixed(1)} mi`;
+  return `${m < 0 && yd > 0 ? MINUS : ''}${yd.toLocaleString('en-US')} yd`;
+}
+
+/**
+ * Whole yards, never coarser: the precision-stop readout's distances to the stop mark and the spout,
+ * where the last few yards are the point ("437 yd", "3 yd"). Unsigned.
+ */
+export function formatYards(m: number): string {
+  return `${Math.round(Math.abs(m) / YARD).toLocaleString('en-US')} yd`;
+}
+
+/** A tolerance in whole yards, rounded down so keeping within it keeps within the rule ("16 yd" for 15 m). */
+export function windowYards(m: number): string {
+  return `${Math.floor(Math.abs(m) / YARD + 1e-9)} yd`;
 }
 
 /** Below this closing speed (m/s) an ETA means nothing. */

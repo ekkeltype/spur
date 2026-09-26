@@ -17,12 +17,33 @@ export interface LogContext {
   /** "Switch 3 (Mesa Loop W)" */
   switchLabel(id: string): string;
   tunnelName(id: string): string;
+  /** "Salt Creek ford" */
+  fordName(id: string): string;
   signalName(id: string): string;
   /** The contract's cargo, capitalised ("Payroll"). */
   cargo: string;
   /** For flagPlaced: metres from the loco's front to the flag, if it's ahead on the route. */
   flagDist: number | null;
 }
+
+export type FineReason = Extract<EngineerEvent, { type: 'fine' }>['reason'];
+
+const FINE_TEXT: Record<FineReason, string> = {
+  redSignal: 'passed a signal at stop',
+  speeding: 'too fast after a yellow',
+  junction: 'too fast through the junction',
+};
+
+/** What a fine was for (spec §9.3), as both seats read it: "Fined $10: too fast after a yellow". */
+export function fineText(reason: FineReason): string {
+  return FINE_TEXT[reason];
+}
+
+const RIDER_OFF_TEXT: Record<Extract<EngineerEvent, { type: 'riderOff' }>['cause'], string> = {
+  tunnel: 'The Rider was knocked off in the tunnel',
+  water: 'The Rider was washed off the train',
+  fall: 'The Rider fell off the train',
+};
 
 const LOSS_TEXT: Record<LossReason, string> = {
   collision: 'Collision',
@@ -70,16 +91,13 @@ export function describeEvent(e: EngineerEvent, c: LogContext): LogText | null {
     case 'tunnelExit':
       return { text: `Out of ${c.tunnelName(e.id)}`, tone: 'quiet' };
     case 'fordEnter':
-      return { text: 'Into the water', tone: 'quiet' };
+      return { text: `Into the water at ${c.fordName(e.id)}`, tone: 'quiet' };
     case 'fordExit':
       return { text: 'Out of the water', tone: 'quiet' };
     case 'signalPassed':
       return { text: `Passed ${c.signalName(e.id)}`, tone: 'quiet' };
     case 'fine':
-      return {
-        text: `Fined ${formatMoney(e.amount)}: ${e.reason === 'redSignal' ? 'passed a signal at stop' : e.reason === 'junction' ? 'too fast through the junction' : 'too fast under a caution signal'}`,
-        tone: 'danger',
-      };
+      return { text: `Fined ${formatMoney(e.amount)}: ${fineText(e.reason)}`, tone: 'danger' };
     case 'telegram':
       return { text: e.text, tone: 'telegram' };
     case 'sideJob':
@@ -96,7 +114,7 @@ export function describeEvent(e: EngineerEvent, c: LogContext): LogText | null {
     case 'gunfire':
       return { text: 'Gunfire outside', tone: 'quiet', key: 'gunfire' };
     case 'riderOff':
-      return { text: e.cause === 'tunnel' ? 'The Rider was knocked off in the tunnel' : 'The Rider fell off the train', tone: 'danger' };
+      return { text: RIDER_OFF_TEXT[e.cause], tone: 'danger' };
     case 'riderDown':
       return { text: 'The Rider is down', tone: 'danger' };
     case 'riderBack':

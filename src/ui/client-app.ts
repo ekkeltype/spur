@@ -194,7 +194,7 @@ export class ClientApp {
         break;
       case 'results':
         if (s?.game && s.result && s.payout) {
-          const el = resultsScreen(s.result, s.payout, s.game.run, 'engineer', online ? { leave: () => this.opts.onExit() } : null);
+          const el = resultsScreen(s.result, s.payout, s.game.run, 'engineer', online ? { leave: () => this.opts.onExit() } : null, s.game.consist);
           if (s.payout.total > 0 && this.opts.sfx) {
             const sfx = this.opts.sfx;
             window.setTimeout(() => sfx.cash(), 400);
@@ -278,6 +278,9 @@ export class ClientApp {
 // The play screen: the desk, with the pause and countdown over it
 // ---------------------------------------------------------------------------
 
+/** The signal hint comes this many seconds before the first signal. */
+const SIGNAL_HINT_S = 15;
+
 class EngineerPlay {
   readonly el: HTMLElement;
   private desk: EngineerDesk;
@@ -312,7 +315,7 @@ class EngineerPlay {
       consist: game.consist,
       governor: game.upgrades.includes('governor'),
     });
-    this.hints = new Hints(() => hintsOn(opts.settings.get(), game.run.index === 0));
+    this.hints = new Hints(() => hintsOn(opts.settings.get(), !game.replay));
     this.pause = pauseOverlay('engineer', (r) => session.setReady(r), opts.mode === 'online' ? [['Leave', () => opts.onExit()]] : undefined);
     this.debugEl.hidden = !import.meta.env.DEV || !opts.debug;
     this.el = h(
@@ -361,6 +364,12 @@ class EngineerPlay {
     }
   }
 
+  /** A signal is coming up on the Ahead list, SIGNAL_HINT_S or less away at the current speed. */
+  private signalComing(): boolean {
+    const near = this.desk.nearest('signal');
+    return near !== null && near.secs <= SIGNAL_HINT_S;
+  }
+
   update(): void {
     const s = this.session;
     const paused = s.mode === 'paused';
@@ -384,7 +393,10 @@ class EngineerPlay {
     this.sounds?.frame(s.view, s.mode !== 'paused');
     if (running) {
       this.runningSince ??= now;
-      if (now - this.runningSince > 1500) this.hints.show('callouts', 'Call out tunnels and low bridges before the train gets there: the Rider can’t see the map.');
+      const t = now - this.runningSince;
+      if (t > 1500) this.hints.show('callouts', 'Call out tunnels, low bridges and fords before the train gets there: the Rider can’t see the map.');
+      // The first signal coming up (spec §9.1), once the opening hint has had its time.
+      if (t > 9000 && this.signalComing()) this.hints.show('signals', 'Ask the Rider what each signal shows as you pass it. After a yellow, stop at the next one: the Ahead list shows where.');
     }
     if (import.meta.env.DEV && this.opts.debug) {
       if (s.debugInfo !== this.lastDebug) {

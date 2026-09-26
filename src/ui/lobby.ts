@@ -1,14 +1,15 @@
 // The depot (spec §3, §12): both players see the same board and either can act on it. The run list
-// with medals, the selected run's contract, the train (required cars fixed, optional ones coupled or
-// not), assists per seat, and the shop. Every action goes to the host, which validates it; the board
-// only shows what the host last said, and disables what it knows the host would refuse.
+// with medals, the selected run's contract, the train (required cars fixed, carrying the contract;
+// optional ones coupled or not, each cargo car with what it pays), assists per seat, and the shop.
+// Every action goes to the host, which validates it; the board only shows what the host last said,
+// and disables what it knows the host would refuse.
 
 import type { DepotAction, LobbyState, RunCard } from '../net/protocol';
 import { availableCars } from '../save/save';
-import { CAR_SPECS, REPLAY_PAY_FACTOR, SHOP, type ShopItem } from '../sim/rules';
+import { CARGO_PAY, CAR_SPECS, REPLAY_PAY_FACTOR, SHOP, type ShopItem } from '../sim/rules';
 import type { CarKind, CarType } from '../sim/types';
 import { button, clear, h } from './dom';
-import { ACT_NAMES, BOARDING_SPEED, CAR_LABELS, CARGO_NAMES, formatClock, formatDuration, MEDALS, money, mph, plural, topSpeed, trainMass } from './text';
+import { ACT_NAMES, BOARDING_SPEED, CAR_LABELS, CARGO_NAMES, cargoCars, distance, formatClock, formatDuration, MEDALS, money, mph, plural, tons, topSpeed, trainMass } from './text';
 
 export interface DepotModel {
   lobby: LobbyState;
@@ -75,7 +76,7 @@ export function depotBoard(act: (action: DepotAction) => void): DepotView {
       if (!card) return;
       contract(JSON.stringify([card, lobby.checkpoint]), () => contractCard(card, lobby));
       const c = lobby.campaign;
-      train(JSON.stringify([card.id, card.requiredCars, card.maxCars, lobby.consist, c.consist, c.owned]), () => trainSection(card, lobby, act));
+      train(JSON.stringify([card.id, card.requiredCars, card.maxCars, card.times > 0, lobby.consist, c.consist, c.owned]), () => trainSection(card, lobby, act));
       assists(JSON.stringify(c.assists), () => assistToggles(lobby, act));
       shop(JSON.stringify([c.money, c.owned]), () => shopList(lobby, act));
     },
@@ -176,11 +177,19 @@ function contractCard(card: RunCard, lobby: LobbyState): Node[] {
 // The train
 // ---------------------------------------------------------------------------------------------
 
+/** What a car carries, for its title: the contract, paying cargo, or nothing. */
+function carries(kind: CarKind, required: boolean): string {
+  if (required) return 'it carries the contract';
+  const pay = kind === 'loco' || kind === 'tender' ? 0 : (CARGO_PAY[kind] ?? 0);
+  return pay > 0 ? `its cargo pays ${money(pay)} on arrival` : '';
+}
+
 function carBox(kind: CarKind, required: boolean): HTMLElement {
   const spec = CAR_SPECS[kind];
+  const what = carries(kind, required);
   return h(
     'div',
-    { class: `car car-${kind} ${required ? 'required' : ''}`, style: { flexGrow: String(spec.length) }, title: `${CAR_LABELS[kind]}: ${spec.length} m, ${spec.mass} t${required ? ' (the contract needs it)' : ''}` },
+    { class: `car car-${kind} ${required ? 'required' : ''}`, style: { flexGrow: String(spec.length) }, title: `${CAR_LABELS[kind]}: ${distance(spec.length)}, ${tons(spec.mass)}${what ? `; ${what}` : ''}` },
     h('span', { class: 'car-name', text: CAR_LABELS[kind] }),
   );
 }
@@ -199,18 +208,27 @@ function trainSection(card: RunCard, lobby: LobbyState, act: (a: DepotAction) =>
     carBox('loco', false),
   );
   const chips = h('div', { class: 'chips' });
+  // The contract's own cars come first: always coupled, carrying the contract (spec §12).
+  for (const car of card.requiredCars) {
+    const label = CAR_LABELS[car];
+    chips.append(h('span', { class: 'chip required', text: `${label} · carries the contract`, title: `The contract rides in the ${label.toLowerCase()} car: it's always coupled, and pays nothing extra` }));
+  }
   for (const car of CHIP_CARS) {
     if (card.requiredCars.includes(car)) continue;
     const label = CAR_LABELS[car];
+    // Cargo cars say what they pay (spec §12): "Boxcar +$30".
+    const pay = CARGO_PAY[car] ?? 0;
+    const text = pay > 0 ? `${label} +${money(pay)}` : label;
+    const what = pay > 0 ? `: its cargo pays ${money(pay)} on arrival` : ': it carries no cargo';
     if (consist.includes(car)) {
-      chips.append(button(label, () => act({ kind: 'toggleCar', car }), 'chip on', { title: `Uncouple the ${label.toLowerCase()} car`, attrs: { 'aria-pressed': 'true' } }));
+      chips.append(button(text, () => act({ kind: 'toggleCar', car }), 'chip on', { title: `Uncouple the ${label.toLowerCase()} car${what}`, attrs: { 'aria-pressed': 'true' } }));
     } else if (chosen.includes(car)) {
       chips.append(button(`${label} · no room`, () => act({ kind: 'toggleCar', car }), 'chip noroom', { title: `Chosen, but this run takes only ${card.maxCars} cars. Click to take it off the list.` }));
     } else if (available.includes(car)) {
       chips.append(
-        button(label, () => act({ kind: 'toggleCar', car }), 'chip', {
+        button(text, () => act({ kind: 'toggleCar', car }), 'chip', {
           disabled: full,
-          title: full ? `The train is full: ${card.maxCars} cars at most` : `Couple the ${label.toLowerCase()} car`,
+          title: full ? `The train is full: ${card.maxCars} cars at most` : `Couple the ${label.toLowerCase()} car${what}`,
           attrs: { 'aria-pressed': 'false' },
         }),
       );
@@ -220,6 +238,8 @@ function trainSection(card: RunCard, lobby: LobbyState, act: (a: DepotAction) =>
   }
   const mass = trainMass(consist);
   const top = topSpeed(mass);
+  const cargo = cargoCars(consist, card.requiredCars).reduce((n, c) => n + c.pay, 0);
+  const replay = card.times > 0;
   return [
     strip,
     h('div', { class: 'chips-row' }, h('span', { class: 'chips-label', text: 'Couple' }), chips),
@@ -227,9 +247,13 @@ function trainSection(card: RunCard, lobby: LobbyState, act: (a: DepotAction) =>
       'p',
       { class: 'train-stats' },
       h('strong', { text: `${plural(consist.length, 'car')} of ${card.maxCars}` }),
-      ` · ${mass} t · top speed about ${mph(top)}`,
+      // What the cargo pays, next to what its weight costs.
+      ` · ${cargo > 0 ? `cargo pays ${money(cargo)}` : 'no paying cargo'} · ${tons(mass)} · top speed about ${mph(top)}`,
       h('br'),
-      h('span', { class: 'small muted', text: `Heavier trains are slower, and horsemen can board at ${mph(BOARDING_SPEED)} or less.` }),
+      h('span', {
+        class: 'small muted',
+        text: `Cargo cars pay on arrival${replay ? ' (half on a replay)' : ''}, but heavier trains are slower, and horsemen can board at ${mph(BOARDING_SPEED)} or less.`,
+      }),
     ),
   ];
 }

@@ -27,6 +27,10 @@ const TRESTLE = '#A8683E';
 
 /** In follow mode the panel shows about this much track across. */
 const FOLLOW_METRES = 3200;
+/** A ford is drawn at least this long along the track (px at the desk's design size), however far out the zoom. */
+const FORD_MIN_PX = 12;
+const FORD_RIVER = '#3F7FB8';
+const FORD_LABEL = '#9CCBEE';
 /** Seconds for the camera to settle after a change. */
 const CAMERA_TAU = 0.22;
 
@@ -479,6 +483,68 @@ export class RouteMap {
       c.lineCap = 'round';
     }
 
+    // Fords: the river running over the line (spec §4.3). The river crossing the track, the water
+    // standing over the rails, and the current's ripples across them; never shorter than
+    // FORD_MIN_PX along the track, so it reads at any zoom.
+    const pxPerM = this.upm * this.cam.s;
+    for (const fd of run.fords) {
+      const g = this.geom.get(fd.edge);
+      if (!g) continue;
+      const mid = (fd.from + fd.to) / 2;
+      const half = Math.max(Math.abs(fd.to - fd.from) / 2, (FORD_MIN_PX * u) / 2 / Math.max(1e-9, pxPerM));
+      const a = Math.max(0, mid - half);
+      const b = Math.min(g.length, mid + half);
+      const w = this.trackWidth(g.kind);
+      const reach = w / 2 + 11 * u;
+      const pm = this.pt(fd.edge, mid);
+      const len = (b - a) * pxPerM;
+      // The river: a band across the line with rippling banks, running on past the rails.
+      c.save();
+      c.translate(pm.x, pm.y);
+      c.rotate(Math.atan2(pm.ty, pm.tx));
+      c.beginPath();
+      const bank = (x0: number, from: number, to: number): void => {
+        for (let s = 0; s <= 12; s++) {
+          const y = from + ((to - from) * s) / 12;
+          c.lineTo(x0 + Math.sin((y / reach) * Math.PI * 1.5) * 1.6 * u, y);
+        }
+      };
+      c.moveTo(-len / 2, -reach);
+      bank(-len / 2, -reach, reach);
+      bank(len / 2, reach, -reach);
+      c.closePath();
+      c.fillStyle = withAlpha(FORD_RIVER, 0.55);
+      c.fill();
+      c.restore();
+      // The water over the rails, following the track.
+      c.lineCap = 'butt';
+      c.beginPath();
+      this.trace(c, fd.edge, a, b);
+      c.strokeStyle = withAlpha(WATER_BLUE, 0.7);
+      c.lineWidth = w + 5 * u;
+      c.stroke();
+      const ripples = Math.max(1, Math.min(12, Math.round(len / (7 * u))));
+      c.lineCap = 'round';
+      c.strokeStyle = 'rgba(222,240,252,0.9)';
+      c.lineWidth = 1.3 * u;
+      for (let k = 0; k < ripples; k++) {
+        const p = this.pt(fd.edge, a + ((b - a) * (k + 0.5)) / ripples);
+        const r = reach - 3 * u;
+        c.beginPath();
+        for (let s = 0; s <= 10; s++) {
+          const t = -r + (2 * r * s) / 10;
+          const wob = Math.sin((s / 10) * Math.PI * 3) * 1.4 * u;
+          const x = p.x - p.ty * t + p.tx * wob;
+          const y = p.y + p.tx * t + p.ty * wob;
+          if (s === 0) c.moveTo(x, y);
+          else c.lineTo(x, y);
+        }
+        c.stroke();
+      }
+      const r = Math.max(reach, len / 2);
+      this.reserve({ x: pm.x - r, y: pm.y - r, w: 2 * r, h: 2 * r });
+    }
+
     // Trestles: brown, with flared abutments; burning ones glow.
     for (const t of run.trestles) {
       const g = this.geom.get(t.edge);
@@ -739,6 +805,7 @@ export class RouteMap {
     }
     for (const [name, e] of named) this.featureLabel(c, e.id, e.length / 2, name, `italic ${Math.round(f * 0.74)}px ${SANS}`, 'rgba(239,230,210,0.55)', 1);
     for (const t of run.tunnels) this.featureLabel(c, t.edge, (t.from + t.to) / 2, t.name, `${Math.round(f * 0.72)}px ${SANS}`, 'rgba(239,230,210,0.62)', 1);
+    for (const fd of run.fords) this.featureLabel(c, fd.edge, (fd.from + fd.to) / 2, fd.name, `italic ${Math.round(f * 0.72)}px ${SANS}`, FORD_LABEL, -1);
     for (const t of run.trestles) {
       const label = t.burning ? `${t.name} (burning)` : t.name;
       this.featureLabel(c, t.edge, (t.from + t.to) / 2, label, `${Math.round(f * 0.72)}px ${SANS}`, t.burning ? '#FFB27A' : '#D39A70', -1);

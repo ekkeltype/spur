@@ -9,6 +9,8 @@ const svg = (body: string): string =>
 export const ICONS: Record<AheadKind | 'rider' | 'telegram', string> = {
   // A portal in a hillside, the track running in.
   tunnel: svg('<path d="M2 20h20"/><path d="M5 20v-7a7 7 0 0 1 14 0v7"/><path d="M9 20v-6.5a3 3 0 0 1 6 0V20" fill="currentColor" fill-opacity=".35"/>'),
+  // The river running over the rails.
+  ford: svg('<path d="M3 19h18"/><path d="M6 17v4M12 17v4M18 17v4" stroke-width="1.5"/><path d="M2 9.5c2.5-2 4.5-2 7 0s4.5 2 7 0 4-2 6-.5"/><path d="M2 14c2.5-2 4.5-2 7 0s4.5 2 7 0 4-2 6-.5"/>'),
   // A beam across the line, low over the roofs.
   lowBridge: svg('<path d="M2 9h20"/><path d="M4 9v11M20 9v11"/><path d="M2 20h20"/><path d="M9 13.5h6" stroke-dasharray="1.5 2"/>'),
   // A timber trestle over a gorge.

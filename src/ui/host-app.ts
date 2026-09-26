@@ -6,8 +6,11 @@ import { HostSession, type HostGame } from '../net/host';
 import { PeerHost } from '../net/peer';
 import type { DepotAction } from '../net/protocol';
 import type { Transport } from '../net/transport';
+import { fineText } from '../render/desk/events';
+import { roundYards } from '../render/desk/format';
 import { RiderRenderer } from '../render/rider/renderer';
 import { exportSaveCode, importSaveCode, SaveError } from '../save/save';
+import { WHISTLE_SCARE_MAX } from '../sim/rules';
 import { spoutPrompt } from '../sim/train';
 import { NO_INPUT, type GameState, type RunDef, type SimEvent } from '../sim/types';
 import { button, clear, copyText, h } from './dom';
@@ -17,7 +20,7 @@ import { depotBoard } from './lobby';
 import { briefingScreen, countdownOverlay, pauseOverlay, readyRow, resultsScreen, type PauseView } from './screens';
 import { RiderSounds, type ViewSpan } from './sounds';
 import type { SaveStore } from './stores';
-import { money } from './text';
+import { distance, money } from './text';
 
 export interface HostAppOptions {
   root: HTMLElement;
@@ -129,7 +132,7 @@ export class HostApp {
     if (waiting && s.hostReady) s.setReady(false);
   };
 
-  /** Dev debug keys (spec §19): ] [ sim speed, G god mode, K kill bandits, N skip 500 m. */
+  /** Dev debug keys (spec §19): ] [ sim speed, G god mode, K kill bandits, N skip 500 m (545 yd). */
   debugKey(code: string): void {
     if (!import.meta.env.DEV) return;
     const s = this.session;
@@ -155,7 +158,7 @@ export class HostApp {
         break;
       case 'KeyN':
         s.queueDebug({ kind: 'skip', meters: 500 });
-        what = 'skipped 500 m';
+        what = `skipped ${distance(500)}`;
         break;
     }
     if (what) this.play?.toast(`Debug: ${what}`);
@@ -199,12 +202,19 @@ export class HostApp {
     }
     if (name === 'results' && g && s.result && s.payout) {
       const station = s.retryStation();
-      const el = resultsScreen(s.result, s.payout, g.run, 'rider', {
-        next: s.hasNext() ? () => s.next() : undefined,
-        retry: station ? { station, go: () => s.retryFromCheckpoint() } : undefined,
-        restart: () => s.restart(),
-        lobby: () => s.toLobby(),
-      });
+      const el = resultsScreen(
+        s.result,
+        s.payout,
+        g.run,
+        'rider',
+        {
+          next: s.hasNext() ? () => s.next() : undefined,
+          retry: station ? { station, go: () => s.retryFromCheckpoint() } : undefined,
+          restart: () => s.restart(),
+          lobby: () => s.toLobby(),
+        },
+        g.consist,
+      );
       if (s.payout.total > 0) window.setTimeout(() => this.opts.sfx.cash(), 400);
       return { name: key, el, update: () => {} };
     }
@@ -390,7 +400,7 @@ class RiderPlay {
     this.canvas = h('canvas', { class: 'rider-canvas' });
     this.renderer = new RiderRenderer(this.canvas);
     this.sounds = new RiderSounds(opts.sfx);
-    this.hints = new Hints(() => hintsOn(opts.store.get(), game.run.index === 0));
+    this.hints = new Hints(() => hintsOn(opts.store.get(), !game.replay));
     this.pause = pauseOverlay('rider', (r) => s.setReady(r), [['Abandon the run and go to the lobby', () => s.toLobby()]]);
     this.controls = new RiderControls({
       onPause: () => s.requestPause(),
@@ -483,13 +493,13 @@ class RiderPlay {
           t.show('The loot is gone', 'danger');
           break;
         case 'riderOff':
-          t.show(e.cause === 'tunnel' ? 'Knocked off by the tunnel!' : 'Off the train!', 'danger');
+          t.show(e.cause === 'tunnel' ? 'Knocked off by the tunnel!' : e.cause === 'water' ? 'Washed off in the ford!' : 'Off the train!', 'danger');
           break;
         case 'riderDown':
           t.show('You’re down. Back aboard in a few seconds.', 'danger');
           break;
         case 'fine':
-          t.show(e.reason === 'redSignal' ? `Fined ${money(e.amount)}: passed a signal at stop` : `Fined ${money(e.amount)}: too fast after a caution`, 'danger');
+          t.show(`Fined ${money(e.amount)}: ${fineText(e.reason)}`, 'danger');
           break;
         case 'waterFull':
           t.show('The tender is full', 'good');
@@ -500,8 +510,18 @@ class RiderPlay {
         case 'shot':
           if (e.by !== 'rider') this.hints.show('cover', 'Crouch (S) to be harder to hit, and click to shoot back.');
           break;
+        // Each hazard sends the Rider somewhere different (spec §6.3): down, up, crouched.
         case 'tunnelEnter':
-          this.hints.show('tunnel', 'Tunnels knock anyone on a roof off the train. Ask the Engineer to call them out.');
+          this.hints.show('tunnel', 'Tunnels sweep everyone above the car floors off the train, the tender top too. Get down to a platform or inside when the Engineer calls one.');
+          break;
+        case 'fordEnter':
+          this.hints.show('ford', 'Fords wash everyone below the car roofs off the train, inside too. Get up on a roof or the tender top when the Engineer calls one.');
+          break;
+        case 'thrown':
+          if (e.who === 'rider') this.hints.show('lurch', 'The Engineer slammed the brakes and the lurch threw you. Crouch (S) to brace, and call for the brake when a horseman is about to climb aboard.');
+          break;
+        case 'cattleCalm':
+          this.hints.show('cattle', `The herd heard the whistle too soon and is ignoring it. Call for one blast when they’re closer, inside ${roundYards(WHISTLE_SCARE_MAX)} yards.`);
           break;
         default:
           break;
@@ -533,7 +553,7 @@ class RiderPlay {
     if (running) {
       this.runningSince ??= now;
       const t = now - this.runningSince;
-      if (t > 1500) this.hints.show('spyglass', 'Hold Shift or the right mouse button on a roof to look ahead with the spyglass. Tell the Engineer what you see.');
+      if (t > 1500) this.hints.show('spyglass', 'Read each signal as the train passes it. To see things far down the line, hold Shift or the right mouse button on a roof: the spyglass.');
       if (t > 30000) this.hints.show('gaps', 'Jump the roof gaps with W or Space. The faster the train, the harder the wind pushes you back.');
     }
     if (import.meta.env.DEV && this.opts.debug) {

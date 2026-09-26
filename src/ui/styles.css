@@ -831,6 +831,14 @@ h3.section {
   border-style: dotted;
 }
 
+/* The contract's own cars: always coupled, like the mesa-red cars in the strip. */
+.chip.required {
+  cursor: default;
+  color: var(--paper);
+  background: var(--mesa);
+  border-color: var(--mesa);
+}
+
 .chip:disabled {
   cursor: default;
   opacity: 0.4;
