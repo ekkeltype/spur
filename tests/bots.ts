@@ -6,7 +6,7 @@ import { HALF_W, windOf } from '../src/sim/body';
 import { hazardsNear } from '../src/sim/game';
 import { trainGeometry, type TrainGeometry } from '../src/sim/geometry';
 import { chance, pick, rand, type RngState } from '../src/sim/rng';
-import { FORD_WATER_Y, RIDER_SHOULDER, RIDER_WALK, TUNNEL_FEET_Y, WEAPONS } from '../src/sim/rules';
+import { FORD_WATER_Y, LADDER_REACH, RIDER_SHOULDER, RIDER_WALK, TUNNEL_FEET_Y, WEAPONS } from '../src/sim/rules';
 import { NO_INPUT, type BanditState, type FrameHazard, type GameState, type RiderInput, type RunDef, type SurfaceKind } from '../src/sim/types';
 
 export class BotRider {
@@ -141,6 +141,19 @@ function calls(state: GameState, run: RunDef): { refuge: Refuge | null; duck: bo
   return { refuge, duck };
 }
 
+/**
+ * The ladder W would grab from here: the nearest within reach, as the Rider's input names none
+ * (body.ts). A bandit can say which ladder it means; the Rider has to stand nearer the right one.
+ */
+function ladderToGrab(geo: TrainGeometry, r: GameState['rider']): number {
+  let best = -1;
+  geo.ladders.forEach((l, i) => {
+    if (Math.abs(r.x - l.x) > LADDER_REACH || r.y < l.y0 - 0.25 || r.y > l.y1 - 0.1) return;
+    if (best < 0 || Math.abs(r.x - l.x) < Math.abs(r.x - geo.ladders[best].x)) best = i;
+  });
+  return best;
+}
+
 /** The nearest spot out of the way: the closest walk region at a safe height, and the place in it nearest x. */
 function shelter(geo: TrainGeometry, x: number, refuge: Refuge): { region: number; x: number } | null {
   const extent = new Map<number, [number, number]>();
@@ -232,6 +245,13 @@ export class GuardBot {
         input.downPressed = step.downPressed;
         input.jump = step.jumpPressed;
         input.jumpPressed = step.jumpPressed;
+        // The first car's end ladder hangs a step from the tender's, and W takes the nearer: step on
+        // to the one meant before climbing, or it climbs the other, climbs back down and tries again.
+        const meant = step.up && step.ladder !== undefined && r.ladder === null ? step.ladder : -1;
+        if (meant >= 0 && ladderToGrab(geo, r) !== meant) {
+          input.up = false;
+          input.moveX = geo.ladders[meant].x > r.x ? 1 : -1;
+        }
       }
     }
     if (aimAt) {
