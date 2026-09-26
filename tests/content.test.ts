@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { clock, estimate, HATCH_BEHIND_FRONT, Line, longestTrain, makeRun, plannedPath, runawayRollTime, sliceSpans } from '../src/content/builder';
 import { RUNS, runById } from '../src/content/runs';
 import { edgeOf, netIndex, spansFromFront, spansLength, spansOverlap, validateRun, walk, xOnSpans, type NetIndex } from '../src/sim/network';
-import { MILE, SPOUT_WINDOW, WHISTLE_SCARE_MAX, WHISTLE_SCARE_MIN } from '../src/sim/rules';
+import { HORSE_AMBUSH_AHEAD, MILE, SPOUT_WINDOW, WHISTLE_EARSHOT, WHISTLE_SCARE_MAX, WHISTLE_SCARE_MIN, WHISTLE_SCARE_SECONDS } from '../src/sim/rules';
 import { routeDistanceAt, routeSpans, timeAtRouteDistance } from '../src/sim/schedule';
-import type { AiTrainDef, CarType, Cargo, RunDef, RunPlan, SwitchState, TrackPoint } from '../src/sim/types';
+import type { AiTrainDef, CarType, Cargo, RunDef, RunPlan, Span, SwitchState, TrackPoint } from '../src/sim/types';
 
 // ---- Helpers -------------------------------------------------------------------------------
 
@@ -72,6 +72,148 @@ function conflicts(run: RunDef, variant: string): string[] {
 }
 
 const CARGO_CAR: Record<Cargo, CarType> = { mail: 'boxcar', freight: 'boxcar', payroll: 'express', silver: 'express', cash: 'express', gold: 'express', dynamite: 'powder' };
+
+// ---- The Rider's rhythm (spec §13): track hazards and what they keep clear of ------------------
+
+/** Every planned route passes at least this many tunnels, low bridges and fords… */
+const MIN_HAZARDS = 7;
+/** …about one a minute: on average no more than this much driving (s) or line (m) per hazard… */
+const DRIVE_PER_HAZARD = 100;
+const LINE_PER_HAZARD = 1800;
+/** …and never more than this much line from one to the next (m). */
+const MAX_HAZARD_GAP = 2000;
+/** From the end of one hazard to the start of the next (m)… */
+const HAZARD_GAP = 350;
+/** …and a little more between a tunnel and a ford: the Rider climbs from the floors to the roofs. */
+const TUNNEL_FORD_GAP = 450;
+/** The first comes no sooner than this after the start (m). */
+const FIRST_HAZARD = 700;
+// Hazards keep clear of platforms (and the longest train standing at one), water towers (and the
+// train filling at one), holds, signals, switches, trestles and obstacles, by these margins (m).
+const PLATFORM_CLEAR = 30;
+const TOWER_CLEAR = 60;
+const STAND_CLEAR = 30;
+const SIGNAL_CLEAR = 40;
+const SWITCH_CLEAR = 60;
+const TRESTLE_CLEAR = 150;
+const OBSTACLE_CLEAR = 150;
+/** Short of cattle and barricades the Rider is at the spyglass, calling them (m). */
+const LOOKOUT = 350;
+/** A burning trestle with no curve before it keeps this much run-up clear (m). */
+const RUN_UP = 600;
+/** Fords shed horsemen (spec §7.2), so none lies this soon after a wave rides in (m). */
+const WAVE_CLEAR = 900;
+/** Fords are this long (m). */
+const FORD_LENGTH: readonly [number, number] = [60, 150];
+/** A plan's blast for cattle begins and ends at least this far inside the scare window (m). */
+const WHISTLE_SPARE = 30;
+
+/** A way from the start to the destination's stop mark: a plan's, or any switch setting's. */
+interface Route {
+  spans: Span[];
+  length: number;
+  x(p: TrackPoint): number | null;
+}
+
+/** Every distinct way from the start to the destination, one per switch setting that gets there. */
+function routesOf(run: RunDef): Route[] {
+  const ix = netIndex(run);
+  const dest = run.stations.find((s) => s.id === run.contract.destination)!;
+  const nodes = run.junctions.map((j) => j.node);
+  const routes = new Map<string, Route>();
+  for (let mask = 0; mask < 1 << nodes.length; mask++) {
+    const sw: Record<string, SwitchState> = {};
+    nodes.forEach((n, i) => (sw[n] = mask & (1 << i) ? 'reverse' : 'normal'));
+    const w = walk(ix, sw, run.start, 1e6);
+    const length = xOnSpans(w.spans, { edge: dest.edge, off: dest.at });
+    if (length === null) continue;
+    const spans = sliceSpans(w.spans, 0, length);
+    const key = spans.map((s) => s.edge).join(' ');
+    if (!routes.has(key)) routes.set(key, { spans, length, x: (p) => xOnSpans(spans, p) });
+  }
+  return [...routes.values()];
+}
+
+/** Where a stretch of one edge lies along a route, or null if the route doesn't pass it. */
+function rangeOn(route: Route, edge: string, a: number, b: number): [number, number] | null {
+  const xa = route.x({ edge, off: a });
+  const xb = route.x({ edge, off: b });
+  return xa === null || xb === null ? null : [Math.min(xa, xb), Math.max(xa, xb)];
+}
+
+type HazardKind = 'tunnel' | 'lowBridge' | 'ford';
+
+/** A track hazard for the people on the train (spec §4.3), by distance along a route. */
+interface Hazard {
+  kind: HazardKind;
+  id: string;
+  x0: number;
+  x1: number;
+}
+
+/** The tunnels, low bridges and fords a route passes, in driving order. */
+function hazardsOn(run: RunDef, route: Route): Hazard[] {
+  const out: Hazard[] = [];
+  const add = (kind: HazardKind, id: string, edge: string, a: number, b: number): void => {
+    const r = rangeOn(route, edge, a, b);
+    if (r) out.push({ kind, id, x0: r[0], x1: r[1] });
+  };
+  for (const t of run.tunnels) add('tunnel', t.id, t.edge, t.from, t.to);
+  for (const b of run.lowBridges) add('lowBridge', b.id, b.edge, b.at, b.at);
+  for (const f of run.fords) add('ford', f.id, f.edge, f.from, f.to);
+  return out.sort((a, b) => a.x0 - b.x0);
+}
+
+/** The junctions a route runs through, by distance along it. */
+function junctionsOn(ix: NetIndex, route: Route): { node: string; x: number }[] {
+  const out: { node: string; x: number }[] = [];
+  let acc = 0;
+  route.spans.forEach((s, i) => {
+    acc += Math.abs(s.to - s.from);
+    const next = route.spans[i + 1];
+    if (!next || next.edge === s.edge) return;
+    const e = edgeOf(ix, s.edge);
+    const node = s.to > s.from ? e.b : e.a;
+    if (ix.junction.has(node)) out.push({ node, x: acc });
+  });
+  return out;
+}
+
+interface Zone {
+  a: number;
+  b: number;
+  what: string;
+}
+
+/** The stretches of a route that hazards keep clear of. */
+function keepClear(run: RunDef, route: Route): Zone[] {
+  const ix = netIndex(run);
+  const L = longestTrain(run);
+  const zones: Zone[] = [];
+  const around = (p: TrackPoint, before: number, after: number, what: string): void => {
+    const x = route.x(p);
+    if (x !== null) zones.push({ a: x - before, b: x + after, what });
+  };
+  for (const s of run.stations) around({ edge: s.edge, off: s.at }, Math.max(s.platform / 2, L) + PLATFORM_CLEAR, s.platform / 2 + PLATFORM_CLEAR, `${s.id} platform`);
+  for (const w of run.waterTowers) around({ edge: w.edge, off: w.at }, Math.max(TOWER_CLEAR, L - HATCH_BEHIND_FRONT + STAND_CLEAR), TOWER_CLEAR, w.id);
+  for (const v of run.variants) run.plan[v].holds.forEach((h, i) => around(h.at, L + STAND_CLEAR, STAND_CLEAR, `plan ${v}'s hold ${i + 1}`));
+  for (const s of run.signals) around({ edge: s.edge, off: s.at }, SIGNAL_CLEAR, SIGNAL_CLEAR, s.id);
+  for (const j of junctionsOn(ix, route)) zones.push({ a: j.x - SWITCH_CLEAR, b: j.x + SWITCH_CLEAR, what: `the switch at ${j.node}` });
+  for (const o of run.obstacles) around({ edge: o.edge, off: o.at }, o.kind === 'rocks' ? OBSTACLE_CLEAR : LOOKOUT, OBSTACLE_CLEAR, o.id);
+  for (const t of run.trestles) {
+    const r = rangeOn(route, t.edge, t.from, t.to);
+    if (!r) continue;
+    zones.push({ a: r[0] - TRESTLE_CLEAR, b: r[1] + TRESTLE_CLEAR, what: t.id });
+    if (!t.burning) continue;
+    // A burning trestle's run-up, from the curve before it: the set piece has the crew's attention.
+    const before = run.curves
+      .map((c) => rangeOn(route, c.edge, c.from, c.to))
+      .filter((c): c is [number, number] => c !== null && c[1] <= r[0])
+      .sort((a, b) => b[1] - a[1])[0];
+    zones.push({ a: before ? before[0] : r[0] - RUN_UP, b: r[0], what: `${t.id}'s run-up` });
+  }
+  return zones;
+}
 
 // ---- The builder ---------------------------------------------------------------------------
 
@@ -262,6 +404,40 @@ describe('the campaign', () => {
     expect(riders[5]).toBeGreaterThan(riders[0] * 2);
     expect(RUNS.map((r) => scheduled(r).length)).toEqual([0, 0, 0, 1, 2, 1]);
   });
+
+  it('fords the river from run 1 on, once or twice a run', () => {
+    for (const r of RUNS) {
+      expect(r.fords.length, r.id).toBeGreaterThanOrEqual(1);
+      expect(r.fords.length, r.id).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('speaks the railroad’s units: mph, yards and miles, never metres (spec §0)', () => {
+    const metric = /\d\s*(?:m|km|km\/h|kph)\b|\b(?:metres?|meters?|kilometres?|kilometers?)\b/i;
+    for (const r of RUNS) {
+      const named = [...r.stations, ...r.tunnels, ...r.trestles, ...r.fords, ...r.lowBridges, ...r.waterTowers, ...r.signals, ...r.junctions, ...r.edges, ...r.aiTrains];
+      const texts = [
+        r.name,
+        r.flavor,
+        r.contract.title,
+        ...r.briefing.rider,
+        ...r.briefing.engineer,
+        ...r.telegrams.map((t) => t.text),
+        ...r.sideJobs.map((j) => j.title),
+        ...r.aiTrains.map((t) => t.runaway?.telegram ?? ''),
+        ...r.nodes.map((n) => n.label ?? ''),
+        ...named.map((f) => f.name ?? ''),
+      ];
+      for (const s of texts) {
+        expect(s, `${r.id}: ${s}`).not.toMatch(metric);
+        // Yards are rounded as the desk rounds them: to 5 under 1,000, to 10 beyond (DECISIONS, round 2).
+        for (const m of s.matchAll(/(\d[\d,]*)\s*yards?\b/gi)) {
+          const n = Number(m[1].replace(/,/g, ''));
+          expect(n % (n < 100 ? 1 : n < 1000 ? 5 : 10), `${r.id}: ${s}`).toBe(0);
+        }
+      }
+    }
+  });
 });
 
 // ---- Every run -----------------------------------------------------------------------------
@@ -275,7 +451,7 @@ for (const run of RUNS) {
 
     it('is a sound network', () => {
       expect(validateRun(run)).toEqual([]);
-      const ids = [...run.stations, ...run.waterTowers, ...run.tunnels, ...run.lowBridges, ...run.trestles, ...run.curves, ...run.signals, ...run.obstacles].map((f) => f.id);
+      const ids = [...run.stations, ...run.waterTowers, ...run.tunnels, ...run.lowBridges, ...run.fords, ...run.trestles, ...run.curves, ...run.signals, ...run.obstacles].map((f) => f.id);
       expect(new Set(ids).size).toBe(ids.length);
       expect(new Set(run.waves.map((w) => w.id)).size).toBe(run.waves.length);
       expect(new Set(run.telegrams.map((t) => t.id)).size).toBe(run.telegrams.length);
@@ -291,16 +467,21 @@ for (const run of RUNS) {
       expect(run.maxCars).toBe(5);
     });
 
-    it('dresses the scenery: towns at stations, trestles over water or gorges, tunnels through high ground', () => {
+    it('dresses the scenery: towns at stations, trestles over water or gorges, tunnels through high ground, fords in river country', () => {
       for (const s of run.stations) expect(edgeOf(ix, s.edge).terrain, s.id).toBe('town');
       for (const t of run.trestles) expect(['river', 'canyon'], t.id).toContain(edgeOf(ix, t.edge).terrain);
       for (const t of run.tunnels) expect(['hills', 'mesa', 'canyon'], t.id).toContain(edgeOf(ix, t.edge).terrain);
+      for (const f of run.fords) {
+        expect(edgeOf(ix, f.edge).terrain, f.id).toBe('river');
+        expect(Math.abs(f.to - f.from), f.id).toBeGreaterThanOrEqual(FORD_LENGTH[0]);
+        expect(Math.abs(f.to - f.from), f.id).toBeLessThanOrEqual(FORD_LENGTH[1]);
+      }
       expect(new Set(run.edges.map((e) => e.terrain)).size).toBeGreaterThanOrEqual(4);
     });
 
     it('keeps every feature on a forward route to the destination', () => {
       const on = (id: string, edge: string) => expect(fwd.has(edge), `${id} on ${edge}`).toBe(true);
-      for (const f of [...run.stations, ...run.waterTowers, ...run.tunnels, ...run.lowBridges, ...run.trestles, ...run.curves, ...run.signals, ...run.obstacles]) on(f.id, f.edge);
+      for (const f of [...run.stations, ...run.waterTowers, ...run.tunnels, ...run.lowBridges, ...run.fords, ...run.trestles, ...run.curves, ...run.signals, ...run.obstacles]) on(f.id, f.edge);
       for (const w of run.waves) on(w.id, w.trigger.edge);
       for (const t of run.telegrams) {
         if (t.at) on(t.id, t.at.edge);
@@ -361,6 +542,22 @@ for (const run of RUNS) {
             const b = routeSpans(ix, trains[j], routeDistanceAt(trains[j], c));
             expect(spansOverlap(a, b), `${trains[i].id} meets ${trains[j].id} at ${hm(c)}`).toBe(false);
           }
+    });
+
+    it('spaces its tunnels, low bridges and fords to be called in time, clear of everything else, whichever way the train goes', () => {
+      const routes = routesOf(run);
+      expect(routes.length).toBeGreaterThanOrEqual(run.variants.length);
+      for (const route of routes) {
+        const hazards = hazardsOn(run, route);
+        const zones = keepClear(run, route);
+        for (const h of hazards) for (const z of zones) expect(h.x1 <= z.a || h.x0 >= z.b, `${h.id} clear of ${z.what}`).toBe(true);
+        if (hazards.length > 0) expect(hazards[0].x0, `${hazards[0].id} too soon`).toBeGreaterThanOrEqual(FIRST_HAZARD);
+        for (let i = 1; i < hazards.length; i++) {
+          const [p, q] = [hazards[i - 1], hazards[i]];
+          const climb = (p.kind === 'tunnel' && q.kind === 'ford') || (p.kind === 'ford' && q.kind === 'tunnel');
+          expect(q.x0 - p.x1, `${p.id} to ${q.id}`).toBeGreaterThanOrEqual(climb ? TUNNEL_FORD_GAP : HAZARD_GAP);
+        }
+      }
     });
 
     for (const [variant, plan] of variantsOf(run)) {
@@ -449,7 +646,7 @@ for (const run of RUNS) {
           expect(conflicts({ ...run, plan: { ...run.plan, [variant]: reckless } }, variant).length).toBeGreaterThan(0);
         });
 
-        it('whistles the cattle off, avoids the rocks and meets barricades slowly', () => {
+        it('whistles the cattle off with one timed blast, avoids the rocks and meets barricades slowly', () => {
           for (const o of run.obstacles.filter(inVariant)) {
             const x = path!.x({ edge: o.edge, off: o.at });
             if (o.kind === 'rocks') {
@@ -458,9 +655,16 @@ for (const run of RUNS) {
             }
             if (x === null) continue;
             if (o.kind === 'cattle') {
-              const w = plan.whistles.map((p) => x - path!.x(p)!).filter((d) => d >= 200 && d <= WHISTLE_SCARE_MAX - 10);
-              expect(w.length, `${o.id} whistled`).toBeGreaterThan(0);
-              expect(WHISTLE_SCARE_MIN).toBeLessThan(200);
+              // One blast as the loco's front passes a whistle point (spec §8): it begins inside the
+              // scare window, and a blast long enough to scatter them, at the plan's pace, ends inside it…
+              const short = plan.whistles.map((p) => x - path!.x(p)!);
+              const timed = short.filter((d) => d <= WHISTLE_SCARE_MAX - WHISTLE_SPARE && d - plan.cruise * WHISTLE_SCARE_SECONDS >= WHISTLE_SCARE_MIN + WHISTLE_SPARE);
+              expect(timed.length, `${o.id} gets one timed blast`).toBe(1);
+              // …and the herd hears nothing sooner, or it gets used to the whistle.
+              expect(
+                short.filter((d) => d > WHISTLE_SCARE_MAX && d <= WHISTLE_EARSHOT),
+                `${o.id} hears no early whistle`,
+              ).toEqual([]);
             }
             if (o.kind === 'barricade') {
               const halt = est!.halts.find((h) => x - h.x >= 15 && x - h.x <= 40);
@@ -503,16 +707,33 @@ for (const run of RUNS) {
           expect(est!.minWater, 'water').toBeGreaterThanOrEqual(5);
         });
 
-        it('spaces tunnels and low bridges so there is time to call them', () => {
-          const hazards = [
-            ...run.tunnels.map((t) => [path!.x({ edge: t.edge, off: t.from }), path!.x({ edge: t.edge, off: t.to })]),
-            ...run.lowBridges.map((b) => [path!.x({ edge: b.edge, off: b.at }), path!.x({ edge: b.edge, off: b.at })]),
-          ]
-            .filter((r): r is [number, number] => r[0] !== null && r[1] !== null)
-            .map(([a, b]) => [Math.min(a, b), Math.max(a, b)])
-            .sort((a, b) => a[0] - b[0]);
-          if (hazards.length > 0) expect(hazards[0][0]).toBeGreaterThanOrEqual(700);
-          for (let i = 1; i < hazards.length; i++) expect(hazards[i][0] - hazards[i - 1][1]).toBeGreaterThanOrEqual(400);
+        it('keeps the Rider moving: seven hazards or more, about one a minute, down, up and crouch in turn', () => {
+          const hazards = hazardsOn(run, path!);
+          expect(hazards.length).toBeGreaterThanOrEqual(MIN_HAZARDS);
+          for (const kind of ['tunnel', 'lowBridge', 'ford'] as const) expect(hazards.some((h) => h.kind === kind), kind).toBe(true);
+          // About one a minute of driving at the plan's pace, with no long stretch between them.
+          const standing = est!.halts.reduce((n, h) => n + h.leave - h.arrive, 0);
+          const driving = est!.arrive - run.startClock - standing;
+          expect(driving / hazards.length, 'seconds of driving a hazard').toBeLessThanOrEqual(DRIVE_PER_HAZARD);
+          expect(path!.length / hazards.length, 'metres of line a hazard').toBeLessThanOrEqual(LINE_PER_HAZARD);
+          const gaps = hazards.map((h, i) => ({ to: h.id, gap: h.x0 - (i > 0 ? hazards[i - 1].x1 : 0) }));
+          gaps.push({ to: run.contract.destination, gap: path!.length - hazards[hazards.length - 1].x1 });
+          for (const g of gaps) expect(g.gap, `the line up to ${g.to}`).toBeLessThanOrEqual(MAX_HAZARD_GAP);
+          // Down, up and crouch in turn: two of a kind in a row only with a stop between them.
+          for (let i = 1; i < hazards.length; i++) {
+            const [p, q] = [hazards[i - 1], hazards[i]];
+            if (p.kind === q.kind) expect(est!.halts.some((h) => h.x > p.x1 && h.x < q.x0), `${p.id} then ${q.id}`).toBe(true);
+          }
+        });
+
+        it('fords no wave of horsemen before it has ridden up: a ford sheds them', () => {
+          const fords = hazardsOn(run, path!).filter((h) => h.kind === 'ford');
+          for (const w of run.waves.filter(inVariant)) {
+            const x = path!.x(w.trigger);
+            if (x === null) continue;
+            const reach = (w.from === 'ahead' ? HORSE_AMBUSH_AHEAD : 0) + WAVE_CLEAR;
+            for (const f of fords) expect(f.x1 <= x || f.x0 >= x + reach, `${f.id} and ${w.id}`).toBe(true);
+          }
         });
 
         it('meets bandits on the way', () => {
@@ -537,7 +758,7 @@ describe('what each run introduces', () => {
     return t.route[0].dir === 1 ? e.a : e.b;
   };
 
-  it('1. First Light: a station stop, tunnel and low-bridge calls, a curve limit, horsemen', () => {
+  it('1. First Light: a station stop, tunnel, low-bridge and ford calls, a curve limit, horsemen', () => {
     const run = RUNS[0];
     expect(stationName(run, run.origin)).toBe('Juniper');
     expect(stationName(run, run.contract.destination)).toBe('Coyote Bend');
@@ -545,6 +766,7 @@ describe('what each run introduces', () => {
     expect(run.startClock).toBeLessThan(clock(7, 0));
     expect(run.tunnels.some((t) => passes(run, { edge: t.edge, off: t.from }))).toBe(true);
     expect(run.lowBridges.some((b) => passes(run, { edge: b.edge, off: b.at }))).toBe(true);
+    expect(run.fords.some((f) => passes(run, { edge: f.edge, off: f.from }))).toBe(true);
     expect(run.curves.some((c) => c.limit <= 14 && passes(run, { edge: c.edge, off: c.from }))).toBe(true);
     expect(run.plan[first(run)].stops.length).toBeGreaterThanOrEqual(2);
     expect(run.signals).toEqual([]);
@@ -553,9 +775,12 @@ describe('what each run introduces', () => {
     expect(run.waves.every((w) => w.tier === 1 && w.count <= 3 && w.goal === 'hunt')).toBe(true);
   });
 
-  it('2. Payroll to Pale Rock: the long way or the steep cutoff, the safe, water towers, 55 water', () => {
+  it('2. Payroll to Pale Rock: the long way or the steep cutoff, the safe, water towers, 55 water, the lurch', () => {
     const run = RUNS[1];
     expect(stationName(run, run.contract.destination)).toBe('Pale Rock');
+    // The lurch (spec §5.2) is briefed to both seats: the Rider calls for the brake, the Engineer slams it on.
+    expect(run.briefing.rider.some((l) => /brake/i.test(l))).toBe(true);
+    expect(run.briefing.engineer.some((l) => /brake/i.test(l))).toBe(true);
     expect(run.requiredCars).toContain('express');
     expect(run.waves.some((w) => w.goal === 'safe')).toBe(true);
     expect(run.waterTowers.length).toBeGreaterThanOrEqual(2);

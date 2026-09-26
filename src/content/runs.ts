@@ -6,6 +6,12 @@
 // are designed against builder.estimate(), a deliberately cautious drive of each plan; the numbers in
 // the comments come from it, and tests/content.test.ts checks every meet, deadline and water stop.
 // Every run's plan is a known-good drive for the autopilot (spec §13, §19).
+//
+// The Rider's rhythm (spec §13): every planned route passes at least seven track hazards, about one
+// a minute, mixing tunnels (get down), fords (get up) and low bridges (crouch), and two of a kind in
+// a row only with a stop between them. They keep clear of platforms, towers, signals, switches,
+// trestles, obstacles and anywhere the train stands, and 350 m apart (450 m between a tunnel and a
+// ford, to climb between them); fords lie in river country. The content tests check all of it.
 
 import type { AiTrainDef, RunDef } from '../sim/types';
 import { clock, Line, makeRun } from './builder';
@@ -21,8 +27,9 @@ function clockText(c: number): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 1. First Light: Juniper → Coyote Bend, at dawn. Throttle and brake, a station stop, tunnel and
-// low-bridge calls, a curve limit, and the first horsemen. About 9 minutes.
+// 1. First Light: Juniper → Coyote Bend, at dawn. Throttle and brake, a station stop, calls for
+// tunnels, low bridges and the first ford (Sage Creek, just out of the station stop), a curve
+// limit, and the first horsemen. About 9 minutes.
 // ---------------------------------------------------------------------------------------------
 
 function firstLight(): RunDef {
@@ -35,7 +42,8 @@ function firstLight(): RunDef {
       [1000, 'desert'],
       [2600, 'hills'],
       [4300, 'town'],
-      [5300, 'river'],
+      // Sage Creek runs shallow over the line east of town, then drops into the gorge the trestle spans.
+      [5000, 'river'],
       [6000, 'canyon'],
       [7800, 'mesa'],
       [9200, 'town'],
@@ -50,13 +58,13 @@ function firstLight(): RunDef {
     briefing: {
       rider: [
         'Horsemen gallop up from behind. Shoot the riders (the horses can’t be hit) before they climb aboard.',
-        'A tunnel knocks anyone on a roof clean off the train. When the Engineer calls one, get down onto the tender or inside a car.',
-        'Crouch (S) for the low bridges: standing on a roof, the beam knocks you flat.',
-        'Hold Shift or the right mouse button for the spyglass, to see what’s coming down the line.',
+        'A tunnel sweeps off anyone above the car floors, the tender top too: get down onto a platform or inside a car. A ford washes off anyone below the roofs: get up on a roof or the tender top.',
+        'Crouch (S) for the low bridges: standing on a roof or the tender top, the beam knocks you flat.',
+        'Hold Shift or the right mouse button for the spyglass to look far down the line; a click plants a flag on the Engineer’s map.',
       ],
       engineer: [
-        'Ease the throttle up and brake early: from full speed she needs about 200 m to stop.',
-        'Call the tunnels and low bridges: the Rider can’t see them coming. The Ahead list says how far off they are.',
+        'Ease the throttle up and brake early: from full speed she needs about 220 yards to stop.',
+        'Call the tunnels, low bridges and fords: the Rider can’t see them coming. The Ahead list says how far off they are.',
         'Keep to 28 mph through Horseshoe Bend, or she leaves the rails.',
         'Stop at Sage Creek with the loco on the mark; the water column fills the tender while you stand.',
       ],
@@ -68,8 +76,19 @@ function firstLight(): RunDef {
       line.station('sage-creek', 'Sage Creek', 4800, { platform: 90, checkpoint: true, water: true }),
       line.station('coyote-bend', 'Coyote Bend', 9700, { platform: 110 }),
     ],
-    tunnels: [line.tunnel('rattlesnake-tunnel', 'Rattlesnake Tunnel', [3000, 3280]), line.tunnel('coyote-tunnel', 'Coyote Tunnel', [7300, 7520])],
-    lowBridges: [line.lowBridge('juniper-bridge', 1900, 'Juniper wagon bridge'), line.lowBridge('stage-road-bridge', 8300, 'Stage road bridge')],
+    // Crouch, down, crouch; the stop; then up for the ford, crouch, down, crouch, down.
+    tunnels: [
+      line.tunnel('rattlesnake-tunnel', 'Rattlesnake Tunnel', [3000, 3280]),
+      line.tunnel('coyote-tunnel', 'Coyote Tunnel', [7300, 7520]),
+      line.tunnel('lookout-tunnel', 'Lookout Tunnel', [8800, 8950]),
+    ],
+    lowBridges: [
+      line.lowBridge('juniper-bridge', 1900, 'Juniper wagon bridge'),
+      line.lowBridge('sage-hill-bridge', 3900, 'Sage Hill stock bridge'),
+      line.lowBridge('horseshoe-flume', 6200, 'Horseshoe flume'),
+      line.lowBridge('stage-road-bridge', 8300, 'Stage road bridge'),
+    ],
+    fords: [line.ford('sage-creek-ford', 'Sage Creek ford', [5100, 5200])],
     trestles: [line.trestle('sage-creek-trestle', 'Sage Creek Trestle', [5600, 5760])],
     curves: [line.curve('horseshoe-bend', [6500, 6900], 12.5)],
     grades: [line.grade([2700, 3000], 0.008), line.grade([3280, 4200], -0.006), line.grade([6000, 6500], 0.005)],
@@ -78,7 +97,10 @@ function firstLight(): RunDef {
       line.wave('creek-riders', 5900, 3, 'rear', 'hunt', 1),
       line.wave('bend-riders', 8600, 2, 'ahead', 'hunt', 1),
     ],
-    telegrams: [line.telegram('mail', { clock: clock(5, 40, 5) }, 'COYOTE BEND POSTMASTER WAITING ON THE MAIL. RIDERS SEEN NEAR THE RATTLESNAKE HILLS.')],
+    telegrams: [
+      line.telegram('mail', { clock: clock(5, 40, 5) }, 'COYOTE BEND POSTMASTER WAITING ON THE MAIL. RIDERS SEEN NEAR THE RATTLESNAKE HILLS.'),
+      line.telegram('high-water', 4300, 'SAGE CREEK OVER THE LINE AT THE FORD EAST OF TOWN. WATER ABOVE THE CAR FLOORS.'),
+    ],
     contract: { cargo: 'mail', title: 'Mail sacks for Coyote Bend', pay: 120, destination: 'coyote-bend', deadline: clock(5, 52), latePenaltyPerMin: 10, critical: false },
     origin: 'juniper',
     initialWater: 100,
@@ -92,9 +114,9 @@ function firstLight(): RunDef {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 2. Payroll to Pale Rock: a junction (the long main line through Horsethief Tunnel, or the short,
-// steep Dry Gulch cutoff with an ambush), the safe, water towers and the spout, and only half a
-// tender to start with. About 11 minutes the long way.
+// 2. Payroll to Pale Rock: a junction (the long main line through Horsethief Tunnel and two fords,
+// or the short, steep Dry Gulch cutoff with an ambush), the safe, water towers and the spout, the
+// lurch, and only half a tender to start with. About 11 minutes the long way.
 // ---------------------------------------------------------------------------------------------
 
 function payroll(): RunDef {
@@ -106,9 +128,11 @@ function payroll(): RunDef {
       [0, 'town'],
       [900, 'desert'],
       [2400, 'hills'],
+      [3500, 'river'],
+      [3800, 'hills'],
       [4400, 'mesa'],
       [5900, 'town'],
-      [6700, 'hills'],
+      [6700, 'river'],
       [7000, 'canyon'],
       [9500, 'desert'],
       [10400, 'town'],
@@ -139,6 +163,7 @@ function payroll(): RunDef {
     briefing: {
       rider: [
         'The payroll is in the express car’s safe. A bandit who gets inside will crack it and run for his horse: shoot the one carrying the loot, then walk over it to pick it up.',
+        'A horseman about to climb aboard? Shout for the brake and crouch: a hard stop spooks the horses and throws anyone standing.',
         'At a water tower, stand on the tender by the hatch and press E to lower the spout.',
         'If we take the Dry Gulch cutoff, riders will be waiting in the gulch. Use the spyglass and get your shots in first.',
       ],
@@ -146,6 +171,7 @@ function payroll(): RunDef {
         'You start with half a tender. Stop at Coyote tank with the tender’s hatch under the spout; the Ahead list counts down the distance.',
         'At Dry Gulch Jct. choose: the long main line through Horsethief Tunnel, or the short, steep cutoff where a heavy train crawls.',
         'Never let the water run out with the fire lit: the boiler blows. Watch the glass and stop at the tanks.',
+        'When the Rider calls for the brake, slam it on (Space) and the horses shy off. It costs speed, so get her going again.',
       ],
     },
     startClock: clock(9, 0),
@@ -156,8 +182,21 @@ function payroll(): RunDef {
       line.station('pale-rock', 'Pale Rock', 10900, { platform: 110 }),
     ],
     waterTowers: [line.tower('coyote-tank', 1900, 'Coyote tank'), line.tower('gulch-tank', ['gulch', 1900], 'Gulch tank')],
-    tunnels: [line.tunnel('horsethief-tunnel', 'Horsethief Tunnel', [5100, 5420])],
-    lowBridges: [line.lowBridge('coyote-road-bridge', 1300, 'Coyote road bridge')],
+    // The long way: crouch, down, up, down, crouch, the stop, up, down, crouch. The gulch has a flume
+    // and a tunnel of its own.
+    tunnels: [
+      line.tunnel('pinto-tunnel', 'Pinto Hill Tunnel', [2450, 2700]),
+      line.tunnel('horsethief-tunnel', 'Horsethief Tunnel', [5100, 5420]),
+      line.tunnel('echo-tunnel', 'Echo Canyon Tunnel', [8200, 8450]),
+      line.tunnel('gulch-tunnel', 'Gulch Tunnel', ['gulch', 2320, 2470]),
+    ],
+    lowBridges: [
+      line.lowBridge('coyote-road-bridge', 1300, 'Coyote road bridge'),
+      line.lowBridge('table-rock-bridge', 5950, 'Table Rock road bridge'),
+      line.lowBridge('miners-bridge', 9900, 'Miners’ road bridge'),
+      line.lowBridge('gulch-flume', ['gulch', 400], 'Dry Gulch flume'),
+    ],
+    fords: [line.ford('willow-creek-ford', 'Willow Creek ford', [3600, 3700]), line.ford('chalk-creek-ford', 'Chalk Creek ford', [6800, 6900])],
     curves: [line.curve('table-rock-curve', [7400, 7800], 14), line.curve('gulch-bend', ['gulch', 2500, 2800], 12)],
     grades: [line.grade(['gulch', 0, 1500], 0.018), line.grade(['gulch', 2300, 3600], -0.016), line.grade([4400, 5100], 0.006)],
     waves: [
@@ -199,10 +238,11 @@ function signalCountry(): RunDef {
       [900, 'desert'],
       [3000, 'hills'],
       [6900, 'town'],
+      [7620, 'river'],
       [7800, 'hills'],
       [9600, 'canyon'],
       [9800, 'river'],
-      [10200, 'canyon'],
+      [10500, 'canyon'],
       [11600, 'town'],
     ],
     cutoffs: [
@@ -223,8 +263,9 @@ function signalCountry(): RunDef {
   });
   const buzzard = line.junction('lone-pine', 'w');
   const stops = ['buzzard-tank', 'cedar-wash', 'mesa'];
-  // Blow for the cattle 280 m out: inside the whistle's reach, with time for them to scatter.
-  const whistles = [line.at(1820)];
+  // One blast for the cattle as the loco passes 170 m short of them: well inside the scare window
+  // (70–270 yards), and heard from nowhere farther off, so they don't get used to it (spec §8).
+  const whistles = [line.at(1930)];
   // Out of Devil's Elbow at 30 mph, then open her up down the grade: the trestle wants 30 mph or more.
   const minSpeeds = [{ from: line.at(9400), speed: 15.5 }];
   return makeRun(line, {
@@ -235,14 +276,15 @@ function signalCountry(): RunDef {
     flavor: 'The Mesa line is signal country now: a semaphore on every block, and a rockslide reported somewhere past Buzzard Rock. Beyond it, the Devil’s Trestle is burning, and the silver won’t wait.',
     briefing: {
       rider: [
-        'Read the signals with the spyglass and call them out: arm up and green is clear, 45° and yellow is 20 mph, level and red is stop.',
-        'At Buzzard Rock the junction signal tells which way the rockslide is. Red means that route is blocked: say so, and read it again after the Engineer throws the switch.',
-        'Cattle on the line? Shout for the whistle while they’re still a way off.',
+        'Read each signal as it goes by and call it out: arm up and green is clear, 45° and yellow means the next one is at stop, level and red is stop.',
+        'At Buzzard Rock the junction signal tells which way the rockslide is: scope it before the switch. Red means that route is blocked: say so, and read it again after the Engineer throws the switch.',
+        'Cattle on the line? Watch the herd through the spyglass and call the moment for one blast, inside about 270 yards: whistle any sooner and they get used to it.',
         'The Devil’s Trestle is burning. Stay down: falling off up there is a long way down.',
       ],
       engineer: [
-        'Signals are grey posts on your map; only the Rider can see what they show. Press Tab for the rulebook: yellow means 20 mph to the next signal, red means stop short of it.',
+        'Signals are grey posts on your map; only the Rider can see what they show (Tab for the rulebook). After a yellow, hold 20 mph and stop at the next signal: the Ahead list shows exactly where.',
         'Set Buzzard Rock Jct. early and ask what its signal shows. If it’s red, that route is blocked: throw the switch and ask again.',
+        'For cattle, blow the whistle (H) once when the Rider calls it, not held down: a herd that hears it too soon gets used to it.',
         'Take the 30 mph Devil’s Elbow at 30, then open her up: cross the burning trestle any slower than 30 and it comes down under you.',
       ],
     },
@@ -254,8 +296,23 @@ function signalCountry(): RunDef {
       line.station('mesa', 'Mesa', 12300, { platform: 120 }),
     ],
     waterTowers: [line.tower('buzzard-tank', 2950, 'Buzzard tank')],
-    tunnels: [line.tunnel('cedar-tunnel', 'Cedar Tunnel', [8200, 8450])],
-    lowBridges: [line.lowBridge('red-cut-bridge', 5000, 'Red Cut footbridge'), line.lowBridge('mesa-bridge', 11000, 'Mesa wagon bridge')],
+    // Nothing between the tank and the switch, so the junction signal can be scoped; either way past
+    // Buzzard Rock is down, crouch, down. Then the stop, up at Cedar Wash, down, the run-up and the
+    // trestle, up at Mesa Creek and crouch.
+    tunnels: [
+      line.tunnel('buzzard-tunnel', 'Buzzard Tunnel', [3900, 4150]),
+      line.tunnel('owl-hill-tunnel', 'Owl Hill Tunnel', [5700, 5950]),
+      line.tunnel('lone-pine-tunnel', 'Lone Pine Tunnel', ['lone-pine', 400, 600]),
+      line.tunnel('hogback-tunnel', 'Hogback Tunnel', ['lone-pine', 2450, 2650]),
+      line.tunnel('cedar-tunnel', 'Cedar Tunnel', [8200, 8450]),
+    ],
+    lowBridges: [
+      line.lowBridge('buzzard-bridge', 2450, 'Buzzard Rock stock bridge'),
+      line.lowBridge('red-cut-bridge', 5000, 'Red Cut footbridge'),
+      line.lowBridge('lone-pine-bridge', ['lone-pine', 1650], 'Lone Pine footbridge'),
+      line.lowBridge('mesa-bridge', 11000, 'Mesa wagon bridge'),
+    ],
+    fords: [line.ford('cedar-wash-ford', 'Cedar Wash ford', [7660, 7740]), line.ford('mesa-creek-ford', 'Mesa Creek ford', [10300, 10400])],
     trestles: [line.trestle('devils-trestle', 'the Devil’s Trestle', [9850, 10100], 13.4)],
     curves: [line.curve('devils-elbow', [9000, 9400], 13.4), line.curve('lone-pine-bend', ['lone-pine', 1750, 2050], 13)],
     grades: [line.grade([9400, 9600], -0.006), line.grade([9600, 9800], -0.006), line.grade(['lone-pine', 0, 1600], 0.006)],
@@ -312,11 +369,13 @@ function singleTrack(): RunDef {
     terrain: [
       [0, 'town'],
       [900, 'desert'],
+      [2900, 'river'],
       [3300, 'town'],
       [4300, 'mesa'],
       [5700, 'town'],
       [6600, 'hills'],
       [8500, 'canyon'],
+      [9100, 'river'],
       [9600, 'town'],
     ],
     loops: [
@@ -350,7 +409,7 @@ function singleTrack(): RunDef {
       rider: [
         'When we pull into a siding, look back from the rear and tell the Engineer when the last car is clear of the main line.',
         'A bandit in the cab holds the Engineer at gunpoint and the levers go dead. Clear the cab fast.',
-        'Block signals guard the single line: red means a train in the block ahead. Call every one.',
+        'Block signals guard the single line: red means a train in the block ahead. Call every one as it goes by.',
       ],
       engineer: [
         'The timetable chart draws No. 7 Freight as a line. Where it crosses yours you must be in a siding: meet him at Dry Wash.',
@@ -366,8 +425,18 @@ function singleTrack(): RunDef {
       line.station('dry-wash', 'Dry Wash', ['dry-wash', 280], { platform: 100, checkpoint: true, water: true }),
       line.station('silver-flats', 'Silver Flats', 10100, { platform: 120 }),
     ],
-    tunnels: [line.tunnel('dry-wash-tunnel', 'Dry Wash Tunnel', [7000, 7250])],
-    lowBridges: [line.lowBridge('butte-bridge', 4700, 'Red Butte stock bridge')],
+    // Crouch, up, the stop, crouch, down; Dry Wash; down, crouch, down, up.
+    tunnels: [
+      line.tunnel('butte-tunnel', 'Butte Tunnel', [5150, 5400]),
+      line.tunnel('dry-wash-tunnel', 'Dry Wash Tunnel', [7000, 7250]),
+      line.tunnel('sidewinder-tunnel', 'Sidewinder Tunnel', [8250, 8450]),
+    ],
+    lowBridges: [
+      line.lowBridge('mesa-road-bridge', 1300, 'Mesa road bridge'),
+      line.lowBridge('butte-bridge', 4700, 'Red Butte stock bridge'),
+      line.lowBridge('hat-rock-bridge', 7650, 'Hat Rock footbridge'),
+    ],
+    fords: [line.ford('yucca-creek-ford', 'Yucca Creek ford', [3000, 3100]), line.ford('silver-creek-ford', 'Silver Creek ford', [9200, 9300])],
     curves: [line.curve('sidewinder-curve', [8700, 9100], 13)],
     grades: [line.grade([4300, 5000], 0.007), line.grade([6600, 7000], -0.005)],
     signals: [
@@ -430,7 +499,9 @@ function nightFreight(): RunDef {
     terrain: [
       [0, 'town'],
       [1000, 'desert'],
-      [2400, 'mesa'],
+      [1800, 'mesa'],
+      [3100, 'river'],
+      [3300, 'mesa'],
       [3800, 'town'],
       [4400, 'hills'],
       [6200, 'canyon'],
@@ -482,8 +553,8 @@ function nightFreight(): RunDef {
     flavor: 'Dynamite for the crews blasting Tanner’s Pass, hauled by night when the line is quiet. It isn’t quiet: No. 4 Express is on your tail, No. 7 is coming the other way, and the Blackwater Gang wants that powder.',
     briefing: {
       rider: [
-        'At night you see signal lamps, not arms, and the spyglass reaches only 300 m. Call what you see early.',
-        'Horsemen will pace the powder car and shoot at it. Eight hits and it blows: keep them off it before anything else.',
+        'At night you see only the signal lamps: call each one as it goes by. The spyglass reaches only about 330 yards.',
+        'Horsemen will pace the powder car and shoot at it. Twelve hits and it blows: keep them off it before anything else.',
         'In the sidings, watch the main line and tell the Engineer when No. 4 and No. 7 have gone by.',
       ],
       engineer: [
@@ -500,8 +571,19 @@ function nightFreight(): RunDef {
       line.station('tanners-pass', 'Tanner’s Pass', 9000, { platform: 100 }),
     ],
     waterTowers: [line.tower('coyote-wells-tank', ['coyote-wells', 140], 'Coyote Wells tank'), line.tower('dry-creek-tank', ['dry-creek', 140], 'Dry Creek tank')],
-    tunnels: [line.tunnel('red-rock-tunnel', 'Red Rock Tunnel', [4700, 4950])],
-    lowBridges: [line.lowBridge('flats-bridge', 1400, 'Silver Flats road bridge'), line.lowBridge('canyon-flume', 5800, 'Canyon flume')],
+    // Crouch, down; Coyote Wells; up, crouch, down, crouch; Dry Creek; down, the trestle, crouch.
+    tunnels: [
+      line.tunnel('flat-top-tunnel', 'Flat Top Tunnel', [1850, 2100]),
+      line.tunnel('red-rock-tunnel', 'Red Rock Tunnel', [4700, 4950]),
+      line.tunnel('dry-creek-tunnel', 'Dry Creek Tunnel', [6900, 7080]),
+    ],
+    lowBridges: [
+      line.lowBridge('flats-bridge', 1400, 'Silver Flats road bridge'),
+      line.lowBridge('red-rock-bridge', 3700, 'Red Rock wagon bridge'),
+      line.lowBridge('canyon-flume', 5800, 'Canyon flume'),
+      line.lowBridge('pass-bridge', 8100, 'Tanner’s Pass footbridge'),
+    ],
+    fords: [line.ford('coyote-creek-ford', 'Coyote Creek ford', [3150, 3250])],
     trestles: [line.trestle('dry-creek-trestle', 'Dry Creek Trestle', [7300, 7480])],
     curves: [line.curve('flats-curve', [2400, 2560], 14), line.curve('canyon-curve', [7700, 8000], 12)],
     grades: [line.grade([4400, 5500], 0.008), line.grade([7600, 8500], 0.006)],
@@ -571,6 +653,8 @@ function blackwater(): RunDef {
       [2500, 'desert'],
       [2800, 'canyon'],
       [5100, 'town'],
+      [5900, 'river'],
+      [6100, 'town'],
       [6300, 'hills'],
       [7000, 'river'],
       [7400, 'canyon'],
@@ -637,7 +721,9 @@ function blackwater(): RunDef {
   const quarry = line.junction('quarry', 'j');
   const stops = ['tanners-tank', 'blackwater', 'quarry', 'summit'];
   const holds = [{ at: line.at(['blackwater', 400]), until: after(line.clearsSection(no7, 'blackwater'), 30) }];
-  const whistles = [line.at(1620)];
+  // One blast for the strays as the loco passes 170 m short of them (spec §8). They stand 350 m past
+  // Tanner's Tunnel, in reach of the spyglass before it: spot them, get down, come up and call it.
+  const whistles = [line.at(1730)];
   return makeRun(line, {
     id: 'blackwater',
     index: 5,
@@ -651,7 +737,7 @@ function blackwater(): RunDef {
         'Past Quarry, watch the line ahead: if anything comes rolling down from Summit, you’ll see it before the Engineer can.',
       ],
       engineer: [
-        'A rockslide blocks one way through Blackwater Canyon: read the junction signal before you commit.',
+        'A rockslide blocks one way through Blackwater Canyon: have the Rider read the junction signal before you commit.',
         'Meet No. 7 Freight at Blackwater: the platform is on the siding, so take water there while he goes by.',
         'If cars break loose above Quarry, throw the Quarry switch: a runaway follows the switches and will pile into the spur’s buffers.',
       ],
@@ -665,8 +751,22 @@ function blackwater(): RunDef {
       line.station('summit', 'Summit', 9600, { platform: 110 }),
     ],
     waterTowers: [line.tower('tanners-tank', 2250, 'Tanner’s tank')],
-    tunnels: [line.tunnel('tanners-tunnel', 'Tanner’s Tunnel', [1300, 1550]), line.tunnel('summit-tunnel', 'Summit Tunnel', [9050, 9250])],
-    lowBridges: [line.lowBridge('canyon-bridge', 4550, 'Blackwater road bridge'), line.lowBridge('deadmans-flume', 6500, 'Deadman’s flume')],
+    // Down, crouch; either way through the canyon, down and crouch; Blackwater; up, crouch, down;
+    // Quarry; down.
+    tunnels: [
+      line.tunnel('tanners-tunnel', 'Tanner’s Tunnel', [1300, 1550]),
+      line.tunnel('narrows-tunnel', 'Narrows Tunnel', [3050, 3300]),
+      line.tunnel('hangman-tunnel', 'Hangman’s Tunnel', ['hangman', 150, 350]),
+      line.tunnel('quarry-tunnel', 'Quarry Tunnel', [7500, 7720]),
+      line.tunnel('summit-tunnel', 'Summit Tunnel', [9050, 9250]),
+    ],
+    lowBridges: [
+      line.lowBridge('alkali-bridge', 2650, 'Alkali stock bridge'),
+      line.lowBridge('gallows-bridge', ['hangman', 1300], 'Gallows footbridge'),
+      line.lowBridge('canyon-bridge', 4550, 'Blackwater road bridge'),
+      line.lowBridge('deadmans-flume', 6500, 'Deadman’s flume'),
+    ],
+    fords: [line.ford('blackwater-ford', 'Blackwater ford', [5960, 6060])],
     trestles: [line.trestle('blackwater-trestle', 'Blackwater Trestle', [7100, 7300])],
     curves: [line.curve('blackwater-bend', [3800, 4050], 12), line.curve('hangman-curve', ['hangman', 900, 1150], 12)],
     grades: [line.grade(['hangman', 0, 800], 0.015), line.grade(['hangman', 800, 1600], -0.015), line.grade([7400, 8100], 0.008), line.grade([9400, 10600], 0.01)],
