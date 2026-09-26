@@ -463,6 +463,20 @@ describe('boarded bandits (spec §7.3)', () => {
     expect(b.y).toBeCloseTo(1.3, 6);
   });
 
+  it('climb down the ladder for loot on the rear platform, rather than walk off the end of the train', () => {
+    // Walking off the last car's roof at its rear end carries you over the platform and off.
+    for (const v of [0, 20]) {
+      const w = world();
+      riderAway(w);
+      w.state.train.v = v;
+      Object.assign(w.state.loot, { status: 'dropped', x: 0.55, y: 1.3, carrier: null, crack: 1, everCracked: true });
+      w.state.bandits = [bandit({ id: 7, x: 2, y: 4, surface: 'roof', goal: 'safe' })];
+      const ev = tick(w, 8 * TICK_HZ);
+      expect(ev.some((e) => e.type === 'banditDown'), `v=${v}`).toBe(false);
+      expect(ev, `v=${v}`).toContainEqual({ type: 'lootTaken' });
+    }
+  });
+
   it('climb the ladder they mean to, where two hang side by side (the car end and the tender)', () => {
     // From the express's front platform to the cab: up the tender's rear ladder, whose foot is
     // 0.33 m from the express's front-end ladder, over the coal and down to the deck.
