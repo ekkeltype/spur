@@ -12,7 +12,7 @@ The full design is in [`spur-spec.md`](spur-spec.md). Choices made where the spe
 
 1. **The Rider** opens the game and chooses **Host as Rider**. The lobby shows a five-character room code.
 2. **The Engineer** opens the same URL, chooses **Join as Engineer** and types the code.
-3. In the depot, pick a run, couple the cars you want, spend your earnings in the shop, and both press **Ready**. The Rider presses **Start**. Read the briefing, press Ready again, and go.
+3. In the depot, pick a run, couple the cars you want (an extra express, passenger car or boxcar carries paying cargo, but a heavier train is slower), spend your earnings in the shop, and both press **Ready**. The Rider presses **Start**. Read the briefing, press Ready again, and go.
 
 Each run has the same shape:
 
@@ -27,7 +27,9 @@ A run is lost by:
 
 After a loss you can retry from the last station.
 
-The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, *Signal Country*, *Single Track*, *Night Freight* and *The Blackwater Line*. Contracts pay money, which buys guns, gear, cars and upgrades.
+The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, *Signal Country*, *Single Track*, *Night Freight* and *The Blackwater Line*. Contracts and cargo pay money, which buys guns, gear, cars and upgrades.
+
+Nowhere on the train is safe from everything. Tunnels sweep everyone above the car floors off the train, fords wash off everyone below the roofs, and low bridges knock down anyone standing on a roof or the tender top. The Engineer sees them coming and calls them; the Rider gets down, gets up or crouches. Speeds are in mph and distances in yards and miles.
 
 ### Controls
 
@@ -35,11 +37,11 @@ The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, 
 |---|---|
 | A / D | Walk toward the rear / toward the loco |
 | W or Space | Jump. On a ladder, W climbs; under a hatch, W climbs out |
-| S | Crouch (duck under low bridges). On a hatch, drop inside; on a ladder, climb down |
+| S | Crouch: duck under low bridges, brace when the brakes are slammed. On a hatch, drop inside; on a ladder, climb down |
 | Mouse, left click | Aim and fire |
 | R | Reload |
 | Q, or 1–3 | Switch weapon (revolver, coach gun, rifle, once bought) |
-| Shift or right mouse (hold) | Spyglass: look down the line. Move the pointer right to look farther; click to plant a flag on the Engineer's map |
+| Shift or right mouse (hold) | Spyglass: look far down the line (cattle, a barricade, a runaway). Move the pointer right to look farther; click to plant a flag on the Engineer's map (one at a time). Signals you read as the train passes them |
 | E | On the tender by the hatch, at a water tower: lower the spout |
 | Esc | Pause |
 
@@ -47,8 +49,8 @@ The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, 
 |---|---|
 | Drag the levers, or ↑ / ↓ | Throttle |
 | ← / → | Brake less / more |
-| Space | Emergency brake |
-| H (hold), or the Whistle button | Whistle: scares cattle off the line, and tells the Rider something's coming |
+| Space | Emergency brake. Slammed on at speed it spooks the horses alongside and throws anyone standing outside: the Rider calls for it and crouches |
+| H (hold), or the Whistle button | Whistle: tells the Rider something's coming, and scares cattle off the line if you time it (one blast, 70–270 yards out, when the Rider calls it; blow too early and they get used to it). It uses steam |
 | F / V | Firebox up / down |
 | X | Reverser (only when stopped) |
 | Click a switch on the map, or 1–9 | Throw it |
