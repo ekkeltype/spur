@@ -198,6 +198,8 @@ export class RiderRenderer {
   private readonly nearGaps: number[] = [];
   /** Fords at render time, [x0, x1] pairs. */
   private readonly fords: number[] = [];
+  /** Burning trestles' stretches in view, like fords (x0, x1 pairs at render time). */
+  private readonly fires: number[] = [];
   private readonly waves: Wave[] = [];
   private readonly s: Scene;
   /** Draw time of the last frame (ms), for the dev harness. */
@@ -353,11 +355,13 @@ export class RiderRenderer {
     this.gaps.length = 0;
     this.nearGaps.length = 0;
     this.fords.length = 0;
+    this.fires.length = 0;
     for (const it of items) {
       if (it.kind === 'tunnel') this.tunnels.push(it.x0 + s.shift, it.x1 + s.shift);
       else if (it.kind === 'trestle') {
         this.gaps.push(it.x0 + s.shift, it.x1 + s.shift);
         this.nearGaps.push(it.x0 + s.shift, it.x1 + s.shift);
+        if (it.burning) this.fires.push(it.x0 + s.shift, it.x1 + s.shift);
       } else if (it.kind === 'ford') {
         this.fords.push(it.x0 + s.shift, it.x1 + s.shift);
         // The river and its banks widen toward the viewer: no stones or tufts on them.
@@ -582,6 +586,8 @@ export class RiderRenderer {
           if (f.settings.screenShake) fx.shake(t, 8, 0.32);
           // Losing the last heart to the river puts the Rider down with no riderOff: wash off here.
           if (e.cause === 'water') this.washRider(s, st);
+          // Burned: embers fly off the figure.
+          if (e.cause === 'fire') fx.burst(s, P_EMBER, this.rider.x, this.rider.y + 1, 14, 2.5, 0.08, 0.9, 0.5, 1.5);
           break;
         case 'riderDown':
           fx.downT0 = s.now;
@@ -737,11 +743,19 @@ export class RiderRenderer {
    * Why a respawn that is due is held (respawnTicks at 0, spec §6.3): the rear platform is still in
    * a ford, or on a bare train the tender top is in a tunnel.
    */
-  private respawnWait(st: GameState): 'water' | 'tunnel' | 'other' {
+  private respawnWait(st: GameState): 'water' | 'fire' | 'tunnel' | 'other' {
     const p = trainLook(st.train.cars).geo.respawn;
     if (this.inFord(p.x)) return 'water';
+    if (this.inFire(p.x)) return 'fire';
     if (inTunnel(this.s, p.x)) return 'tunnel';
     return 'other';
+  }
+
+  /** Is train-frame x (at render time) over a burning trestle in view? */
+  private inFire(x: number): boolean {
+    const f = this.fires;
+    for (let i = 0; i < f.length; i += 2) if (x >= f[i] && x <= f[i + 1]) return true;
+    return false;
   }
 
   /** Is train-frame x (at render time) over one of the fords in view? */

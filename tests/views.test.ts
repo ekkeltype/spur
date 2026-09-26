@@ -85,7 +85,7 @@ describe('toEngineerView leaks nothing hidden', () => {
     b.bandits.push({
       id: 10, x: 30, y: 4.2, vx: 1, vy: 0, onGround: true, surface: 'roof', ladder: null, crouch: false, facing: 1,
       hp: 2, tier: 2, boss: false, goal: 'safe', mode: 'moving', modeTicks: 0, hasLoot: false, aimTicks: 0,
-      cooldownTicks: 0, stunTicks: 0, navTarget: null,
+      cooldownTicks: 0, stunTicks: 0, burnTicks: 0, navTarget: null,
     });
     b.obstacles[0].state = 'hit';
     b.obstacles[1].calmTicks = 200; // cattle used to the whistle

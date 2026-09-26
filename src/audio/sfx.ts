@@ -133,6 +133,7 @@ const LEVEL = {
   whinny: 0.14,
   cattle: 0.14,
   grunt: 0.26,
+  flare: 0.3,
 } as const;
 
 /** Inner balance of the locomotive's parts (before LEVEL.engine), measured like LEVEL. */
@@ -1771,6 +1772,26 @@ export class Sfx {
    * clank after clank down the train, the whole train's weight shoved forward, the shoes biting. For the
    * Rider the clanks run from the loco (right) toward the rear; in the cab they come from behind.
    */
+  /** The flames of a burning trestle flaring up around the Rider: a whoomph of burning air (spec §4.3). */
+  flare(): void {
+    this.oneShot('flare', 0.25, (g, t) => {
+      const { ctx } = g;
+      const out = amp(ctx, LEVEL.flare);
+      out.connect(g.fx);
+      // The rush of flame: a band of noise sweeping up as it catches, then settling.
+      const band = bandpass(ctx, 600, 0.7);
+      glide(band.frequency, t, [
+        [0, 320],
+        [0.2, 1500],
+        [0.6, 520],
+      ]);
+      swell(noiseLayer(ctx, g.white, band, t, t + 0.75, out).gain, t, 0.9 * bandNorm(ctx, 850), 0.06, 0.14, 0.62);
+      // The draught underneath it.
+      const body = amp(ctx, 0);
+      tone(ctx, 'sine', 68, t, perc(body.gain, t, 0.6, 0.02, 0.4)).connect(body).connect(out);
+    });
+  }
+
   lurch(listener: Listener): void {
     const cab = listenerOf(listener) === 'cab';
     this.oneShot('lurch', 1, (g, t) => {

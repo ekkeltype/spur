@@ -774,6 +774,7 @@ interface SpecifiedSfx {
   whinny(pan?: number, gain?: number): void;
   cattle(scatter: boolean, pan?: number, gain?: number): void;
   grunt(): void;
+  flare(): void;
   ricochet(pan?: number): void;
   whiz(pan?: number): void;
   hurt(): void;
@@ -842,6 +843,7 @@ const ONE_SHOTS: [string, (s: Sfx) => void][] = [
   ['cattle calm', (s) => s.cattle(false, 1, 0.6)],
   ['cattle scatter', (s) => s.cattle(true, 0.8, 0.9)],
   ['grunt', (s) => s.grunt()],
+  ['flare', (s) => s.flare()],
 ];
 
 /** Every method, with sensible and nonsensical arguments, and the continuous ones called repeatedly. */

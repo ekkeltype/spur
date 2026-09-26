@@ -25,6 +25,7 @@ import { describeEvent, type LogTone } from './events';
 import { formatClock, junctionNumbers } from './format';
 import { brakeStep, CmdThrottle, stepThrottle } from './levers';
 import { RouteMap, type MapFlash, type MapModel } from './map';
+import { OutlawView } from './outlaw';
 import { crossings, holdAdvice, mainLength, mainRate, projectAhead, scheduleLine, sidingBands, TraceRecorder, type Band, type Crossing, type Projection } from './marey';
 import { AHEAD_ROWS, AheadPanel, HeaderPanel, LogPanel, RiderPanel, TelegraphPanel } from './panels';
 import { Rulebook } from './rulebook';
@@ -89,6 +90,8 @@ export class EngineerDesk {
   private readonly map: RouteMap;
   private readonly chart = new MareyChart();
   private readonly rulebook: Rulebook;
+  /** The outlaw who comes in with a hold-up (flavour). */
+  private readonly outlaw = new OutlawView();
   private readonly trace = new TraceRecorder();
   private readonly observer: ResizeObserver | null;
   private readonly dom: {
@@ -220,8 +223,9 @@ export class EngineerDesk {
       const lv = this.levers[kind];
       if (lv.local && !lv.dragging && Math.abs(view.train[kind] - lv.local.value) < 1e-3) lv.local = null;
     }
-    // A gun in the cab: the Engineer's hands come off the levers.
+    // A gun in the cab: the Engineer's hands come off the levers, and there's the outlaw.
     if (view.train.heldUp && !prev?.train.heldUp) this.releaseLevers(now);
+    this.outlaw.set(view.train.heldUp && view.phase === 'running');
 
     this.derive(view, now);
     this.header.update(view, this.recovered);
@@ -363,6 +367,7 @@ export class EngineerDesk {
     (document.fonts as FontFaceSet | undefined)?.removeEventListener?.('loadingdone', this.onFontsLoaded);
     this.observer?.disconnect();
     window.clearTimeout(this.pollTimer);
+    this.outlaw.destroy();
     this.el.remove();
   }
 
@@ -450,6 +455,7 @@ export class EngineerDesk {
     foot.append(this.logPanel.el, this.telegraph.el, this.rider.el, rulebookBtn);
 
     this.el.append(this.header.el, this.cab.el, mapPanel, chartPanel, this.aheadPanel.el, foot, this.rulebook.el);
+    this.outlaw.mount(this.el);
     return { mapCanvas: new HiDpiCanvas(mapCanvas), fitBtn, followBtn, chartCanvas: new HiDpiCanvas(chartCanvas), chartBadge, advice, rulebookBtn };
   }
 
@@ -793,11 +799,17 @@ export class EngineerDesk {
     this.setLever(kind, next, now);
   }
 
+  /** A control tried with a gun in the cab: the banner shakes and the outlaw jabs his gun. */
+  private refuseHeldUp(): void {
+    this.cab.shakeHandsUp();
+    this.outlaw.jab();
+  }
+
   /** A dead control tried with a gun in the cab: the lever flashes and the banner shakes. */
   private refuseLocally(kind: LeverKind, now: number): void {
     if (!this.enabled || !this.view?.train.heldUp) return;
     this.cab.flashLever(kind, now);
-    this.cab.shakeHandsUp();
+    this.refuseHeldUp();
   }
 
   private sendDiscrete(body: EngineerCmdBody, now: number): void {
@@ -811,7 +823,7 @@ export class EngineerDesk {
     if (!v || !this.controlsLive()) {
       if (v?.train.heldUp) {
         this.flashes.push({ junction: id, kind: 'refused', at: now });
-        this.cab.shakeHandsUp();
+        this.refuseHeldUp();
         this.mapDirty = true;
       }
       return;
@@ -836,7 +848,7 @@ export class EngineerDesk {
   private setReverser(value: -1 | 0 | 1, now: number): void {
     const v = this.view;
     if (!v || !this.controlsLive()) {
-      if (v?.train.heldUp) this.cab.shakeHandsUp();
+      if (v?.train.heldUp) this.refuseHeldUp();
       return;
     }
     const cur = this.pendingReverser?.value ?? v.train.reverser;
@@ -854,7 +866,7 @@ export class EngineerDesk {
   private setFire(value: number, now: number): void {
     const v = this.view;
     if (!v || !this.controlsLive()) {
-      if (v?.train.heldUp) this.cab.shakeHandsUp();
+      if (v?.train.heldUp) this.refuseHeldUp();
       return;
     }
     if (this.autoFire) {

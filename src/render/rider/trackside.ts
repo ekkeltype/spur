@@ -300,7 +300,10 @@ export class TracksidePainter {
         const x0 = it.x0 + s.shift;
         const x1 = it.x1 + s.shift;
         const fl = 0.8 + 0.2 * Math.sin(s.t * 11) * Math.sin(s.t * 5.3);
-        for (let x = x0 + 2; x < x1; x += 5) glow(ctx, '255,130,40', x, -0.6, 5.5, 0.55 * fl);
+        for (let x = x0 + 2; x < x1; x += 5) {
+          glow(ctx, '255,130,40', x, -0.6, 5.5, 0.55 * fl);
+          glow(ctx, '255,120,35', x, 3.2, 5, 0.4 * fl);
+        }
       }
     }
     for (const t of trains) {
@@ -717,7 +720,42 @@ export class TracksidePainter {
     ctx.fill();
     ctx.fillStyle = lit.c('#5A4030');
     ctx.fillRect(a, -0.4, b - a, 0.08);
-    if (burning) this.flames(s, a, b, x0);
+    if (burning) {
+      this.flames(s, a, b, x0);
+      this.fireWall(s, a, b, x0);
+    }
+  }
+
+  /**
+   * The fire a train crosses a burning trestle through (spec §4.3): tongues of flame rising past the
+   * car sides and over the roofs. Drawn behind the train, so anyone outside the cars stands in them,
+   * while the cars' insides look sheltered.
+   */
+  private fireWall(s: Scene, a: number, b: number, x0: number): void {
+    const { ctx } = s;
+    ctx.globalCompositeOperation = 'lighter';
+    for (let x = Math.floor((a - x0) / 1.1) * 1.1 + x0; x < b; x += 1.1) {
+      const n = Math.round((x - x0) / 1.1);
+      const h = 3.4 + 2.4 * hash01(n, 11) + 0.9 * Math.sin(s.t * (5 + hash01(n, 12) * 4) + n * 0.7);
+      const w = 0.6 + 0.5 * hash01(n, 13);
+      const y = -0.4;
+      const sway = 0.5 * Math.sin(s.t * 3.1 + n * 0.9);
+      ctx.fillStyle = 'rgba(255,100,25,0.4)';
+      ctx.beginPath();
+      ctx.moveTo(x - w, y);
+      ctx.quadraticCurveTo(x - w * 0.7, y + h * 0.55, x + sway, y + h);
+      ctx.quadraticCurveTo(x + w * 0.7, y + h * 0.55, x + w, y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,196,80,0.38)';
+      ctx.beginPath();
+      ctx.moveTo(x - w * 0.45, y);
+      ctx.quadraticCurveTo(x - w * 0.3, y + h * 0.4, x + sway * 0.7, y + h * 0.7);
+      ctx.quadraticCurveTo(x + w * 0.3, y + h * 0.4, x + w * 0.45, y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   /** Flames licking up the trestle's timbers and deck. */

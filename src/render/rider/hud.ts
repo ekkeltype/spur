@@ -49,12 +49,14 @@ export interface HudInput {
    * A respawn that is due but held (respawnTicks at 0, spec §6.3), and why: the rear platform is
    * still in a ford, or on a bare train the tender top is in a tunnel. null when not held.
    */
-  respawnWait?: 'water' | 'tunnel' | 'other' | null;
+  respawnWait?: 'water' | 'fire' | 'tunnel' | 'other' | null;
 }
 
 /** What the respawn countdown says while a due respawn is held. */
-export function waitText(wait: 'water' | 'tunnel' | 'other'): string {
-  return wait === 'water' ? 'Waiting for the water to pass' : wait === 'tunnel' ? 'Waiting for the tunnel to pass' : 'Waiting to climb back aboard';
+export function waitText(wait: 'water' | 'fire' | 'tunnel' | 'other'): string {
+  if (wait === 'water') return 'Waiting for the water to pass';
+  if (wait === 'fire') return 'Waiting for the fire to pass';
+  return wait === 'tunnel' ? 'Waiting for the tunnel to pass' : 'Waiting to climb back aboard';
 }
 
 export class Hud {
@@ -597,7 +599,7 @@ export class Hud {
 
   // ---- Respawn ---------------------------------------------------------------------------------
 
-  private respawn(s: Scene, st: GameState, cause: 'tunnel' | 'water' | 'fall', wait: 'water' | 'tunnel' | 'other' | null): void {
+  private respawn(s: Scene, st: GameState, cause: 'tunnel' | 'water' | 'fall', wait: 'water' | 'fire' | 'tunnel' | 'other' | null): void {
     const { ctx, cam } = s;
     const r = st.rider;
     const down = r.mode === 'down';
@@ -643,7 +645,7 @@ export class Hud {
   }
 
   /** The held respawn's dial: an arc turning round the ring, and the water (or the tunnel's arch) inside. */
-  private waiting(s: Scene, cx: number, cy: number, R: number, wait: 'water' | 'tunnel' | 'other'): void {
+  private waiting(s: Scene, cx: number, cy: number, R: number, wait: 'water' | 'fire' | 'tunnel' | 'other'): void {
     const { ctx } = s;
     const a = s.now * 2.4;
     ctx.lineWidth = 5;

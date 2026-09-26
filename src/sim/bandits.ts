@@ -9,6 +9,7 @@ import {
   banditAlive,
   bridgeHits,
   chestY,
+  fireHits,
   fordHits,
   horsemanAlive,
   hurtRider,
@@ -37,6 +38,7 @@ import {
   DT,
   FALL_OFF_Y,
   FALL_SECONDS,
+  FIRE_BURN_SECONDS,
   FAST_MOVE_WINDOW,
   FORD_HORSE_SPEED,
   HORSE_ACCEL,
@@ -404,6 +406,7 @@ function board(ctx: FightCtx, geo: TrainGeometry, h: HorsemanState, events: SimE
     aimTicks: 0,
     cooldownTicks: interval(state, BANDIT_INTERVAL),
     stunTicks: 0,
+    burnTicks: 0,
     navTarget: null,
   });
   h.mode = 'gone';
@@ -538,6 +541,7 @@ function stepBandit(ctx: FightCtx, geo: TrainGeometry, b: BanditState, events: S
     return;
   }
   if (b.stunTicks > 0) b.stunTicks--;
+  if (b.burnTicks > 0) b.burnTicks--;
   // The brakes slammed on: thrown like the Rider, and his aim spoiled (spec §5.2, §7.3).
   if (state.train.lurchTick === state.tick && throwFigure(geo, b, state.train.v)) {
     b.aimTicks = 0;
@@ -567,6 +571,15 @@ function stepBandit(ctx: FightCtx, geo: TrainGeometry, b: BanditState, events: S
     knockOff(ctx, b, 'water', events);
     return;
   }
+  // A burning trestle burns them outside the cars as it burns the Rider: a hit point as often.
+  if (fireHits(geo, ctx.hazards, b.x, b.y) && b.burnTicks === 0) {
+    b.burnTicks = secondsToTicks(FIRE_BURN_SECONDS);
+    b.hp = Math.max(0, b.hp - 1);
+    if (b.hp === 0) {
+      knockOff(ctx, b, 'fire', events);
+      return;
+    }
+  }
   if (bridgeHits(geo, ctx.hazards, state.train.v, prevX, b.x, b.y, bodyHeight(b))) {
     b.hp = Math.max(0, b.hp - 1);
     if (b.hp === 0) {
@@ -578,7 +591,7 @@ function stepBandit(ctx: FightCtx, geo: TrainGeometry, b: BanditState, events: S
   banditShoots(ctx, geo, b, events);
 }
 
-function knockOff(ctx: FightCtx, b: BanditState, cause: 'tunnel' | 'bridge' | 'water', events: SimEvent[]): void {
+function knockOff(ctx: FightCtx, b: BanditState, cause: 'tunnel' | 'bridge' | 'water' | 'fire', events: SimEvent[]): void {
   ctx.state.stats.banditsDowned++;
   events.push({ type: 'banditKnockedOff', id: b.id, cause });
   removeBandit(ctx, b, events);

@@ -7,6 +7,7 @@ import { framePath, framePoint, netIndex } from '../src/sim/network';
 import { initialLoot, initialRider, stepRider, type FightCtx } from '../src/sim/rider';
 import {
   CAR_SPECS,
+  FIRE_BURN_SECONDS,
   FORD_HORSE_SPEED,
   HORSE_MAX,
   HORSE_SHY_SECONDS,
@@ -82,6 +83,7 @@ function bandit(p: Partial<BanditState> = {}): BanditState {
     aimTicks: 0,
     cooldownTicks: 600,
     stunTicks: 0,
+    burnTicks: 0,
     navTarget: null,
     ...p,
   };
@@ -591,6 +593,29 @@ describe('boarded bandits (spec §7.3)', () => {
     expect(ev).toContainEqual({ type: 'banditKnockedOff', id: 7, cause: 'water' });
     expect(ev).toContainEqual({ type: 'holdupEnded' });
     expect(w.state.train.heldUp).toBe(false);
+  });
+});
+
+describe('burning trestles (spec §4.3)', () => {
+  it('burn bandits outside the cars a hit point at a time, and leave those inside alone', () => {
+    const w = world();
+    riderAway(w);
+    w.state.bandits = [
+      bandit({ id: 1, x: 20, y: 4.2, surface: 'roof', hp: 2, stunTicks: 1e9 }),
+      bandit({ id: 2, x: 13.55, y: 1.2, surface: 'platform', hp: 1, stunTicks: 1e9 }),
+      bandit({ id: 3, x: 20.5, y: 1.2, surface: 'floor', hp: 2, stunTicks: 1e9 }),
+    ];
+    w.ctx.hazards = [{ kind: 'trestle', id: 'r', x0: 0, x1: 40, burning: true }];
+    const ev = tick(w, 1);
+    expect(ev).toContainEqual({ type: 'banditKnockedOff', id: 2, cause: 'fire' });
+    expect(w.state.bandits.find((b) => b.id === 1)?.hp).toBe(1);
+    tick(w, Math.round(FIRE_BURN_SECONDS * TICK_HZ));
+    expect(w.state.bandits.map((b) => [b.id, alive(b)])).toEqual([
+      [1, false],
+      [2, false],
+      [3, true],
+    ]);
+    expect(w.state.bandits.find((b) => b.id === 3)?.hp).toBe(2);
   });
 });
 

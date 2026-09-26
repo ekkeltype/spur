@@ -156,6 +156,7 @@ export class RiderSounds {
           if (e.cause === 'bridge' || e.cause === 'fall') sfx.thud();
           // Washed off: into the river (riderOff says so too; the splash plays once).
           else if (e.cause === 'water') sfx.splash(false);
+          else if (e.cause === 'fire') sfx.flare();
           break;
         case 'reload':
           sfx.reloadFor(e.weapon, reloadSeconds(e.weapon, state.upgrades));

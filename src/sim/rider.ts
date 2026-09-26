@@ -8,6 +8,7 @@ import {
   chestY,
   damageBandit,
   damageHorseman,
+  fireHits,
   fordHits,
   horsemanAlive,
   horsemanBox,
@@ -116,10 +117,16 @@ export function stepRider(ctx: FightCtx, input: RiderInput, events: SimEvent[]):
   }
   if (r.invulnTicks > 0) r.invulnTicks--;
   if (r.stunTicks > 0) r.stunTicks--;
-  // The brakes slammed on (spec §5.2): thrown forward, unless braced; the spyglass drops.
-  if (state.train.lurchTick === state.tick && throwFigure(geo, r, state.train.v)) {
-    r.scoped = false;
-    events.push({ type: 'thrown', who: 'rider' });
+  // The brakes slammed on (spec §5.2): thrown forward, unless braced; the spyglass drops. Thrown
+  // off your feet costs a heart; in mid-air it's only a shove.
+  if (state.train.lurchTick === state.tick) {
+    const standing = r.onGround;
+    if (throwFigure(geo, r, state.train.v)) {
+      r.scoped = false;
+      events.push({ type: 'thrown', who: 'rider' });
+      if (standing) hurtRider(ctx, 'lurch', events);
+      if (r.mode !== 'active') return;
+    }
   }
 
   // The spyglass (spec §6.5): the Rider stands still while looking.
@@ -152,6 +159,12 @@ export function stepRider(ctx: FightCtx, input: RiderInput, events: SimEvent[]):
   if (fordHits(ctx.hazards, r.x, r.y)) {
     riderOff(ctx, 'water', events);
     return;
+  }
+  // A burning trestle's flames burn anyone outside the cars (spec §4.3): a heart as they reach you,
+  // and another each time the invulnerability after the last one runs out.
+  if (fireHits(geo, ctx.hazards, r.x, r.y) && !state.godMode) {
+    hurtRider(ctx, 'fire', events);
+    if (r.mode !== 'active') return;
   }
   if (bridgeHits(geo, ctx.hazards, state.train.v, prevX, r.x, r.y, bodyHeight(r)) && !state.godMode) {
     hurtRider(ctx, 'bridge', events);
@@ -361,12 +374,13 @@ function track(ctx: FightCtx, geo: TrainGeometry): void {
 }
 
 /**
- * A respawn waits while the rear platform is in a ford (spec §6.3), or, on a train with nothing
- * behind the tender, while a tunnel is over the tender top it would put the Rider on.
+ * A respawn waits while the rear platform is in a ford or a burning trestle's flames (spec §6.3),
+ * or, on a train with nothing behind the tender, while a tunnel is over the tender top it would put
+ * the Rider on.
  */
 function respawnBlocked(ctx: FightCtx, geo: TrainGeometry): boolean {
   const { x, y } = geo.respawn;
-  return fordHits(ctx.hazards, x, y) || tunnelHits(ctx.hazards, x, y);
+  return fordHits(ctx.hazards, x, y) || fireHits(geo, ctx.hazards, x, y) || tunnelHits(ctx.hazards, x, y);
 }
 
 function respawn(ctx: FightCtx, geo: TrainGeometry, events: SimEvent[]): void {

@@ -196,6 +196,12 @@ export const WIND_WALK_BACK = 0.25; // fraction gained with the wind at w = 1
 
 export const HEARTS = 5;
 export const INVULN_SECONDS = 0.8;
+/**
+ * A burning trestle's flames burn anyone outside the car bodies (spec §4.3): the Rider loses a heart
+ * as they reach them, and another each time the invulnerability after a hit runs out while they
+ * stay in them; a bandit loses a hit point as often.
+ */
+export const FIRE_BURN_SECONDS = INVULN_SECONDS;
 export const STUN_SECONDS = 1.0;
 export const RESPAWN_OFF_SECONDS = 6;
 export const RESPAWN_OFF_CABOOSE_SECONDS = 4;

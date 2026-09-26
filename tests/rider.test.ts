@@ -4,7 +4,7 @@ import { newGame } from '../src/sim/game';
 import { trainGeometry } from '../src/sim/geometry';
 import { framePath, framePoint, netIndex } from '../src/sim/network';
 import { initialLoot, initialRider, stepRider, type FightCtx } from '../src/sim/rider';
-import { RESPAWN_DOWN_SECONDS, RESPAWN_OFF_CABOOSE_SECONDS, RESPAWN_OFF_SECONDS, SCOPE_MAX, SCOPE_MIN, TICK_HZ } from '../src/sim/rules';
+import { INVULN_SECONDS, RESPAWN_DOWN_SECONDS, RESPAWN_OFF_CABOOSE_SECONDS, RESPAWN_OFF_SECONDS, SCOPE_MAX, SCOPE_MIN, TICK_HZ } from '../src/sim/rules';
 import {
   NO_INPUT,
   type BanditState,
@@ -83,6 +83,7 @@ function bandit(p: Partial<BanditState> = {}): BanditState {
     aimTicks: 0,
     cooldownTicks: 600,
     stunTicks: 0,
+    burnTicks: 0,
     navTarget: null,
     ...p,
   };
@@ -490,8 +491,76 @@ describe('fords (spec §4.3, §6.3)', () => {
   });
 });
 
+describe('burning trestles (spec §4.3)', () => {
+  const fire = (x0: number, x1 = x0 + 60): FrameHazard => ({ kind: 'trestle', id: 'r1', x0, x1, burning: true });
+
+  it('burn the Rider outside the cars: a heart as the flames reach them, then one per invulnerability', () => {
+    for (const [x, y, surface] of [
+      [20, 4.2, 'roof'],
+      [32, 2.8, 'tenderTop'],
+      [39, 4, 'cabRoof'],
+      [13.55, 1.2, 'platform'],
+      [36.5, 1.4, 'tenderDeck'],
+    ] as const) {
+      const w = world();
+      place(w, x, y, surface);
+      w.ctx.hazards = [fire(x + 0.5)];
+      run(w, 5);
+      expect(w.state.rider.hearts, surface).toBe(5);
+      w.ctx.hazards = [fire(x - 30)];
+      const ev = run(w, 1);
+      expect(ev, surface).toContainEqual({ type: 'riderHurt', cause: 'fire', hearts: 4 });
+      // Still out in the flames: another heart each time the 0.8 s of invulnerability runs out.
+      run(w, Math.round(INVULN_SECONDS * TICK_HZ) * 2);
+      expect(w.state.rider.hearts, surface).toBe(2);
+    }
+  });
+
+  it('leave the Rider inside a car or the cab alone, and an unburnt trestle too', () => {
+    for (const [x, y, surface] of [
+      [20, 1.2, 'floor'],
+      [39, 1.4, 'cabFloor'],
+    ] as const) {
+      const w = world();
+      place(w, x, y, surface);
+      w.ctx.hazards = [fire(-100, 100)];
+      const ev = run(w, 3 * TICK_HZ);
+      expect(ev.some((e) => e.type === 'riderHurt'), surface).toBe(false);
+      expect(w.state.rider.hearts).toBe(5);
+    }
+    const w = world();
+    place(w, 20, 4.2, 'roof');
+    w.ctx.hazards = [{ kind: 'trestle', id: 'r0', x0: -100, x1: 100 }];
+    run(w, 60);
+    expect(w.state.rider.hearts).toBe(5);
+  });
+
+  it('put a Rider who stays out in them down, and keep the respawn waiting until the rear is past them', () => {
+    const w = world();
+    const r = w.state.rider;
+    place(w, 20, 4.2, 'roof');
+    w.ctx.hazards = [fire(-50, 60)];
+    const ev = run(w, 5 * TICK_HZ);
+    expect(ev).toContainEqual({ type: 'riderDown' });
+    run(w, (RESPAWN_DOWN_SECONDS + 2) * TICK_HZ);
+    expect([r.mode, r.respawnTicks]).toEqual(['down', 0]);
+    w.ctx.hazards = [fire(-120, -2)];
+    expect(run(w, 1)).toContainEqual({ type: 'riderBack' });
+    expect(r.hearts).toBe(5);
+  });
+
+  it('spare a Rider in god mode', () => {
+    const w = world();
+    w.state.godMode = true;
+    place(w, 20, 4.2, 'roof');
+    w.ctx.hazards = [fire(-100, 100)];
+    run(w, 3 * TICK_HZ);
+    expect(w.state.rider.hearts).toBe(5);
+  });
+});
+
 describe('the lurch (spec §5.2)', () => {
-  it('throws a Rider standing on a roof toward the loco, staggered for 0.6 s but unhurt', () => {
+  it('throws a Rider standing on a roof toward the loco: a heart, and staggered for 0.6 s', () => {
     const w = world();
     const r = w.state.rider;
     w.state.train.v = 15;
@@ -500,6 +569,7 @@ describe('the lurch (spec §5.2)', () => {
     w.state.train.lurchTick = w.state.tick;
     const ev = run(w, 1, { moveX: -1, firing: true, firePressed: true, aim: 0.5 });
     expect(ev).toContainEqual({ type: 'thrown', who: 'rider' });
+    expect(ev).toContainEqual({ type: 'riderHurt', cause: 'lurch', hearts: 4 });
     expect(r.onGround).toBe(false);
     expect(r.vx).toBeCloseTo(4, 1);
     expect(r.y).toBeGreaterThan(4.2);
@@ -511,7 +581,7 @@ describe('the lurch (spec §5.2)', () => {
     expect([r.onGround, r.surface]).toEqual([true, 'roof']);
     expect(r.x).toBeGreaterThan(20.8);
     expect(r.x).toBeLessThan(21.6);
-    expect([r.hearts, r.mode]).toEqual([5, 'active']);
+    expect([r.hearts, r.mode]).toEqual([4, 'active']);
     expect(staggered.some((e) => e.type === 'riderHurt')).toBe(false);
     // Then the Rider's own again.
     const after = run(w, 10, { moveX: -1, firing: true, aim: 0.5 });
@@ -528,6 +598,18 @@ describe('the lurch (spec §5.2)', () => {
     w.state.train.lurchTick = w.state.tick;
     expect(run(w, 1)).toContainEqual({ type: 'thrown', who: 'rider' });
     expect(w.state.rider.vx).toBeCloseTo(-4, 1);
+    expect(w.state.rider.hearts).toBe(4);
+  });
+
+  it('can put a Rider on their last heart down', () => {
+    const w = world();
+    w.state.train.v = 15;
+    w.state.rider.hearts = 1;
+    place(w, 20, 4.2, 'roof');
+    run(w, 5);
+    w.state.train.lurchTick = w.state.tick;
+    expect(run(w, 1)).toContainEqual({ type: 'riderDown' });
+    expect(w.state.rider.mode).toBe('down');
   });
 
   it('leaves a crouching Rider, one on a ladder, one inside a car or the cab, and one on the tender deck standing', () => {
@@ -547,7 +629,8 @@ describe('the lurch (spec §5.2)', () => {
       const before = { x: w.state.rider.x, y: w.state.rider.y };
       w.state.train.lurchTick = w.state.tick;
       const ev = run(w, 1, held);
-      expect(ev.some((e) => e.type === 'thrown'), what).toBe(false);
+      expect(ev.some((e) => e.type === 'thrown' || e.type === 'riderHurt'), what).toBe(false);
+      expect(w.state.rider.hearts, what).toBe(5);
       expect(w.state.rider.stunTicks, what).toBe(0);
       expect(w.state.rider.x, what).toBeCloseTo(before.x, 6);
       expect(w.state.rider.y, what).toBeCloseTo(before.y, 6);
@@ -567,6 +650,7 @@ describe('the lurch (spec §5.2)', () => {
     expect(r.vx - vx).toBeCloseTo(4, 1);
     expect(r.vy).toBeCloseTo(vy - 22 / TICK_HZ, 9);
     expect(r.stunTicks).toBe(0);
+    expect(r.hearts).toBe(5);
   });
 
   it('drops the spyglass, and only on the tick of the lurch', () => {

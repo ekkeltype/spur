@@ -63,6 +63,19 @@ export function fordHits(hazards: readonly FrameHazard[], x: number, y: number):
   return y < FORD_WATER_Y && inFord(hazards, x);
 }
 
+/** Is train-frame x over a burning trestle? */
+export function inFire(hazards: readonly FrameHazard[], x: number): boolean {
+  return hazards.some((h) => h.kind === 'trestle' && h.burning === true && x >= h.x0 && x <= h.x1);
+}
+
+/**
+ * Do a burning trestle's flames reach a figure (spec §4.3)? Everywhere outside the car bodies: the
+ * roofs, the tender, the platforms, the ladders, the air. Inside a car or the cab is sheltered.
+ */
+export function fireHits(geo: TrainGeometry, hazards: readonly FrameHazard[], x: number, y: number): boolean {
+  return inFire(hazards, x) && interiorAt(geo, x, y) === null;
+}
+
 /** Is train-frame x over a trestle (a fall from here is a long one)? */
 export function overTrestle(hazards: readonly FrameHazard[], x: number): boolean {
   return hazards.some((h) => h.kind === 'trestle' && x >= h.x0 && x <= h.x1);

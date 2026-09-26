@@ -31,7 +31,7 @@ After a loss you can retry from the last station.
 
 The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, *Signal Country*, *Single Track*, *Night Freight* and *The Blackwater Line*. Contracts and cargo pay money, which buys guns, gear, cars and upgrades.
 
-Nowhere on the train is safe from everything. Tunnels sweep everyone above the car floors off the train, fords wash off everyone below the roofs, and low bridges knock down anyone standing on a roof or the tender top. The Engineer sees them coming and calls them; the Rider gets down, gets up or crouches. Speeds are in mph and distances in yards and miles.
+Nowhere on the train is safe from everything. Tunnels sweep everyone above the car floors off the train, fords wash off everyone below the roofs, low bridges knock down anyone standing on a roof or the tender top, and a burning trestle burns anyone outside the cars. The Engineer sees them coming and calls them; the Rider gets down, gets up or crouches. Speeds are in mph and distances in yards and miles.
 
 ### Controls
 
@@ -39,7 +39,7 @@ Nowhere on the train is safe from everything. Tunnels sweep everyone above the c
 |---|---|
 | A / D | Walk toward the rear / toward the loco |
 | W or Space | Jump. On a ladder, W climbs; under a hatch, W climbs out |
-| S | Crouch: duck under low bridges, brace when the brakes are slammed. On a hatch, drop inside; on a ladder, climb down |
+| S | Crouch: duck under low bridges, brace when the brakes are slammed (standing, the lurch costs a heart). On a hatch, drop inside; on a ladder, climb down |
 | Mouse, left click | Aim and fire |
 | R | Reload |
 | Q, or 1–3 | Switch weapon (revolver, coach gun, rifle, once bought) |

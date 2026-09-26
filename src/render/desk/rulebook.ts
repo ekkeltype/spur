@@ -78,13 +78,14 @@ const CALLS: Rule[] = [
   ['Tunnels', 'Everyone above the car floors is swept off, the tender top too. Call “get down”.'],
   ['Low bridges', 'The beam knocks down anyone standing on a roof or the tender top. Call “duck”.'],
   ['Fords', 'The water washes everyone below the car roofs off the train, inside too. Call them early: “get up top”.'],
+  ['Burning trestles', 'The flames burn anyone outside the cars, a heart at a time, all the way across. Call “get inside” (a car or the cab).'],
   [
     'Cattle',
     `One blast when the Rider calls it, begun ${roundYards(WHISTLE_SCARE_MIN)}–${roundYards(WHISTLE_SCARE_MAX)} yards from the herd. Whistle early or hold it down and they get used to it and won’t budge. The whistle uses steam.`,
   ],
   [
     'Slamming the brakes',
-    `Emergency (Space) at ${limitMph(LURCH_MIN_SPEED)} mph or more spooks the horses alongside and throws anyone standing outside. Tell the Rider to crouch first.`,
+    `Emergency (Space) at ${limitMph(LURCH_MIN_SPEED)} mph or more spooks the horses alongside and throws anyone standing outside: it costs the Rider a heart unless they’re crouched. Tell them first.`,
   ],
 ];
 

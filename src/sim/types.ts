@@ -601,6 +601,8 @@ export interface BanditState {
   aimTicks: number;
   cooldownTicks: number;
   stunTicks: number;
+  /** Ticks until a burning trestle's flames can burn this bandit again (spec §4.3). */
+  burnTicks: number;
   /** Navigation target (a node index in the train's nav graph), or null. */
   navTarget: number | null;
 }
@@ -788,7 +790,7 @@ export type DebugCmd =
 // =============================================================================================
 
 export type ShotLayer = 'train' | 'trackside';
-export type HurtCause = 'bullet' | 'bridge' | 'tunnel' | 'water' | 'fall' | 'explosion';
+export type HurtCause = 'bullet' | 'bridge' | 'tunnel' | 'water' | 'fall' | 'explosion' | 'lurch' | 'fire';
 
 export type SimEvent =
   // Engineer commands
@@ -846,7 +848,7 @@ export type SimEvent =
   | { type: 'horsemanDown'; id: number; x: number; boss: boolean }
   | { type: 'banditBoarded'; id: number; x: number; y: number; into: 'platform' | 'cab' }
   | { type: 'banditDown'; id: number; x: number; y: number; boss: boolean }
-  | { type: 'banditKnockedOff'; id: number; cause: 'tunnel' | 'bridge' | 'water' }
+  | { type: 'banditKnockedOff'; id: number; cause: 'tunnel' | 'bridge' | 'water' | 'fire' }
   /** A horseman's horse shies at a lurch's squeal (spec §5.2). */
   | { type: 'horseShy'; id: number }
   | { type: 'heldUp' }

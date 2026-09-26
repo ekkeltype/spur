@@ -81,7 +81,7 @@ export class BotRider {
   }
 }
 
-/** A sharp Rider acts on a tunnel or a ford the Engineer calls this many seconds before it arrives… */
+/** A sharp Rider acts on a tunnel, a ford or a burning trestle the Engineer calls this many seconds before it arrives… */
 const CALL_SECONDS = 6;
 /** …and crouches this long before a low bridge's beam passes over. */
 const DUCK_SECONDS = 1;
@@ -91,11 +91,23 @@ const HAZARD_SLACK = 1.5;
 /** Where a low bridge's beam passes too low to stand (spec §4.3). */
 const TOPS: ReadonlySet<SurfaceKind> = new Set<SurfaceKind>(['roof', 'cupola', 'tenderTop', 'cabRoof']);
 
-/** Out of a hazard's way: floor level under a tunnel ('down'), a roof or the tender top in a ford ('up'). */
-type Refuge = 'down' | 'up';
+/**
+ * Out of a hazard's way: floor level under a tunnel ('down'), a roof or the tender top in a ford
+ * ('up'), inside a car or the cab on a burning trestle ('inside').
+ */
+type Refuge = 'down' | 'up' | 'inside';
 
-function safeAt(y: number, refuge: Refuge): boolean {
+/** Is a surface of this kind, at this height, out of the way? */
+function safeAt(kind: SurfaceKind | null, y: number, refuge: Refuge): boolean {
+  if (refuge === 'inside') return kind === 'floor' || kind === 'cabFloor';
   return refuge === 'down' ? y <= TUNNEL_FEET_Y : y >= FORD_WATER_Y;
+}
+
+function refugeFrom(h: FrameHazard): Refuge | null {
+  if (h.kind === 'tunnel') return 'down';
+  if (h.kind === 'ford') return 'up';
+  if (h.kind === 'trestle' && h.burning) return 'inside';
+  return null;
 }
 
 /** Seconds until a hazard (with slack) reaches train-frame x at the train's speed: 0 while over it, Infinity once it's past. */
@@ -109,20 +121,21 @@ function secondsUntil(h: FrameHazard, x: number, v: number): number {
 }
 
 /**
- * What the Engineer would be calling for the Rider's spot: the soonest tunnel ('down') or ford
- * ('up') due within CALL_SECONDS, and whether a low bridge is about to pass over.
+ * What the Engineer would be calling for the Rider's spot: the soonest tunnel ('down'), ford ('up')
+ * or burning trestle ('inside') due within CALL_SECONDS, and whether a low bridge is about to pass over.
  */
 function calls(state: GameState, run: RunDef): { refuge: Refuge | null; duck: boolean } {
-  const { rider: r, train } = state;
+  const { rider: rider, train } = state;
   let refuge: Refuge | null = null;
   let soonest = Infinity;
   let duck = false;
   for (const h of hazardsNear(state, run, Math.max(40, Math.abs(train.v) * CALL_SECONDS + 20))) {
-    const t = secondsUntil(h, r.x, train.v);
+    const t = secondsUntil(h, rider.x, train.v);
+    const r = refugeFrom(h);
     if (h.kind === 'lowBridge') duck ||= t <= DUCK_SECONDS;
-    else if ((h.kind === 'tunnel' || h.kind === 'ford') && t <= CALL_SECONDS && t < soonest) {
+    else if (r !== null && t <= CALL_SECONDS && t < soonest) {
       soonest = t;
-      refuge = h.kind === 'tunnel' ? 'down' : 'up';
+      refuge = r;
     }
   }
   return { refuge, duck };
@@ -132,7 +145,7 @@ function calls(state: GameState, run: RunDef): { refuge: Refuge | null; duck: bo
 function shelter(geo: TrainGeometry, x: number, refuge: Refuge): { region: number; x: number } | null {
   const extent = new Map<number, [number, number]>();
   for (const s of geo.surfaces) {
-    if (!safeAt(s.y, refuge)) continue;
+    if (!safeAt(s.kind, s.y, refuge)) continue;
     const e = extent.get(s.region);
     extent.set(s.region, e ? [Math.min(e[0], s.x0), Math.max(e[1], s.x1)] : [s.x0, s.x1]);
   }
@@ -154,7 +167,7 @@ function shelter(geo: TrainGeometry, x: number, refuge: Refuge): { region: numbe
  * ready, reloads when empty) at the nearest enemy, and goes after bandits aboard (the cab first),
  * finding its way along the train with the bandits' own navigation. It heeds the Engineer's calls
  * as a sharp Rider would, and they come first: down to floor level for a tunnel, up on a roof or
- * the tender top for a ford, crouched for a low bridge. It keeps chasing a bandit only where it
+ * the tender top for a ford, inside a car or the cab on a burning trestle, crouched for a low bridge. It keeps chasing a bandit only where it
  * can do so without leaving a safe spot.
  */
 export class GuardBot {
@@ -197,7 +210,7 @@ export class GuardBot {
     const call = calls(state, this.run);
     const home = geo.surfaces.find((sf) => sf.kind === 'roof' && state.train.cars[sf.car].kind === 'express') ?? geo.surfaces.find((sf) => sf.kind === 'roof');
     const chaseRegion = chase ? regionOf(geo, chase) : -1;
-    const chaseSafely = call.refuge !== null && chaseRegion >= 0 && r.onGround && safeAt(r.y, call.refuge) && chaseRegion === regionOf(geo, r);
+    const chaseSafely = call.refuge !== null && chaseRegion >= 0 && r.onGround && safeAt(r.surface, r.y, call.refuge) && chaseRegion === regionOf(geo, r);
     let goal: { region: number; x: number } | null = null;
     if (call.refuge !== null && !chaseSafely) {
       goal = shelter(geo, r.x, call.refuge);

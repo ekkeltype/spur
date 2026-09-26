@@ -163,7 +163,7 @@ function payroll(): RunDef {
     briefing: {
       rider: [
         'The payroll is in the express car’s safe. A bandit who gets inside will crack it and run for his horse: shoot the one carrying the loot, then walk over it to pick it up.',
-        'A horseman about to climb aboard? Shout for the brake and crouch: a hard stop spooks the horses and throws anyone standing.',
+        'A horseman about to climb aboard? Crouch, then shout for the brake: a hard stop spooks the horses, and throws anyone standing, which costs a heart.',
         'At a water tower, stand on the tender by the hatch and press E to lower the spout.',
         'If we take the Dry Gulch cutoff, riders will be waiting in the gulch. Use the spyglass and get your shots in first.',
       ],
@@ -171,7 +171,7 @@ function payroll(): RunDef {
         'You start with half a tender. Stop at Coyote tank with the tender’s hatch under the spout; the Ahead list counts down the distance.',
         'At Dry Gulch Jct. choose: the long main line through Horsethief Tunnel, or the short, steep cutoff where a heavy train crawls.',
         'Never let the water run out with the fire lit: the boiler blows. Watch the glass and stop at the tanks.',
-        'When the Rider calls for the brake, slam it on (Space) and the horses shy off. It costs speed, so get her going again.',
+        'When the Rider calls for the brake, slam it on (Space) and the horses shy off. Warn the Rider first, and get her going again after.',
       ],
     },
     startClock: clock(9, 0),
@@ -279,13 +279,13 @@ function signalCountry(): RunDef {
         'Read each signal as it goes by and call it out: arm up and green is clear, 45° and yellow means the next one is at stop, level and red is stop.',
         'At Buzzard Rock the junction signal tells which way the rockslide is: scope it before the switch. Red means that route is blocked: say so, and read it again after the Engineer throws the switch.',
         'Cattle on the line? Watch the herd through the spyglass and call the moment for one blast, inside about 270 yards: whistle any sooner and they get used to it.',
-        'The Devil’s Trestle is burning. Stay down: falling off up there is a long way down.',
+        'The Devil’s Trestle is burning: the flames burn anyone outside the cars. Get inside a car or the cab before we cross.',
       ],
       engineer: [
         'Signals are grey posts on your map; only the Rider can see what they show (Tab for the rulebook). After a yellow, hold 20 mph and stop at the next signal: the Ahead list shows exactly where.',
         'Set Buzzard Rock Jct. early and ask what its signal shows. If it’s red, that route is blocked: throw the switch and ask again.',
         'For cattle, blow the whistle (H) once when the Rider calls it, not held down: a herd that hears it too soon gets used to it.',
-        'Take the 30 mph Devil’s Elbow at 30, then open her up: cross the burning trestle any slower than 30 and it comes down under you.',
+        'Take the 30 mph Devil’s Elbow at 30, then open her up: cross the burning trestle any slower than 30 and it comes down under you. Get the Rider inside first.',
       ],
     },
     startClock: clock(12, 30),

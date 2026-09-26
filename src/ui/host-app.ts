@@ -437,6 +437,8 @@ function writeRoomCode(code: string): void {
 
 /** Events kept for the renderer between two frames; more than this means frames stopped (a stall). */
 const MAX_PENDING_EVENTS = 4000;
+/** A burning trestle burns every 0.8 s; the warning toast goes up at most this often. */
+const FIRE_TOAST_GAP_MS = 5000;
 
 class RiderPlay {
   readonly el: HTMLElement;
@@ -451,6 +453,8 @@ class RiderPlay {
   private debugEl = h('div', { class: 'debug-badge' });
   private pending: SimEvent[] = [];
   private runningSince: number | null = null;
+  /** When the last "you're burning" toast went up (performance.now), so a crossing gets one, not one per burn. */
+  private fireToastAt = -Infinity;
 
   constructor(
     private app: HostApp,
@@ -559,6 +563,12 @@ class RiderPlay {
         case 'riderDown':
           t.show('You’re down. Back aboard in a few seconds.', 'danger');
           break;
+        case 'riderHurt':
+          if (e.cause === 'fire' && performance.now() - this.fireToastAt > FIRE_TOAST_GAP_MS) {
+            this.fireToastAt = performance.now();
+            t.show('The flames! Get inside a car or the cab.', 'danger', 3200);
+          }
+          break;
         case 'fine':
           t.show(`Fined ${money(e.amount)}: ${fineText(e.reason)}`, 'danger');
           break;
@@ -578,8 +588,11 @@ class RiderPlay {
         case 'fordEnter':
           this.hints.show('ford', 'Fords wash everyone below the car roofs off the train, inside too. Get up on a roof or the tender top when the Engineer calls one.');
           break;
+        case 'trestleEnter':
+          if (e.burning) this.hints.show('fire', 'The trestle is burning: the flames burn anyone outside the cars, a heart at a time. Get inside a car or the cab until we’re across.');
+          break;
         case 'thrown':
-          if (e.who === 'rider') this.hints.show('lurch', 'The Engineer slammed the brakes and the lurch threw you. Crouch (S) to brace, and call for the brake when a horseman is about to climb aboard.');
+          if (e.who === 'rider') this.hints.show('lurch', 'The Engineer slammed the brakes: the lurch threw you and cost a heart. Crouch (S) to brace, and call for the brake when a horseman is about to climb aboard.');
           break;
         case 'cattleCalm':
           this.hints.show('cattle', `The herd heard the whistle too soon and is ignoring it. Call for one blast when they’re closer, inside ${roundYards(WHISTLE_SCARE_MAX)} yards.`);

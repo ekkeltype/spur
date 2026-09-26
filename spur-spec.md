@@ -146,7 +146,7 @@ Features are flat lists in the `RunDef`, each on one edge:
 | Tunnel | `from`, `to`, name | Anyone above floor level (feet higher than `TUNNEL_FEET_Y`, 2.3 m: the roofs, the cab roof *and the tender top*) when the portal reaches them is knocked off the train. Platforms, the tender deck, the cab floor and interiors are safe. It's dark inside. |
 | Low bridge | `at` | An overhead beam, 1.2 m above the roof or tender top under it. A Rider or bandit standing on a roof or the tender top is knocked down (1 heart, 1 s stun). Crouching passes under it. |
 | Ford | `from`, `to`, name | The river runs over the line. Water stands `FORD_WATER_Y` (2.0 m) deep over the rails: anyone whose feet are below it (platforms, the tender deck, the cab, interiors) is washed off the train. Only the roofs, the cab roof and the tender top are dry. Horsemen wade at `FORD_HORSE_SPEED`. Both seats see fords: the Engineer on the map, the Rider as water ahead. |
-| Trestle | `from`, `to`, optional `burning: { minSpeed }` | A bridge over a gorge. Falling off the train here counts as a long fall. A burning trestle collapses if the loco's front enters it below `minSpeed` (loss: `trestle`). |
+| Trestle | `from`, `to`, optional `burning: { minSpeed }` | A bridge over a gorge. Falling off the train here counts as a long fall. A burning trestle collapses if the loco's front enters it below `minSpeed` (loss: `trestle`), and its flames burn anyone outside the car bodies (roofs, the tender, platforms, ladders, mid-air): the Rider loses a heart as they reach them and another each time the invulnerability after a hit (`FIRE_BURN_SECONDS`, 0.8 s) runs out; a bandit loses a hit point as often. Only inside a car or the cab is sheltered. |
 | Station | `at` (stop mark), `platform` length, name, `checkpoint` flag, optional water column | Stop here (§5.6). |
 | Water tower | `at` (spout position) | Stop with the tender hatch under the spout, and the Rider lowers the spout (§5.5). |
 | Curve | `from`, `to`, `limit` | Speed limit (§5.4). |
@@ -213,7 +213,8 @@ most once per `LURCH_COOLDOWN_SECONDS` (8 s), the train lurches (`lurch` event, 
 - Everyone standing outside on the train (a roof, the tender top, the cab roof or a platform, not
   crouching, not on a ladder, not inside) is thrown toward the loco: a hop of `LURCH_HOP_VX` forward
   and `LURCH_HOP_VY` up, then `LURCH_STAGGER_SECONDS` (0.6 s) staggered (no control, no shooting).
-  Near a roof's front end that can mean dropping onto the platform. Crouching braces you.
+  Near a roof's front end that can mean dropping onto the platform. Thrown off their feet, the
+  Rider also loses a heart (in mid-air it's only a shove). Crouching braces you.
 
 It's the Rider's call: a horseman about to climb aboard, "Brake!", and crouch. It costs speed, and a
 slower train is easier to board.
@@ -306,8 +307,10 @@ on the right. Scenery and trackside things are placed in this frame by their tra
   respawn waits while the rear platform is still in a ford.
 - **No place is safe from everything.** Tunnels sweep everything above floor level, including the
   tender top; fords wash off everything below the car roofs, including interiors and the cab; low
-  bridges hit anyone standing on a roof or the tender top. The Rider keeps moving: down for tunnels,
-  up for fords, crouched for bridges.
+  bridges hit anyone standing on a roof or the tender top; a burning trestle burns everyone outside
+  the cars. The Rider keeps moving: down for tunnels, up for fords, crouched for bridges, inside for
+  the fire.
+- A respawn also waits while the rear platform is in a burning trestle's flames.
 - At 0 hearts the Rider is **down**: respawn at the rear after `RESPAWN_DOWN` (10 s) with full hearts.
   The run goes on without you.
 - Hearts: 5 (+1 with `extraHeart`, +2 with the Rider assist). After a hit you're invulnerable for 0.8 s.
@@ -531,7 +534,9 @@ The desk is one screen at 1280×720 and up:
 
 - **Cab.**
   - Dials and levers, draggable with the mouse.
-  - Held-up state: the controls grey out and "HANDS UP" shows in red.
+  - Held-up state: the controls grey out and "HANDS UP" shows in red. For flavour, a masked outlaw
+    rises into the desk with a revolver levelled at the Engineer, with a line to say; he jabs the gun
+    when a dead control is tried, and drops away when the Rider clears the cab.
   - Warnings: low water, overspeed, a derail warning, the safety valve.
   - Near a station or water tower, a precision-stop readout: distance to the stop mark or spout.
 - **Route map.**
@@ -871,6 +876,9 @@ The first playtest's notes, and what changed (details in the sections above; cho
 | Extra cars earned nothing | Cargo cars pay (§12) |
 | The 30 mph diverging limit lasted to the next signal | It ends once the train is through the junction (§9.3) |
 | Switching seats meant hosting afresh and moving a save code | A **Switch seats** box in the lobby for both players (§3); both browsers keep the campaign (§17) |
+| Slamming the brakes should cost a heart if the Rider doesn't crouch | Thrown off their feet, the Rider loses a heart (§5.2) |
+| The flames should force the Rider into a certain position | A burning trestle burns everyone outside the cars: get inside (§4.3) |
+| The Engineer should see something when held up | An outlaw at the desk, gun levelled (§11) |
 
 ## 22. Out of scope for v1
 

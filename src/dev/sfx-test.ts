@@ -434,6 +434,7 @@ const ONE_SHOTS: Case[] = [
   shotCase('cattle calm', 2, (s) => s.cattle(false, 0, 1)),
   shotCase('cattle scatter', 3.2, (s) => s.cattle(true, 0, 1)),
   shotCase('grunt', 0.8, (s) => s.grunt()),
+  shotCase('flare', 1, (s) => s.flare()),
 ];
 
 const ENGINE_SECONDS = 3.5;
@@ -747,6 +748,7 @@ async function renderAll(): Promise<RenderReport> {
   const hoofbeats = onsets(buf('cattle scatter'), 0.2 * 10 ** (bolt.loudestRmsDb / 20), 0.04).filter((t) => t > 1);
   check('a scattering herd bellows, then drums off', bolt.activeSec > stat('cattle calm').activeSec && hoofbeats.length >= 5, `${bolt.activeSec} s, ${hoofbeats.length} hoofbeats after the bellow`);
   check('the Rider’s grunt is short', stat('grunt').activeSec < 0.7, `${stat('grunt').activeSec} s`);
+  check('a flare of flame is over within a second', stat('flare').activeSec < 1, `${stat('flare').activeSec} s`);
 
   // Layers stop when told: faded within a second or so, torn down (silent) once idle for two.
   const offs: [string, Script][] = [
@@ -1166,6 +1168,7 @@ byId('controls').append(
       button('Cattle: a questioning low', () => sfx.cattle(false, knobs.pan, knobs.gain)),
       button('Cattle: bellow and bolt', () => sfx.cattle(true, knobs.pan, knobs.gain)),
       button('Grunt (thrown)', () => sfx.grunt()),
+      button('Flare (burned)', () => sfx.flare()),
     ),
     knob('Ford level', 'ford', 0, 1, 0.05),
   ),

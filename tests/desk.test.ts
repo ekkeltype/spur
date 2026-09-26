@@ -550,11 +550,12 @@ describe('the rulebook', () => {
     expect(rule('Junction signals')).toMatch(/Red means the road the switch is set for is blocked/);
   });
 
-  it('has the calls for tunnels, fords, cattle and the brake', () => {
+  it('has the calls for tunnels, fords, burning trestles, cattle and the brake', () => {
     expect(rule('Tunnels')).toMatch(/the tender top too/);
     expect(rule('Fords')).toMatch(/washes everyone below the car roofs off the train/);
+    expect(rule('Burning trestles')).toMatch(/burn anyone outside the cars.*“get inside”/);
     expect(rule('Cattle')).toMatch(/get used to it and won’t budge\. The whistle uses steam/);
-    expect(rule('Slamming the brakes')).toMatch(/spooks the horses alongside and throws anyone standing outside\. Tell the Rider to crouch first/);
+    expect(rule('Slamming the brakes')).toMatch(/spooks the horses alongside and throws anyone standing outside: it costs the Rider a heart unless they’re crouched/);
   });
 });
 

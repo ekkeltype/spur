@@ -189,7 +189,8 @@ function aheadName(it: AheadItem, numbers: ReadonlyMap<string, number>): string 
 function aheadDetail(it: AheadItem, speed: number, ix: NetIndex): string {
   const len = it.length !== undefined ? formatDistance(it.length) : '';
   switch (it.kind) {
-    // The calls for the people aboard (spec §4.3): down for tunnels, up for fords, duck for beams.
+    // The calls for the people aboard (spec §4.3): down for tunnels, up for fords, duck for beams,
+    // inside for a burning trestle.
     case 'tunnel':
       return `Tunnel, ${len}: <span class="dk-warn">get down</span>`;
     case 'ford':
@@ -198,7 +199,7 @@ function aheadDetail(it: AheadItem, speed: number, ix: NetIndex): string {
       return '<span class="dk-warn">Low beam: duck up top</span>';
     case 'trestle':
       return it.minSpeed !== undefined
-        ? `<span class="${toMph(speed) < limitMph(it.minSpeed) ? 'dk-bad' : 'dk-warn'}">Burning! Cross at ${limitMph(it.minSpeed)} mph or more</span>`
+        ? `<span class="${toMph(speed) < limitMph(it.minSpeed) ? 'dk-bad' : 'dk-warn'}">Burning! Cross at ${limitMph(it.minSpeed)} mph or more</span> · <span class="dk-warn">get inside</span>`
         : `Trestle, ${len}`;
     case 'curve':
       return `${len} long${advice(it, speed)}`;

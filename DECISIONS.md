@@ -116,6 +116,14 @@ Tuned against `tests/balance.test.ts`: the autopilot drives while a bot Rider fi
 - **Hints show on any run not yet won**, not only the first, since signals and cattle first appear in run 3; the setting reads "On runs not yet won". Each hint shows once per play screen. The Engineer's signal hint waits 9 s into a run so it doesn't replace the opening one.
 - **The protocol went to version 2** (3 since switching seats). Round 2 changed what the host sends, so an Engineer on an old page is asked to reload.
 
+## After round 2: the brakes, the fire and the hold-up
+
+- **A lurch costs the Rider a heart** when it throws them off their feet (standing outside, not crouched). A shove in mid-air costs nothing: nothing slammed them into anything. Bandits are thrown as before but not hurt, so the slam stays a tool against boarders rather than a way to clear the roofs.
+- **The fire's place is inside.** A burning trestle's flames burn everyone outside the car bodies, which makes "inside a car or the cab" a fourth refuge beside down (tunnels), up (fords) and crouched (bridges). Burns come as the flames reach you and then each time the 0.8 s of invulnerability after a hit runs out, so a crossing of 15–20 s is several hearts: effectively a place you must reach, but with time to react. Bandits burn at the same rate; a tier-1 bandit outside dies at the first burn.
+- **Drawn behind the train.** The fire rises behind the cars and above the roofs, so a figure outside stands against it while a car's cut-away inside looks sheltered. A burn throws embers off the Rider and plays a flare; a toast warns at most every 5 s.
+- **The outlaw at the desk** is flavour: the HANDS UP banner still explains. He rises over the timetable, which matters least while the levers are dead, sways, jabs his gun when a dead control is tried, and falls away when the cab is clear. Reduced motion stills him.
+- **The balance bot gets inside** for a burning trestle as it gets down for tunnels and up for fords.
+
 ## Switching seats
 
 - **The host moves with the Rider's seat.** When both tick "Switch seats", the Engineer's browser opens a new room (a new code) and the Rider's browser hands it the save and joins it. Reusing the old code would race the old room's release on the signalling server. The Rider's browser leaves only once the other has left its room (it has the save by then), or after 3 s.

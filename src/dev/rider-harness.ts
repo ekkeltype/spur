@@ -375,6 +375,7 @@ function bandit(id: number, car: number, where: Where, dx: number, extra: Partia
     aimTicks: 0,
     cooldownTicks: 0,
     stunTicks: 0,
+    burnTicks: 0,
     navTarget: null,
     ...extra,
   };
