@@ -22,7 +22,7 @@ export function settingsScreen(get: () => Settings, onPatch: (patch: Partial<Set
   const hints = h(
     'select',
     { ariaLabel: 'Hints' },
-    h('option', { value: 'first', text: 'First run only' }),
+    h('option', { value: 'first', text: 'On runs not yet won' }),
     h('option', { value: 'always', text: 'Always' }),
     h('option', { value: 'never', text: 'Never' }),
   );

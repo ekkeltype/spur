@@ -85,9 +85,11 @@ export interface Payout {
   won: boolean;
   pay: number;
   latePenalty: number;
+  /** What the optional cargo cars earned (spec §12, CARGO_PAY). */
+  cargoPay: number;
   sideJobPay: number;
   fines: number;
-  /** pay − latePenalty (never below 0) + sideJobPay − fines. */
+  /** pay − latePenalty (never below 0) + cargoPay + sideJobPay − fines. */
   subtotal: number;
   /** The run had been won before: it pays REPLAY_PAY_FACTOR of a positive subtotal. */
   replay: boolean;

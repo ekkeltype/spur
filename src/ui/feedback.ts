@@ -42,9 +42,13 @@ export class Hints {
   }
 }
 
-/** Whether hints apply for a labyrinth under the current settings. */
-export function hintsOn(settings: Settings, presetHints: boolean): boolean {
+/**
+ * Whether hints apply to a run under the current settings. 'first' (the default) means while the
+ * run is new to the players, until they've won it: each run brings something new (spec §13), and
+ * its hints come with it.
+ */
+export function hintsOn(settings: Settings, newRun: boolean): boolean {
   if (settings.hints === 'never') return false;
   if (settings.hints === 'always') return true;
-  return presetHints;
+  return newRun;
 }

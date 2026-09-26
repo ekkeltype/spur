@@ -1,7 +1,9 @@
-// Words and numbers as the menus show them: the clock, money, speed, and the names of things.
+// Words and numbers as the menus show them: the clock, money, speed, distance and weight, and the
+// names of things. Units are the railroad's (spec §0 note 6): mph, yards and miles, and tons.
 
-import { CAR_SPECS, DRAG, HORSE_MAX, MILE, MPH, ROLL, TRACTIVE_MAX } from '../sim/rules';
-import type { Cargo, CarKind, LossReason, Medal } from '../sim/types';
+import { formatDistance } from '../render/desk/format';
+import { CARGO_PAY, CAR_SPECS, DRAG, HORSE_MAX, MPH, ROLL, TRACTIVE_MAX } from '../sim/rules';
+import type { Cargo, CarKind, CarType, LossReason, Medal } from '../sim/types';
 
 /** Seconds since midnight as a railroad clock: "2:15 PM". */
 export function formatClock(sec: number): string {
@@ -36,13 +38,37 @@ export function mph(ms: number): string {
   return `${Math.round(Math.abs(ms) * MPH)} mph`;
 }
 
-export function miles(m: number): string {
-  return `${(m / MILE).toFixed(1)} mi`;
+/** Metres as the railroad reads them: "85 yd", "1,240 yd", "1.2 mi" (the desk's format). */
+export function distance(m: number): string {
+  return formatDistance(m);
+}
+
+/** Tonnes (the sim's) per short ton, the 2,000 lb ton an American railroad weighs its cars in. */
+const TONNES_PER_TON = 0.907185;
+
+/** A weight in tons, from the sim's tonnes: "121 tons". */
+export function tons(tonnes: number): string {
+  return `${Math.round(tonnes / TONNES_PER_TON).toLocaleString('en-US')} tons`;
 }
 
 /** Train mass in tonnes: the loco, the tender and the cars. */
 export function trainMass(consist: readonly CarKind[]): number {
   return CAR_SPECS.loco.mass + CAR_SPECS.tender.mass + consist.reduce((n, c) => n + CAR_SPECS[c].mass, 0);
+}
+
+/**
+ * The cars in a consist that carry paying cargo of their own (spec §12, CARGO_PAY), front to back:
+ * the optional express, passenger and boxcars. The run's required cars carry the contract, and the
+ * armored car and the caboose carry nothing.
+ */
+export function cargoCars(consist: readonly CarKind[], required: readonly CarType[]): { car: CarType; pay: number }[] {
+  const out: { car: CarType; pay: number }[] = [];
+  for (const k of consist) {
+    if (k === 'loco' || k === 'tender' || required.includes(k)) continue;
+    const pay = CARGO_PAY[k] ?? 0;
+    if (pay > 0) out.push({ car: k, pay });
+  }
+  return out;
 }
 
 /**

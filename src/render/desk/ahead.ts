@@ -17,18 +17,28 @@ import type { Dir, FlagState, Span, SwitchState, TrackHead, TrackPoint } from '.
 
 const EPS = 1e-6;
 
-export type AheadKind = 'tunnel' | 'lowBridge' | 'trestle' | 'curve' | 'signal' | 'junction' | 'station' | 'water' | 'end' | 'flag';
+export type AheadKind = 'tunnel' | 'ford' | 'lowBridge' | 'trestle' | 'curve' | 'signal' | 'junction' | 'station' | 'water' | 'end' | 'flag';
+
+/**
+ * The hazards to the people on the train (spec §4.3): they sweep the whole train, so they stay in
+ * the list until its trailing end is past them, not just the loco.
+ */
+export const TRAIN_HAZARDS: ReadonlySet<AheadKind> = new Set(['tunnel', 'ford', 'lowBridge']);
 
 export interface AheadItem {
   kind: AheadKind;
   /** Feature id (the node id for junctions and ends, the flag's id for flags). */
   id: string;
   name: string;
-  /** Metres from the train's leading end; 0 when it's already on a tunnel, trestle or curve. */
+  /** Metres from the train's leading end; 0 when the train is already on it (see `until`). */
   dist: number;
-  /** Tunnels, trestles and curves the leading end is already on: metres until it's off. */
+  /**
+   * Set when the train is already on it: metres until it's off. Tunnels, fords and low bridges
+   * count until the trailing end is past them (with `trainLength`), trestles and curves until the
+   * leading end is.
+   */
   until?: number;
-  /** Tunnels, trestles and curves: their length. */
+  /** Tunnels, fords, trestles and curves: their length. */
   length?: number;
   /** Curves, and junctions whose switch leads onto slower track (a siding, a cutoff): the speed limit there (m/s). */
   limit?: number;
@@ -57,6 +67,12 @@ export interface AheadOptions {
   flags?: readonly FlagState[];
   /** The contract's destination station id. */
   destination?: string;
+  /**
+   * The train's length behind the leading end (m). Tunnels, fords and low bridges then stay listed,
+   * at distance 0, until the trailing end is past them: the Rider on the last car is still in the
+   * water after the loco is out of it.
+   */
+  trainLength?: number;
 }
 
 /** Order for items at the same distance: what the train meets first physically. */
@@ -67,23 +83,25 @@ const KIND_ORDER: Record<AheadKind, number> = {
   curve: 3,
   lowBridge: 4,
   tunnel: 5,
-  trestle: 6,
-  water: 7,
-  station: 8,
-  end: 9,
+  ford: 6,
+  trestle: 7,
+  water: 8,
+  station: 9,
+  end: 10,
 };
+
+const reverse = (h: TrackHead): TrackHead => ({ edge: h.edge, off: h.off, dir: h.dir === 1 ? -1 : 1 });
 
 /**
  * The next items along the route from `head` (the loco's front, or the rear when backing up),
  * following the switches as they are now (spec §4.1, §11). This steps edge by edge with nextEdge,
  * the same stepping network.walk does, so each junction crossing knows the edge it arrives on
- * (facing or trailing).
+ * (facing or trailing). With `trainLength` the scan starts at the trailing end, so what the train
+ * is still passing through is found too.
  */
 export function buildAhead(ix: NetIndex, switches: Record<string, SwitchState>, head: TrackHead, opts: AheadOptions = {}): AheadItem[] {
   const max = opts.max ?? 6;
   const range = opts.range ?? 8000;
-  const hatchBack = opts.hatchBack ?? 0;
-  const flags = opts.flags ?? [];
   const items: AheadItem[] = [];
   const seen = new Set<string>();
   const add = (key: string, item: AheadItem): void => {
@@ -92,25 +110,38 @@ export function buildAhead(ix: NetIndex, switches: Record<string, SwitchState>, 
     items.push(item);
   };
 
-  let edgeId = head.edge;
-  let off = head.off;
-  let dir: Dir = head.dir;
-  let acc = 0;
+  // Distances are from the leading end, so the trailing end is at `tail` ≤ 0. Walking back along the
+  // train follows the switches, which match the train's path: a switch under a train can't be
+  // thrown, and a trailing move springs it.
+  let start = head;
+  let tail = 0;
+  if ((opts.trainLength ?? 0) > EPS) {
+    const back = walk(ix, switches, reverse(head), opts.trainLength ?? 0);
+    start = reverse(back.end);
+    tail = -back.walked;
+  }
+  const ctx: ScanCtx = { ix, flags: opts.flags ?? [], hatchBack: opts.hatchBack ?? 0, destination: opts.destination, tail, add };
+
+  let edgeId = start.edge;
+  let off = start.off;
+  let dir: Dir = start.dir;
+  let acc = tail;
   for (let guard = 0; guard < 1000; guard++) {
     const e = edgeOf(ix, edgeId);
     const room = dir === 1 ? e.length - off : off;
     const take = Math.max(0, Math.min(room, range - acc));
-    scanEdge(ix, edgeId, off, dir, take, acc, flags, hatchBack, opts.destination, add);
+    scanEdge(ctx, edgeId, off, dir, take, acc);
     acc += take;
     if (acc >= range - EPS || take < room - EPS) break;
     const nodeId = dir === 1 ? e.b : e.a;
     const nx = nextEdge(ix, switches, edgeId, nodeId);
     if (!nx) {
       const node = ix.node.get(nodeId);
-      add(`n:${nodeId}`, { kind: 'end', id: nodeId, name: node?.label ?? 'End of track', dist: acc });
+      add(`n:${nodeId}`, { kind: 'end', id: nodeId, name: node?.label ?? 'End of track', dist: Math.max(0, acc) });
       break;
     }
-    if (nx.junction) {
+    // A junction under the train, behind its leading end, is already decided.
+    if (nx.junction && acc >= -EPS) {
       const j = ix.junction.get(nx.junction);
       if (j) {
         // Slower track beyond the switch: its limit applies the moment the loco crosses (spec §5.4).
@@ -133,54 +164,71 @@ export function buildAhead(ix: NetIndex, switches: Record<string, SwitchState>, 
   return items.slice(0, max);
 }
 
-/** Collects the features on one stretch of an edge: from `off`, `take` metres in direction `dir`, starting `acc` metres from the leading end. */
-function scanEdge(
-  ix: NetIndex,
-  edgeId: string,
-  off: number,
-  dir: Dir,
-  take: number,
-  acc: number,
-  flags: readonly FlagState[],
-  hatchBack: number,
-  destination: string | undefined,
-  add: (key: string, item: AheadItem) => void,
-): void {
+interface ScanCtx {
+  ix: NetIndex;
+  flags: readonly FlagState[];
+  hatchBack: number;
+  destination: string | undefined;
+  /** The trailing end's distance from the leading end (≤ 0). */
+  tail: number;
+  add: (key: string, item: AheadItem) => void;
+}
+
+/**
+ * Collects the features on one stretch of an edge: from `off`, `take` metres in direction `dir`,
+ * starting `acc` metres from the leading end (negative while the stretch is under the train).
+ */
+function scanEdge(ctx: ScanCtx, edgeId: string, off: number, dir: Dir, take: number, acc: number): void {
+  const { ix, flags, hatchBack, destination, tail, add } = ctx;
   const f = ix.features.get(edgeId);
   /** Distance along this stretch to an offset on the edge (negative = behind its start). */
   const along = (o: number): number => (o - off) * dir;
   /** Points count only strictly ahead: the one under the leading end is "here", not "ahead". */
   const pointAhead = (o: number): number | null => {
     const d = along(o);
-    return d > EPS && d <= take + EPS ? acc + d : null;
+    return d > EPS && d <= take + EPS && acc + d > EPS ? acc + d : null;
   };
-  /** A range [from, to]: its entry distance and, if the leading end is already on it, how long until it's off. */
-  const rangeAhead = (from: number, to: number): { dist: number; until?: number } | null => {
+  /** A beam over the line: listed until the trailing end is under it (with `until`, once the leading end is past). */
+  const beamAhead = (o: number): { dist: number; until?: number } | null => {
+    const d = along(o);
+    if (d <= EPS || d > take + EPS) return null;
+    return acc + d > EPS ? { dist: acc + d } : { dist: 0, until: acc + d - tail };
+  };
+  /**
+   * A range [from, to]: its entry distance and, if the train is already on it, how long until it's
+   * off: the whole train for the hazards to the people on it, the leading end for the rest.
+   */
+  const rangeAhead = (from: number, to: number, wholeTrain: boolean): { dist: number; until?: number } | null => {
     const a = along(from);
     const b = along(to);
-    const lo = Math.min(a, b);
-    const hi = Math.max(a, b);
-    if (hi <= EPS || lo > take + EPS) return null;
-    if (lo <= EPS) return acc === 0 ? { dist: 0, until: hi } : { dist: acc };
-    return { dist: acc + lo };
+    const lo = acc + Math.min(a, b);
+    const hi = acc + Math.max(a, b);
+    if (hi <= acc + EPS || lo > acc + take + EPS) return null; // not on this stretch
+    if (lo > EPS) return { dist: lo };
+    if (!wholeTrain) return hi > EPS ? { dist: 0, until: hi } : null;
+    return { dist: 0, until: hi - tail };
   };
 
   if (f) {
     for (const t of f.tunnels) {
-      const r = rangeAhead(t.from, t.to);
+      const r = rangeAhead(t.from, t.to, true);
       if (r) add(`t:${t.id}`, { kind: 'tunnel', id: t.id, name: t.name, ...r, length: Math.abs(t.to - t.from) });
     }
+    for (const fd of f.fords) {
+      const r = rangeAhead(fd.from, fd.to, true);
+      if (r) add(`d:${fd.id}`, { kind: 'ford', id: fd.id, name: fd.name, ...r, length: Math.abs(fd.to - fd.from) });
+    }
     for (const t of f.trestles) {
-      const r = rangeAhead(t.from, t.to);
+      const r = rangeAhead(t.from, t.to, false);
       if (r) add(`r:${t.id}`, { kind: 'trestle', id: t.id, name: t.name, ...r, length: Math.abs(t.to - t.from), ...(t.burning ? { minSpeed: t.burning.minSpeed } : {}) });
     }
     for (const c of f.curves) {
-      const r = rangeAhead(c.from, c.to);
+      const r = rangeAhead(c.from, c.to, false);
       if (r) add(`c:${c.id}`, { kind: 'curve', id: c.id, name: 'Curve', ...r, length: Math.abs(c.to - c.from), limit: c.limit });
     }
     for (const b of f.lowBridges) {
-      const d = pointAhead(b.at);
-      if (d !== null) add(`b:${b.id}`, { kind: 'lowBridge', id: b.id, name: b.name ?? 'Low bridge', dist: d });
+      const r = beamAhead(b.at);
+      if (r) add(`b:${b.id}`, { kind: 'lowBridge', id: b.id, name: b.name ?? 'Low bridge', ...r });
     }
     for (const s of f.signals) {
       if (s.facing !== dir) continue; // it governs the other direction: the Rider sees its back

@@ -461,14 +461,14 @@ function base64ToBytes(base64: string): Uint8Array {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * What a finished run pays. A win pays the sim's total (pay − late penalty, never below 0, + side
- * jobs − fines); a replay takes REPLAY_PAY_FACTOR of it when it's positive, so fines are never
- * halved. A loss pays nothing and costs nothing. Amounts are whole dollars.
+ * What a finished run pays. A win pays the sim's total (pay − late penalty, never below 0, + cargo
+ * + side jobs − fines); a replay takes REPLAY_PAY_FACTOR of it when it's positive, cargo included,
+ * so fines are never halved. A loss pays nothing and costs nothing. Amounts are whole dollars.
  */
 export function payoutFor(result: RunResult, replay: boolean): Payout {
   const fines = dollars(result.fines);
   if (result.outcome !== 'won') {
-    return { won: false, pay: 0, latePenalty: 0, sideJobPay: 0, fines, subtotal: 0, replay, replayDiscount: 0, total: 0 };
+    return { won: false, pay: 0, latePenalty: 0, cargoPay: 0, sideJobPay: 0, fines, subtotal: 0, replay, replayDiscount: 0, total: 0 };
   }
   const subtotal = dollars(result.total);
   const replayDiscount = replay && subtotal > 0 ? subtotal - Math.round(subtotal * REPLAY_PAY_FACTOR) : 0;
@@ -476,6 +476,7 @@ export function payoutFor(result: RunResult, replay: boolean): Payout {
     won: true,
     pay: dollars(result.pay),
     latePenalty: dollars(result.latePenalty),
+    cargoPay: dollars(result.cargoPay),
     sideJobPay: dollars(result.sideJobPay),
     fines,
     subtotal,

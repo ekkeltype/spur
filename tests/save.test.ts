@@ -3,9 +3,12 @@
 // results screen apply (money, unlocks, replays, the shop and the consist).
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { composeConsist, newGame, step } from '../src/sim/game';
+import { RUNS } from '../src/content/runs';
+import { cargoPayFor, composeConsist, newGame, runResult, step } from '../src/sim/game';
 import { REPLAY_PAY_FACTOR, SHOP } from '../src/sim/rules';
-import { NO_INPUT, type CampaignProgress, type Checkpoint, type GameState, type Medal, type RunDef, type RunResult, type Settings } from '../src/sim/types';
+import { NO_INPUT, type CampaignProgress, type CarType, type Checkpoint, type GameState, type Medal, type RunDef, type RunResult, type Settings } from '../src/sim/types';
+import { cargoLabel } from '../src/ui/screens';
+import { cargoCars } from '../src/ui/text';
 import {
   CLIENT_SETTINGS_KEY,
   SAVE_KEY,
@@ -556,7 +559,7 @@ describe('checkpoints', () => {
 describe('payouts and recordResult', () => {
   it('pays the contract on a first win, unlocks the next run and records time, medals and count', () => {
     const { save, payout } = recordResult(defaultSave(false), result('first-light', 'won', 431.5, ['untouched', 'onTime'], { pay: 120, latePenalty: 10, sideJobPay: 80, fines: 50 }), RUNS6);
-    expect(payout).toEqual({ won: true, pay: 120, latePenalty: 10, sideJobPay: 80, fines: 50, subtotal: 140, replay: false, replayDiscount: 0, total: 140 });
+    expect(payout).toEqual({ won: true, pay: 120, latePenalty: 10, cargoPay: 0, sideJobPay: 80, fines: 50, subtotal: 140, replay: false, replayDiscount: 0, total: 140 });
     expect(save.campaign).toEqual(
       campaign({ unlocked: 2, money: 140, completed: [{ runId: 'first-light', bestTimeSec: 431.5, medals: ['onTime', 'untouched'], times: 1 }] }),
     );
@@ -573,6 +576,28 @@ describe('payouts and recordResult', () => {
     save = recordResult(save, result('first-light', 'won', 350, ['untouched']), RUNS6).save;
     expect(save.campaign.completed[0]).toEqual({ runId: 'first-light', bestTimeSec: 350, medals: ['onTime', 'clean', 'untouched'], times: 3 });
     expect(save.campaign.unlocked).toBe(2);
+  });
+
+  it('pays the cargo cars with the contract, and a replay halves them with the rest (spec §12)', () => {
+    const first = recordResult(defaultSave(false), result('first-light', 'won', 400, [], { pay: 120, cargoPay: 60 }), RUNS6);
+    expect(first.payout).toMatchObject({ pay: 120, cargoPay: 60, subtotal: 180, replay: false, replayDiscount: 0, total: 180 });
+    expect(first.save.campaign.money).toBe(180);
+    const again = recordResult(first.save, result('first-light', 'won', 380, [], { pay: 120, cargoPay: 70, fines: 10 }), RUNS6);
+    expect(again.payout).toMatchObject({ cargoPay: 70, fines: 10, subtotal: 180, replay: true, replayDiscount: 90, total: 90 });
+    expect(again.save.campaign.money).toBe(270);
+  });
+
+  it('pays no cargo on a loss', () => {
+    expect(payoutFor(result('first-light', 'lost', 100, [], { cargoPay: 60 }), false)).toMatchObject({ won: false, cargoPay: 0, total: 0 });
+  });
+
+  it("carries the sim's cargo pay through: the optional cars of a won run", () => {
+    const run = RUNS6[1]; // the express is the contract's here
+    const state = newGame(run, { seed: 5, consist: ['express', 'passenger', 'boxcar'], upgrades: [], assists: { rider: false, engineer: false } });
+    state.phase = 'won';
+    const payout = payoutFor(runResult(state, run), false);
+    expect(payout.cargoPay).toBe(60);
+    expect(payout.subtotal).toBe(payout.pay + 60);
   });
 
   it('fines beyond the pay cost money, but never below zero, and a replay does not halve them', () => {
@@ -629,6 +654,33 @@ describe('payouts and recordResult', () => {
     const r = result('first-light', 'won', 1, [], { pay: 99.6, total: Number.NaN });
     expect(payoutFor(r, false)).toMatchObject({ pay: 100, subtotal: 0, total: 0 });
     expect(payoutFor(result('first-light', 'won', 1, [], { pay: 101 }), true)).toMatchObject({ subtotal: 101, replayDiscount: 50, total: 51 });
+  });
+});
+
+describe('cargo cars in the depot and on the results screen (spec §12)', () => {
+  it('pays for the optional express, passenger and boxcars; the contract’s cars and the rest carry nothing extra', () => {
+    expect(cargoCars(['express', 'passenger', 'boxcar', 'armored', 'caboose'], [])).toEqual([
+      { car: 'express', pay: 40 },
+      { car: 'passenger', pay: 30 },
+      { car: 'boxcar', pay: 30 },
+    ]);
+    expect(cargoCars(['express', 'boxcar'], ['express'])).toEqual([{ car: 'boxcar', pay: 30 }]);
+    expect(cargoCars(['powder', 'caboose'], ['powder'])).toEqual([]);
+  });
+
+  it("agrees with the sim's cargo pay for every run", () => {
+    const optional: CarType[][] = [[], ['express'], ['passenger', 'boxcar'], ['express', 'passenger', 'boxcar', 'armored', 'caboose']];
+    for (const run of RUNS) {
+      for (const cars of optional) {
+        const consist = composeConsist(run, cars);
+        expect(cargoCars(consist, run.requiredCars).reduce((n, c) => n + c.pay, 0)).toBe(cargoPayFor(run, consist));
+      }
+    }
+  });
+
+  it('names the cars that earned it in the payout row', () => {
+    expect(cargoLabel(['express', 'passenger', 'boxcar'], { requiredCars: ['express'] })).toBe('Cargo (passenger, boxcar)');
+    expect(cargoLabel([], { requiredCars: [] })).toBe('Cargo');
   });
 });
 

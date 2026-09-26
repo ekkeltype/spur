@@ -2,10 +2,9 @@
 // and plain message screens (spec §3).
 
 import type { Payout, Role } from '../net/protocol';
-import { MPH } from '../sim/rules';
-import type { EngineerRun, RunResult } from '../sim/types';
+import type { CarType, EngineerRun, RunResult } from '../sim/types';
 import { button, h } from './dom';
-import { ACT_NAMES, CARGO_NAMES, formatClock, formatDuration, LOSS_TITLES, MEDALS, money, signedMoney } from './text';
+import { ACT_NAMES, CAR_LABELS, CARGO_NAMES, cargoCars, formatClock, formatDuration, LOSS_TITLES, MEDALS, money, mph, signedMoney } from './text';
 
 export const SEAT_NAMES: Record<Role, string> = { rider: 'the Rider', engineer: 'the Engineer' };
 const Seat = (role: Role): string => (role === 'rider' ? 'Rider' : 'Engineer');
@@ -248,10 +247,18 @@ function arrivalText(r: RunResult): string {
   return `Arrived ${formatClock(r.arrivedClock)} · deadline ${formatClock(r.deadline)} · ${when}`;
 }
 
-function payoutTable(p: Payout): HTMLElement {
+/** "Cargo (boxcar, passenger)": the payout row for the cargo cars, naming the cars that earned it. */
+export function cargoLabel(consist: readonly CarType[], run: Pick<EngineerRun, 'requiredCars'>): string {
+  const cars = cargoCars(consist, run.requiredCars).map((c) => CAR_LABELS[c.car].toLowerCase());
+  return cars.length > 0 ? `Cargo (${cars.join(', ')})` : 'Cargo';
+}
+
+function payoutTable(p: Payout, cargo: string): HTMLElement {
   if (!p.won) return h('p', { class: 'muted', text: 'No pay: the contract failed.' });
   const rows: [string, string, string?][] = [['Contract pay', money(p.pay)]];
   if (p.latePenalty > 0) rows.push(['Late penalty', signedMoney(-p.latePenalty), 'minus']);
+  // What the optional cars carried (spec §12); a replay halves it with the rest.
+  if (p.cargoPay > 0) rows.push([cargo, signedMoney(p.cargoPay)]);
   if (p.sideJobPay > 0) rows.push(['Side jobs', signedMoney(p.sideJobPay)]);
   if (p.fines > 0) rows.push(['Fines', signedMoney(-p.fines), 'minus']);
   if (p.replay) rows.push(['Replay: half pay', signedMoney(-p.replayDiscount), 'minus']);
@@ -265,13 +272,14 @@ function payoutTable(p: Payout): HTMLElement {
   );
 }
 
-export function resultsScreen(r: RunResult, payout: Payout, run: EngineerRun, role: Role, actions: ResultActions | null): HTMLElement {
+/** `consist`: the cars behind the tender, which name the cargo row. */
+export function resultsScreen(r: RunResult, payout: Payout, run: EngineerRun, role: Role, actions: ResultActions | null, consist: readonly CarType[] = []): HTMLElement {
   const won = r.outcome === 'won';
   const s = r.stats;
   const destination = stationName(run, run.contract.destination);
   const accuracy = s.shotsFired > 0 ? ` (${Math.round((100 * s.hits) / s.shotsFired)}%)` : '';
   const stats: [string, string][] = [
-    ['Top speed', `${Math.round(s.maxSpeed * MPH)} mph`],
+    ['Top speed', mph(s.maxSpeed)],
     ['Shots, hits', `${s.shotsFired}, ${s.hits}${accuracy}`],
     ['Horsemen downed', String(s.horsemenDowned)],
     ['Bandits downed', String(s.banditsDowned)],
@@ -305,7 +313,7 @@ export function resultsScreen(r: RunResult, payout: Payout, run: EngineerRun, ro
       h(
         'div',
         { class: 'results-cols' },
-        h('section', {}, h('h3', { class: 'section', text: 'Payout' }), payoutTable(payout)),
+        h('section', {}, h('h3', { class: 'section', text: 'Payout' }), payoutTable(payout, cargoLabel(consist, run))),
         h(
           'section',
           {},

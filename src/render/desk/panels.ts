@@ -1,14 +1,15 @@
 // The desk's DOM panels (spec §11): the header, the Ahead list, the precision-stop readout, the
 // Rider's whereabouts, the log and the telegraph. Each builds its element once and updates it from
-// a snapshot, touching the DOM only where something changed.
+// a snapshot, touching the DOM only where something changed. What an Ahead row says is a pure
+// function (aheadRow), so tests/desk.test.ts reads it under Node.
 
 import type { NetIndex } from '../../sim/network';
 import { CAR_SPECS, BUFFER_SAFE } from '../../sim/rules';
 import type { CarType, EngineerRun, EngineerView } from '../../sim/types';
-import { slowAdvice, type AheadItem, type StopTarget } from './ahead';
+import { slowAdvice, TRAIN_HAZARDS, type AheadItem, type StopTarget } from './ahead';
 import { btn, capitalise, el, escapeHtml, kbd, setClass, setHtml, setText } from './dom';
 import { lossText, type LogTone } from './events';
-import { clockParts, formatClock, formatDistance, formatEta, formatMoney, formatRemaining, limitMph, toMph } from './format';
+import { clockParts, formatClock, formatDistance, formatEta, formatMoney, formatRemaining, formatYards, limitMph, toMph, windowYards } from './format';
 import { ICONS } from './icons';
 
 /** Rows in the Ahead list (spec §11). */
@@ -16,6 +17,8 @@ export const AHEAD_ROWS = 6;
 /** ETAs below these (s) are called out in yellow, then red. */
 const SOON_S = 10;
 const IMMINENT_S = 4;
+/** Below this speed (m/s) the train is standing: an ETA means nothing. */
+const STANDING = 0.3;
 /** Log lines kept. */
 const LOG_MAX = 80;
 /** Lines with the same key within this much game time merge (s). */
@@ -132,6 +135,127 @@ export class HeaderPanel {
 // The Ahead list: what the Engineer reads out
 // ---------------------------------------------------------------------------------------------
 
+/** What one row of the Ahead list says: HTML for the name and the line under it, text for the rest. */
+export interface AheadRowText {
+  /** The row's classes: its kind, and how close it is (dk-soon, dk-imminent, or dk-here while the train is on it). */
+  cls: string;
+  name: string;
+  detail: string;
+  eta: string;
+  dist: string;
+  /** The longer explanation, on hover. */
+  title: string;
+}
+
+/** A standing train this close to a signal (m) is waiting at it: the Rider reads it from there. */
+const AT_SIGNAL = 100;
+
+/**
+ * One row of the Ahead list for an item, with the train running toward it at `speed` (m/s). The
+ * switch `numbers` and the network (for the names of the legs beyond a switch) come from the desk.
+ */
+export function aheadRow(it: AheadItem, speed: number, ix: NetIndex, numbers: ReadonlyMap<string, number>): AheadRowText {
+  const inside = it.until !== undefined;
+  const secs = speed > STANDING ? it.dist / speed : Infinity;
+  const brake = it.limit !== undefined && slowAdvice(it.dist, speed, it.limit) === 'brake';
+  const urgency = inside ? ' dk-here' : brake || secs <= IMMINENT_S ? ' dk-imminent' : secs <= SOON_S ? ' dk-soon' : '';
+  return {
+    cls: `ah-row ah-${it.kind}${urgency}`,
+    name: aheadName(it, numbers),
+    detail: aheadDetail(it, speed, ix),
+    eta: inside ? 'now' : formatEta(it.dist, speed),
+    // The hazards to the people aboard hold until the whole train is past them.
+    dist: inside ? `${TRAIN_HAZARDS.has(it.kind) ? 'clear in' : 'out in'} ${formatDistance(it.until ?? 0)}` : formatDistance(it.dist),
+    title: aheadTitle(it),
+  };
+}
+
+function aheadName(it: AheadItem, numbers: ReadonlyMap<string, number>): string {
+  switch (it.kind) {
+    case 'curve':
+      return `Curve <span class="dk-plate">${limitMph(it.limit ?? 0)} mph</span>`;
+    case 'junction': {
+      const n = numbers.get(it.id);
+      return `${n ? `<span class="dk-num">${n}</span>` : ''}${escapeHtml(it.name)}`;
+    }
+    case 'station':
+      return `${escapeHtml(it.name)}${it.destination ? ' ★' : ''}`;
+    default:
+      return escapeHtml(it.name);
+  }
+}
+
+/** The line under the name: what it means for the train, and the call to make to the Rider. */
+function aheadDetail(it: AheadItem, speed: number, ix: NetIndex): string {
+  const len = it.length !== undefined ? formatDistance(it.length) : '';
+  switch (it.kind) {
+    // The calls for the people aboard (spec §4.3): down for tunnels, up for fords, duck for beams.
+    case 'tunnel':
+      return `Tunnel, ${len}: <span class="dk-warn">get down</span>`;
+    case 'ford':
+      return `Ford, ${len}: <span class="dk-warn">get up top</span>`;
+    case 'lowBridge':
+      return '<span class="dk-warn">Low beam: duck up top</span>';
+    case 'trestle':
+      return it.minSpeed !== undefined
+        ? `<span class="${toMph(speed) < limitMph(it.minSpeed) ? 'dk-bad' : 'dk-warn'}">Burning! Cross at ${limitMph(it.minSpeed)} mph or more</span>`
+        : `Trestle, ${len}`;
+    case 'curve':
+      return `${len} long${advice(it, speed)}`;
+    case 'signal':
+      // Read as the train passes (spec §9.1), except a junction signal: read before the switch, a
+      // red there means the road it's set for is blocked, so throw the switch and ask again.
+      if (it.guards) return 'Ask early. <span class="dk-warn">Red</span>: the road set is blocked';
+      return speed <= STANDING && it.dist <= AT_SIGNAL ? 'What does it show now?' : 'As it passes: what does it show?';
+    case 'junction': {
+      const j = it.junction;
+      if (!j) return '';
+      if (!j.facing) return j.against ? '<span class="dk-warn">Trailing: it will spring over</span>' : 'Trailing through';
+      const leg = ix.edge.get(j.leg);
+      const legName = leg?.name ?? leg?.kind ?? '';
+      // Onto slower track (a siding, a cutoff): its limit holds from the moment the loco crosses.
+      // The switch's name already says where it leads, so the limit takes the leg name's place.
+      if (it.limit !== undefined) return `Set <b>${j.state}</b> · <span class="dk-plate">${limitMph(it.limit)} mph</span> beyond${advice(it, speed)}`;
+      return `Set <b>${j.state}</b>${legName ? ` → ${escapeHtml(legName)}` : ''}`;
+    }
+    case 'station': {
+      const tags = [it.destination ? 'destination' : '', it.checkpoint ? 'checkpoint' : '', it.waterColumn ? 'water column' : ''].filter(Boolean);
+      return tags.length > 0 ? capitalise(tags.join(' · ')) : 'Station stop mark';
+    }
+    case 'water':
+      return 'Water tower: hatch to spout';
+    case 'end':
+      return `<span class="dk-bad">End of track: under ${Math.max(1, limitMph(BUFFER_SAFE))} mph</span>`;
+    case 'flag':
+      return '<span class="dk-warn">Something the Rider spotted</span>';
+  }
+}
+
+/** For a slower limit ahead: slow down while there's room, brake now once there isn't. */
+function advice(it: AheadItem, speed: number): string {
+  if (it.limit === undefined) return '';
+  const a = slowAdvice(it.dist, speed, it.limit);
+  return a === 'brake' ? ' · <span class="dk-bad">brake now!</span>' : a === 'slow' ? ' · <span class="dk-bad">slow down</span>' : '';
+}
+
+/** The hover text: the whole rule behind a terse row. */
+function aheadTitle(it: AheadItem): string {
+  switch (it.kind) {
+    case 'tunnel':
+      return 'A tunnel sweeps everyone above the car floors off the train, the tender top too. Call it early: the Rider gets down to a platform or inside.';
+    case 'ford':
+      return 'The river runs over the line: it washes everyone below the car roofs off the train. Call it early: the Rider gets up on a roof or the tender top.';
+    case 'lowBridge':
+      return 'The beam knocks down anyone standing on a roof or the tender top. The Rider crouches to pass under it.';
+    case 'signal':
+      return it.guards
+        ? 'A junction signal speaks for the road the switch is set for. Have the Rider read it before you get there: red means that road is blocked, so throw the switch and ask again.'
+        : 'The Rider reads it as the train passes. After a yellow, the next signal is at stop: stop at it.';
+    default:
+      return '';
+  }
+}
+
 interface AheadRow {
   li: HTMLLIElement;
   icon: HTMLElement;
@@ -191,79 +315,14 @@ export class AheadPanel {
         row.icon.innerHTML = ICONS[it.kind];
         row.kind = it.kind;
       }
-      const inside = it.until !== undefined;
-      const secs = speed > 0.3 ? it.dist / speed : Infinity;
-      const brake = it.limit !== undefined && slowAdvice(it.dist, speed, it.limit) === 'brake';
-      const urgency = inside ? ' dk-here' : brake || secs <= IMMINENT_S ? ' dk-imminent' : secs <= SOON_S ? ' dk-soon' : '';
-      const cls = `ah-row ah-${it.kind}${urgency}`;
-      if (row.li.className !== cls) row.li.className = cls;
-      setHtml(row.name, this.name(it));
-      setHtml(row.detail, this.detail(it, speed));
-      setText(row.eta, inside ? 'now' : formatEta(it.dist, speed));
-      setText(row.dist, inside ? `out in ${formatDistance(it.until ?? 0)}` : formatDistance(it.dist));
+      const t = aheadRow(it, speed, this.ix, this.numbers);
+      if (row.li.className !== t.cls) row.li.className = t.cls;
+      if (row.li.title !== t.title) row.li.title = t.title;
+      setHtml(row.name, t.name);
+      setHtml(row.detail, t.detail);
+      setText(row.eta, t.eta);
+      setText(row.dist, t.dist);
     });
-  }
-
-  private name(it: AheadItem): string {
-    switch (it.kind) {
-      case 'curve':
-        return `Curve <span class="dk-plate">${limitMph(it.limit ?? 0)} mph</span>`;
-      case 'junction': {
-        const n = this.numbers.get(it.id);
-        return `${n ? `<span class="dk-num">${n}</span>` : ''}${escapeHtml(it.name)}`;
-      }
-      case 'station':
-        return `${escapeHtml(it.name)}${it.destination ? ' ★' : ''}`;
-      default:
-        return escapeHtml(it.name);
-    }
-  }
-
-  /** The line under the name: what it means for the train, and for the Rider on the roofs. */
-  private detail(it: AheadItem, speed: number): string {
-    const len = it.length !== undefined ? formatDistance(it.length) : '';
-    switch (it.kind) {
-      case 'tunnel':
-        return `Tunnel, ${len}: <span class="dk-warn">off the roofs</span>`;
-      case 'lowBridge':
-        return '<span class="dk-warn">Low beam: duck on the roofs</span>';
-      case 'trestle':
-        return it.minSpeed !== undefined
-          ? `<span class="${toMph(speed) < limitMph(it.minSpeed) ? 'dk-bad' : 'dk-warn'}">Burning! Cross at ${limitMph(it.minSpeed)} mph or more</span>`
-          : `Trestle, ${len}`;
-      case 'curve':
-        return `${len} long${this.advice(it, speed)}`;
-      case 'signal':
-        return 'Ask the Rider what it shows';
-      case 'junction': {
-        const j = it.junction;
-        if (!j) return '';
-        if (!j.facing) return j.against ? '<span class="dk-warn">Trailing: it will spring over</span>' : 'Trailing through';
-        const leg = this.ix.edge.get(j.leg);
-        const legName = leg?.name ?? leg?.kind ?? '';
-        // Onto slower track (a siding, a cutoff): its limit holds from the moment the loco crosses.
-        // The switch's name already says where it leads, so the limit takes the leg name's place.
-        if (it.limit !== undefined) return `Set <b>${j.state}</b> · <span class="dk-plate">${limitMph(it.limit)} mph</span> beyond${this.advice(it, speed)}`;
-        return `Set <b>${j.state}</b>${legName ? ` → ${escapeHtml(legName)}` : ''}`;
-      }
-      case 'station': {
-        const tags = [it.destination ? 'destination' : '', it.checkpoint ? 'checkpoint' : '', it.waterColumn ? 'water column' : ''].filter(Boolean);
-        return tags.length > 0 ? capitalise(tags.join(' · ')) : 'Station stop mark';
-      }
-      case 'water':
-        return 'Water tower: hatch to spout';
-      case 'end':
-        return `<span class="dk-bad">End of track: under ${Math.max(1, limitMph(BUFFER_SAFE))} mph</span>`;
-      case 'flag':
-        return '<span class="dk-warn">Something the Rider spotted</span>';
-    }
-  }
-
-  /** For a slower limit ahead: slow down while there's room, brake now once there isn't. */
-  private advice(it: AheadItem, speed: number): string {
-    if (it.limit === undefined) return '';
-    const a = slowAdvice(it.dist, speed, it.limit);
-    return a === 'brake' ? ' · <span class="dk-bad">brake now!</span>' : a === 'slow' ? ' · <span class="dk-bad">slow down</span>' : '';
   }
 }
 
@@ -295,8 +354,9 @@ export class StopPanel {
     const inWindow = Math.abs(tg.dist) <= tg.window;
     const past = tg.dist < -tg.window;
     const kind = tg.kind === 'station' ? (tg.id === this.run.contract.destination ? 'Destination' : 'Station') : 'Water';
-    const main = inWindow ? 'On the mark' : past ? `${Math.round(-tg.dist)} m past` : formatDistance(tg.dist);
-    const off = Math.abs(tg.dist) < 0.5 ? 'dead on' : `${Math.round(Math.abs(tg.dist))} m ${tg.dist > 0 ? 'short' : 'over'}`;
+    // Whole yards all the way in: this readout is for the last few (spec §5.5, §5.6).
+    const main = inWindow ? 'On the mark' : past ? `${formatYards(tg.dist)} past` : formatYards(tg.dist);
+    const off = formatYards(tg.dist) === '0 yd' ? 'dead on' : `${formatYards(tg.dist)} ${tg.dist > 0 ? 'short' : 'over'}`;
     const small = inWindow ? off : past ? 'back her up' : tg.kind === 'station' ? 'to the stop mark' : 'hatch to spout';
     // The ruler: the mark three quarters along, the train's end coming in from the left.
     const lo = tg.kind === 'station' ? -90 : -24;
@@ -324,11 +384,11 @@ export class StopPanel {
         return `${done ? 'Station work done: clear to go' : 'Stand still: station work'}<div class="st-bar${done ? ' dk-done' : ''}"><i style="width:${Math.round(stopAt.progress * 100)}%"></i></div>`;
       }
       if (inWindow) return standing ? 'Hold her here' : 'Stop now';
-      return `Stop the loco's front within ${tg.window} m`;
+      return `Stop the loco's front within ${windowYards(tg.window)}`;
     }
     if (view.train.spout === 'down') return 'Spout down: taking water. Hold still.';
     if (inWindow) return standing ? 'Rider: lower the spout (E on the tender)' : 'Stop now: the hatch is under the spout';
-    return `Stop with the tender hatch within ${tg.window} m`;
+    return `Stop with the tender hatch within ${windowYards(tg.window)}`;
   }
 }
 

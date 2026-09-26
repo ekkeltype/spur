@@ -2,9 +2,22 @@
 // exercised by hand and in screenshots through the harness (desk.html).
 
 import { describe, expect, it } from 'vitest';
-import { buildAhead, slowAdvice, stopTarget } from '../src/render/desk/ahead';
-import { describeEvent, type LogContext } from '../src/render/desk/events';
-import { clockParts, formatClock, formatDistance, formatEta, formatMmSs, formatMoney, formatRemaining, junctionNumbers, toMph } from '../src/render/desk/format';
+import { buildAhead, slowAdvice, stopTarget, type AheadItem } from '../src/render/desk/ahead';
+import { describeEvent, fineText, type LogContext } from '../src/render/desk/events';
+import {
+  clockParts,
+  formatClock,
+  formatDistance,
+  formatEta,
+  formatMmSs,
+  formatMoney,
+  formatRemaining,
+  formatYards,
+  junctionNumbers,
+  roundYards,
+  toMph,
+  windowYards,
+} from '../src/render/desk/format';
 import {
   brakeFromFraction,
   brakeStep,
@@ -35,7 +48,10 @@ import {
   TraceRecorder,
   type ChartFrame,
 } from '../src/render/desk/marey';
+import { aheadRow } from '../src/render/desk/panels';
+import { rulebookText } from '../src/render/desk/rulebook';
 import { netIndex, rearHead } from '../src/sim/network';
+import { YARD } from '../src/sim/rules';
 import type { AiTrainDef, RunDef, Span, SwitchState } from '../src/sim/types';
 import { toEngineerRun } from '../src/sim/views';
 import { loopRun, yRun } from './fixtures';
@@ -46,8 +62,14 @@ const sw = (run: RunDef, set: Record<string, SwitchState> = {}): Record<string, 
   return { ...out, ...set };
 };
 
+/** Yards → metres, for readable distances in the tests below. */
+const yd = (n: number): number => n * YARD;
+
+/** Something a player reads mentions metres or kilometres (spec §0 note 6 forbids both). */
+const METRIC = /\d\s*(?:m|km)\b|metre|meter|kilomet|km\/h/i;
+
 // ---------------------------------------------------------------------------------------------
-// Formatting (spec §0 note 6: mph, miles and a 12-hour clock)
+// Formatting (spec §0 note 6: mph, yards and miles, and a 12-hour clock)
 // ---------------------------------------------------------------------------------------------
 
 describe('clock and durations', () => {
@@ -82,12 +104,45 @@ describe('clock and durations', () => {
 });
 
 describe('distances, speeds and ETAs', () => {
-  it('shows metres below a kilometre and miles above', () => {
-    expect(formatDistance(850)).toBe('850 m');
-    expect(formatDistance(12.4)).toBe('12 m');
-    expect(formatDistance(-12)).toBe('−12 m');
+  it('shows yards below a mile and miles from a mile up, never metres', () => {
+    expect(formatDistance(yd(85))).toBe('85 yd');
+    expect(formatDistance(12.4)).toBe('14 yd'); // 13.6 yd
+    expect(formatDistance(850)).toBe('930 yd');
+    expect(formatDistance(yd(1754))).toBe('1,750 yd');
+    expect(formatDistance(1609.34)).toBe('1.0 mi');
     expect(formatDistance(1609.34 * 1.46)).toBe('1.5 mi');
-    expect(formatDistance(1609.34 * 12.3)).toBe('12 mi');
+    expect(formatDistance(1609.34 * 12.3)).toBe('12.3 mi');
+    for (const m of [0.4, 12, 91, 850, 999, 1000, 1500, 1609, 5000]) expect(formatDistance(m)).not.toMatch(METRIC);
+  });
+
+  it('rounds yards to 1 under 100, to 5 under 1,000 and to 10 beyond', () => {
+    expect(formatDistance(yd(99.4))).toBe('99 yd');
+    expect(formatDistance(yd(99.6))).toBe('100 yd');
+    expect(formatDistance(yd(437))).toBe('435 yd');
+    expect(formatDistance(yd(438))).toBe('440 yd');
+    expect(formatDistance(yd(998))).toBe('1,000 yd');
+    expect(formatDistance(yd(1234))).toBe('1,230 yd');
+    expect(roundYards(yd(270))).toBe(270);
+    expect(roundYards(-yd(72.3))).toBe(72);
+  });
+
+  it('turns to miles when the yards would round up to one', () => {
+    expect(formatDistance(yd(1755))).toBe('1.0 mi'); // not "1,760 yd"
+  });
+
+  it('signs distances behind, but never a zero', () => {
+    expect(formatDistance(-yd(12))).toBe('−12 yd');
+    expect(formatDistance(-0.2)).toBe('0 yd');
+    expect(formatDistance(-1609.34 * 2)).toBe('−2.0 mi');
+  });
+
+  it('keeps whole yards for the precision stop, and rounds its tolerances down', () => {
+    expect(formatYards(yd(437.4))).toBe('437 yd');
+    expect(formatYards(-yd(3.2))).toBe('3 yd');
+    expect(formatYards(yd(1234))).toBe('1,234 yd');
+    expect(windowYards(15)).toBe('16 yd'); // STATION_WINDOW: 16.4 yd
+    expect(windowYards(3)).toBe('3 yd'); // SPOUT_WINDOW: 3.3 yd
+    expect(windowYards(yd(5))).toBe('5 yd');
   });
 
   it('converts m/s to mph', () => {
@@ -331,6 +386,175 @@ describe('buildAhead', () => {
       ['junction', 'J1', 100],
       ['end', 'S', 700],
     ]);
+  });
+
+  it('with the train’s length, finds its rear through a junction behind the loco', () => {
+    // The front 50 m past the loop switch, a 400 m train: its rear (m1 650) is still in Juniper
+    // Tunnel (500–700), and the low bridge (800) is still passing over the cars.
+    const items = buildAhead(ix, sw(run), { edge: 'm2', off: 50, dir: 1 }, { max: 20, trainLength: 400 });
+    expect(items.slice(0, 2).map((i) => [i.kind, i.id, i.dist, Math.round(i.until ?? -1)])).toEqual([
+      ['lowBridge', 'b1', 0, 150],
+      ['tunnel', 't1', 0, 50],
+    ]);
+    // The rest is as the loco sees it: the signal and the switch under the train are passed.
+    const loco = buildAhead(ix, sw(run), { edge: 'm2', off: 50, dir: 1 }, { max: 20 });
+    expect(items.slice(2)).toEqual(loco);
+    expect(loco[0]).toMatchObject({ kind: 'curve', id: 'c1', dist: 50 });
+  });
+
+  it('with the train’s length, backing up, counts until the front is out', () => {
+    // Backing from m1 400 with the front at 600, inside the tunnel: it's out once the front passes 500.
+    const spans: Span[] = [{ edge: 'm1', from: 400, to: 600 }];
+    const items = buildAhead(ix, sw(run), rearHead(spans), { max: 10, trainLength: 200 });
+    expect(items[0]).toMatchObject({ kind: 'tunnel', dist: 0 });
+    expect(items[0].until).toBeCloseTo(100, 6);
+    expect(items.slice(1).map((i) => [i.kind, i.id])).toEqual([
+      ['station', 'orig'],
+      ['end', 'W'],
+    ]);
+  });
+});
+
+// The hazards to the people aboard on one line (spec §4.3): a ford 500–560, a tunnel 650–700, a low
+// bridge at 800, and a curve 900–950 (a limit for the loco alone).
+function hazardRun(): RunDef {
+  return loopRun({
+    fords: [{ id: 'd1', edge: 'm1', from: 500, to: 560, name: 'Salt Creek ford' }],
+    tunnels: [{ id: 't1', edge: 'm1', from: 650, to: 700, name: 'Cedar Tunnel' }],
+    lowBridges: [{ id: 'b1', edge: 'm1', at: 800 }],
+    curves: [{ id: 'c1', edge: 'm1', from: 900, to: 950, limit: 10 }],
+  });
+}
+
+describe('fords, and what the whole train is passing (spec §4.3, §11)', () => {
+  const run = hazardRun();
+  const ix = netIndex(run);
+  const at = (off: number, trainLength?: number): AheadItem[] => buildAhead(ix, sw(run), { edge: 'm1', off, dir: 1 }, { max: 20, trainLength });
+
+  it('lists a ford with its distance and length, in order with the rest', () => {
+    const items = at(400);
+    expect(items[0]).toMatchObject({ kind: 'ford', id: 'd1', name: 'Salt Creek ford', dist: 100, length: 60 });
+    expect(items.slice(0, 4).map((i) => i.kind)).toEqual(['ford', 'tunnel', 'lowBridge', 'curve']);
+  });
+
+  it('keeps a ford listed while any of the train is in the water, until the last car is out', () => {
+    // A 100 m train: the loco in the water, then out of it with the cars still in.
+    expect(at(530, 100)[0]).toMatchObject({ kind: 'ford', dist: 0 });
+    expect(at(530, 100)[0].until).toBeCloseTo(130, 6);
+    expect(at(600, 100)[0]).toMatchObject({ kind: 'ford', dist: 0 });
+    expect(at(600, 100)[0].until).toBeCloseTo(60, 6);
+    expect(at(655, 100).find((i) => i.kind === 'ford')?.until).toBeCloseTo(5, 6);
+    expect(at(661, 100).some((i) => i.kind === 'ford')).toBe(false);
+    // Without the train's length, only the loco counts, as before.
+    expect(at(600).some((i) => i.kind === 'ford')).toBe(false);
+  });
+
+  it('keeps a tunnel and a low bridge listed until the last car is through', () => {
+    const tunnel = at(720, 100).find((i) => i.kind === 'tunnel');
+    expect(tunnel).toMatchObject({ dist: 0 });
+    expect(tunnel?.until).toBeCloseTo(80, 6);
+    const beam = at(850, 100).find((i) => i.kind === 'lowBridge');
+    expect(beam).toMatchObject({ dist: 0 });
+    expect(beam?.until).toBeCloseTo(50, 6);
+    expect(at(901, 100).some((i) => i.kind === 'lowBridge')).toBe(false);
+  });
+
+  it("counts a curve by the loco alone: its limit is the loco's", () => {
+    expect(at(920, 100).find((i) => i.kind === 'curve')?.until).toBeCloseTo(30, 6);
+    expect(at(960, 100).some((i) => i.kind === 'curve')).toBe(false);
+  });
+});
+
+describe('the Ahead list’s rows', () => {
+  const run = hazardRun();
+  const ix = netIndex(run);
+  const nums = junctionNumbers(run);
+  const row = (it: AheadItem, speed = 15): ReturnType<typeof aheadRow> => aheadRow(it, speed, ix, nums);
+  const ford: AheadItem = { kind: 'ford', id: 'd1', name: 'Salt Creek ford', dist: 150, length: 60 };
+
+  it('calls a ford: distance, time and what to tell the Rider, more urgent as it nears', () => {
+    const r = row(ford);
+    expect(r.name).toBe('Salt Creek ford');
+    expect(r.detail).toBe('Ford, 66 yd: <span class="dk-warn">get up top</span>');
+    expect(r.eta).toBe('10 s');
+    expect(r.dist).toBe('165 yd');
+    expect(r.cls).toBe('ah-row ah-ford dk-soon');
+    expect(row({ ...ford, dist: 400 }).cls).toBe('ah-row ah-ford');
+    expect(row({ ...ford, dist: 50 }).cls).toBe('ah-row ah-ford dk-imminent');
+    expect(r.title).toMatch(/washes everyone below the car roofs off the train/);
+  });
+
+  it('says "now" while the train is in the water, and how far until the last car is out', () => {
+    const r = row({ ...ford, dist: 0, until: 130 });
+    expect(r.eta).toBe('now');
+    expect(r.dist).toBe('clear in 140 yd');
+    expect(r.cls).toBe('ah-row ah-ford dk-here');
+  });
+
+  it('asks what a signal shows as the train passes it', () => {
+    const sig: AheadItem = { kind: 'signal', id: 'g2', name: 'Block signal', dist: 120 };
+    expect(row(sig).detail).toBe('As it passes: what does it show?');
+    expect(row(sig).eta).toBe('8 s');
+    // Standing at it, waiting for it to clear: the Rider reads it from there.
+    expect(row({ ...sig, dist: 30 }, 0).detail).toBe('What does it show now?');
+    expect(row({ ...sig, dist: 900 }, 0).detail).toBe('As it passes: what does it show?');
+  });
+
+  it('adds to a junction signal’s row that red means the road the switch is set for is blocked', () => {
+    const r = row({ kind: 'signal', id: 'g1', name: 'Signal for West loop switch', dist: 600, guards: 'P' });
+    expect(r.detail).toBe('Ask early. <span class="dk-warn">Red</span>: the road set is blocked');
+    expect(r.title).toMatch(/red means that road is blocked, so throw the switch and ask again/);
+  });
+
+  it('gives the calls for the people aboard: down for tunnels, up for fords, duck for beams', () => {
+    expect(row({ kind: 'tunnel', id: 't1', name: 'Cedar Tunnel', dist: 300, length: 250 }).detail).toBe('Tunnel, 275 yd: <span class="dk-warn">get down</span>');
+    expect(row({ kind: 'lowBridge', id: 'b1', name: 'Low bridge', dist: 300 }).detail).toBe('<span class="dk-warn">Low beam: duck up top</span>');
+  });
+
+  it('counts a curve out by the loco', () => {
+    expect(row({ kind: 'curve', id: 'c1', name: 'Curve', dist: 0, until: 30, length: 50, limit: 10 }).dist).toBe('out in 33 yd');
+  });
+
+  it('never shows metres', () => {
+    // Everything down the line from the start, and the hazards the train is inside.
+    const items = [
+      ...buildAhead(ix, sw(run), { edge: 'm1', off: 100, dir: 1 }, { max: 20, destination: 'dest' }),
+      ...buildAhead(ix, sw(run), { edge: 'm1', off: 690, dir: 1 }, { max: 20, trainLength: 120 }),
+    ];
+    expect(items.length).toBeGreaterThan(8);
+    for (const it of items) {
+      const r = row(it);
+      expect(`${r.name} ${r.detail} ${r.eta} ${r.dist} ${r.title}`).not.toMatch(METRIC);
+    }
+  });
+});
+
+describe('the rulebook', () => {
+  const text = rulebookText();
+  const rule = (name: string): string => text.find((t) => t.startsWith(`${name}.`)) ?? '';
+
+  it('speaks the railroad’s units: mph, yards and miles', () => {
+    for (const line of text) expect(line).not.toMatch(METRIC);
+    expect(rule('Stations')).toContain('within 16 yd of the mark');
+    expect(rule('Water')).toContain('within 3 yd of the spout');
+    expect(rule('Switches')).toContain('within 22 yd of the points');
+    expect(rule('Cattle')).toContain('70–270 yards from the herd');
+    expect(rule('Slamming the brakes')).toContain('18 mph');
+  });
+
+  it('says to read signals as they pass, and to stop at the next one after a yellow', () => {
+    expect(rule('As you pass')).toMatch(/reads each signal as the train passes it/);
+    expect(rule('After a yellow')).toMatch(/The next signal is at stop: stop at it \(the Ahead list shows exactly where\)/);
+    expect(text).toContain('Diverging clear. 30 mph until the whole train is through the junction ($10 fine over 33), then the track’s own limit.');
+    expect(rule('Approach')).toBe('Approach. The next signal is at stop. 20 mph or less, and stop at it.');
+    expect(rule('Junction signals')).toMatch(/Red means the road the switch is set for is blocked/);
+  });
+
+  it('has the calls for tunnels, fords, cattle and the brake', () => {
+    expect(rule('Tunnels')).toMatch(/the tender top too/);
+    expect(rule('Fords')).toMatch(/washes everyone below the car roofs off the train/);
+    expect(rule('Cattle')).toMatch(/get used to it and won’t budge\. The whistle uses steam/);
+    expect(rule('Slamming the brakes')).toMatch(/spooks the horses alongside and throws anyone standing outside\. Tell the Rider to crouch first/);
   });
 });
 
@@ -583,6 +807,7 @@ describe('describeEvent', () => {
     stationName: (id) => ({ orig: 'Juniper', dest: 'Coyote Bend' })[id] ?? id,
     switchLabel: (id) => `Switch ${id === 'P' ? 1 : 2} (${id === 'P' ? 'West loop' : 'East loop'})`,
     tunnelName: () => 'Juniper Tunnel',
+    fordName: (id) => (id === 'd1' ? 'Salt Creek ford' : 'the ford'),
     signalName: () => 'Signal',
     cargo: 'Mail',
     flagDist: 420,
@@ -606,9 +831,23 @@ describe('describeEvent', () => {
     expect(describeEvent({ type: 'lost', reason: 'derailed', detail: '' }, ctx)?.text).toBe('Derailed');
   });
 
-  it('says how far ahead the Rider flagged something', () => {
+  it('says what each fine was for (spec §9.3)', () => {
+    expect(describeEvent({ type: 'fine', reason: 'speeding', amount: 10 }, ctx)?.text).toBe('Fined $10: too fast after a yellow');
+    expect(describeEvent({ type: 'fine', reason: 'junction', amount: 10 }, ctx)?.text).toBe('Fined $10: too fast through the junction');
+    expect(fineText('redSignal')).toBe('passed a signal at stop');
+  });
+
+  it('logs fords by name, and the Rider washed off', () => {
+    expect(describeEvent({ type: 'fordEnter', id: 'd1' }, ctx)).toMatchObject({ text: 'Into the water at Salt Creek ford', tone: 'quiet' });
+    expect(describeEvent({ type: 'fordExit', id: 'd1' }, ctx)?.text).toBe('Out of the water');
+    expect(describeEvent({ type: 'riderOff', cause: 'water' }, ctx)).toMatchObject({ text: 'The Rider was washed off the train', tone: 'danger' });
+    expect(describeEvent({ type: 'riderOff', cause: 'tunnel' }, ctx)?.text).toBe('The Rider was knocked off in the tunnel');
+    expect(describeEvent({ type: 'riderOff', cause: 'fall' }, ctx)?.text).toBe('The Rider fell off the train');
+  });
+
+  it('says how far ahead the Rider flagged something, in yards', () => {
     expect(describeEvent({ type: 'flagPlaced', flag: { id: 1, point: { edge: 'm1', off: 0 }, tick: 0 } }, ctx)?.text).toBe(
-      'The Rider flagged the line 420 m ahead',
+      'The Rider flagged the line 460 yd ahead',
     );
   });
 

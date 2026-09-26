@@ -940,6 +940,12 @@
   box-shadow: inset 0 0 0 1px rgba(239, 230, 210, 0.35);
 }
 
+.desk .ah-ford .ah-icon {
+  background: #2f6a9a;
+  color: #e3f1fb;
+  box-shadow: inset 0 0 0 1px rgba(227, 241, 251, 0.35);
+}
+
 .desk .ah-lowBridge .ah-icon {
   background: var(--sand, #d9b77e);
 }

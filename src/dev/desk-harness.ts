@@ -1,11 +1,12 @@
 // Dev-only bench for the Engineer's desk (src/render/desk), served by Vite at /desk.html (never part
 // of the game build). It mounts the desk for a bench run (a main line with a passing loop and a
-// quarry spur, signals, two tunnels, a low bridge, a trestle, three stations, a water tower and one
-// charted opposing freight), converted with views.toEngineerRun, and drives it from a small fake
-// host: simple train kinematics and boiler on the real network code (moveSpans, spansFromFront),
-// the freight from the real timetable functions, and buttons to fake the events a real game sends.
+// quarry spur, signals, two tunnels, a ford, a low bridge, a trestle, three stations, a water tower
+// and one charted opposing freight), converted with views.toEngineerRun, and drives it from a small
+// fake host: simple train kinematics and boiler on the real network code (moveSpans,
+// spansFromFront), the freight from the real timetable functions, and buttons to fake the events a
+// real game sends.
 //
-// URL: /desk.html?scene=depart|cruise|station|water|meet|siding|heldup|events|backing|late|enroute
+// URL: /desk.html?scene=depart|cruise|station|water|meet|siding|heldup|events|backing|late|enroute|ford|signals
 //        &run=1..6&assist=1&letters=1&keyboard=local&lag=60&paused=1&freeze=1&ui=0&rulebook=1&follow=1&debug=1
 // (run=N loads campaign run N from src/content/runs.ts instead of the bench run; its scenes are
 // the generic depart and enroute.)
@@ -39,6 +40,7 @@ import {
   DRAG,
   DWELL_SECONDS,
   FIRE_MAX,
+  FLAG_MAX,
   FULL_POWER_PSI,
   HEAT_LOSS,
   LOW_WATER,
@@ -145,7 +147,7 @@ const BENCH: RunDef = {
   ],
   lowBridges: [{ id: 'b1', edge: 'm1', at: 2000, name: 'Ranch road bridge' }],
   trestles: [{ id: 'r1', edge: 'm4', from: 800, to: 1000, name: 'Sage Creek Trestle' }],
-  fords: [],
+  fords: [{ id: 'f1', edge: 'm1', from: 1700, to: 1760, name: 'Salt Creek ford' }],
   stations: [
     { id: 'juniper', name: 'Juniper', edge: 'm1', at: 350, platform: 80, checkpoint: false },
     { id: 'mesa', name: 'Mesa', edge: 'm3', at: 450, platform: 70, checkpoint: true },
@@ -170,6 +172,7 @@ const BENCH: RunDef = {
     { id: 'g3', edge: 'm4', at: 160, facing: -1, kind: 'junction', junction: 'Q', name: 'Mesa east home' },
     { id: 'g4', edge: 'm4', at: 1200, facing: 1, kind: 'block' },
     { id: 'g5', edge: 'm2', at: 120, facing: -1, kind: 'block' },
+    { id: 'g6', edge: 'm2', at: 950, facing: 1, kind: 'block' },
   ],
   obstacles: [{ id: 'o1', kind: 'cattle', edge: 'm4', at: 2700 }],
   waves: [],
@@ -236,6 +239,7 @@ interface Fake {
   fines: number;
   cargo: 'ok' | 'stolen';
   inTunnel: string | null;
+  inFord: string | null;
   telegramsSent: string[];
   aiActive: boolean;
   nextFlag: number;
@@ -276,6 +280,7 @@ function freshState(): Fake {
     fines: 0,
     cargo: 'ok',
     inTunnel: null,
+    inFord: null,
     telegramsSent: [],
     aiActive: false,
     nextFlag: 1,
@@ -469,6 +474,13 @@ class FakeHost {
       if (inT) this.emit({ type: 'tunnelEnter', id: inT });
       s.inTunnel = inT;
     }
+    // Fords, like tunnels, by the loco's front.
+    const inF = fordAt(front);
+    if (inF !== s.inFord) {
+      if (s.inFord) this.emit({ type: 'fordExit', id: s.inFord });
+      if (inF) this.emit({ type: 'fordEnter', id: inF });
+      s.inFord = inF;
+    }
     // Telegrams.
     for (const tg of RUN.telegrams) {
       if (tg.clock !== undefined && this.clock() >= tg.clock && !s.telegramsSent.includes(tg.id)) {
@@ -572,13 +584,13 @@ class FakeHost {
     const w = walk(ix, s.switches, frontHead(s.spans), metres);
     const flag: FlagState = { id: s.nextFlag++, point: { edge: w.end.edge, off: w.end.off }, tick: s.tick };
     s.flags.push(flag);
-    if (s.flags.length > 3) s.flags.shift();
+    while (s.flags.length > FLAG_MAX) s.flags.shift();
     this.emit({ type: 'flagPlaced', flag });
   }
 
-  fine(amount: 50 | 10): void {
+  fine(amount: 50 | 10, reason: 'redSignal' | 'speeding' | 'junction' = amount === 50 ? 'redSignal' : 'speeding'): void {
     this.s.fines += amount;
-    this.emit({ type: 'fine', reason: amount === 50 ? 'redSignal' : 'speeding', amount });
+    this.emit({ type: 'fine', reason, amount });
   }
 
   loot(stolen: boolean): void {
@@ -598,8 +610,20 @@ class FakeHost {
     s.v = v;
     s.tick = Math.round((clock - RUN.startClock) * TICK_HZ);
     s.inTunnel = RUN.tunnels.find((t) => t.edge === front.edge && front.off >= t.from && front.off <= t.to)?.id ?? null;
+    s.inFord = fordAt(front);
     s.telegramsSent = RUN.telegrams.filter((t) => t.clock !== undefined && t.clock <= clock).map((t) => t.id);
   }
+
+  /** The Rider washed off in a ford (a faked riderOff 'water'). */
+  washOff(): void {
+    if (this.s.rider.mode === 'active') this.emit({ type: 'riderOff', cause: 'water' });
+    this.s.rider = { ...this.s.rider, mode: 'off' };
+  }
+}
+
+/** The ford the loco's front is in, if any. */
+function fordAt(front: { edge: string; off: number }): string | null {
+  return RUN.fords.find((f) => f.edge === front.edge && front.off >= Math.min(f.from, f.to) && front.off <= Math.max(f.from, f.to))?.id ?? null;
 }
 
 function hatchPoint(spans: readonly Span[]): { edge: string; off: number } {
@@ -621,7 +645,7 @@ function distTo(spans: readonly Span[], p: { edge: string; off: number }): numbe
 // Scenes
 // ---------------------------------------------------------------------------------------------
 
-const SCENES = ['depart', 'cruise', 'station', 'water', 'meet', 'siding', 'heldup', 'events', 'backing', 'late', 'enroute'] as const;
+const SCENES = ['depart', 'cruise', 'station', 'water', 'meet', 'siding', 'heldup', 'events', 'backing', 'late', 'enroute', 'ford', 'signals'] as const;
 /** The scenes a campaign run supports (the others are laid out on the bench run's track). */
 const GENERIC: readonly string[] = ['depart', 'enroute'];
 type SceneName = (typeof SCENES)[number];
@@ -683,6 +707,14 @@ function setupScene(host: FakeHost, name: SceneName): SceneSetup {
       host.s.sideJobs = [{ id: 'sj1', state: 'aboard' }];
       host.s.fines = 60;
       return { history: [[at(0), 350], [at(0, 20), 360], [at(3, 0), 2700], [at(5, 0), 4150], [at(9, 30), 4920], [at(12, 0), 6900], [at(16, 40), 8550]] };
+    case 'ford':
+      // Salt Creek ford 140 m ahead at 38 mph: about 8 s to call it.
+      host.place({ edge: 'm1', off: 1560, dir: 1 }, 17, at(1, 55), { throttle: 0.625, pressure: 178, water: 78 });
+      return { history: [[at(0), 350], [at(0, 20), 360], [at(1, 20), 900], [at(1, 55), 1560]] };
+    case 'signals':
+      // A block signal just ahead, then the junction signal for the Mesa Loop.
+      host.place({ edge: 'm2', off: 760, dir: 1 }, 13, at(3, 10), { throttle: 0.5, pressure: 180, water: 66 });
+      return { history: [[at(0), 350], [at(0, 20), 360], [at(1, 20), 900], [at(2, 40), 2600], [at(3, 10), 3360]] };
   }
 }
 
@@ -911,6 +943,7 @@ function buildBench(): void {
     button('Flag ahead', () => host.flagAhead()),
     button('Fine $50', () => host.fine(50)),
     button('Fine $10', () => host.fine(10)),
+    button('Junction fine', () => host.fine(10, 'junction')),
     button('Gunfire', () => host.gunfire()),
     button('Loot stolen', () => host.loot(true)),
     button('Recovered', () => host.loot(false)),
@@ -922,6 +955,7 @@ function buildBench(): void {
     button('Tender', () => host.riderTo('active', 1, true)),
     button('Cab', () => host.riderTo('active', 0, false)),
     button('Off', () => host.riderTo('off')),
+    button('Washed off', () => host.washOff()),
     button('Down', () => host.riderTo('down')),
   );
   bench.append(stats);
@@ -960,8 +994,10 @@ interface Harness {
   holdUp(on: boolean): void;
   telegram(text?: string): void;
   flag(metres?: number): void;
-  fine(amount: 50 | 10): void;
+  fine(amount: 50 | 10, reason?: 'redSignal' | 'speeding' | 'junction'): void;
   rider(mode: RiderMode, car?: number, roof?: boolean): void;
+  /** The Rider washed off in a ford. */
+  washOff(): void;
   loot(stolen: boolean): void;
   set(patch: Partial<Fake>): void;
   state(): Fake;
@@ -988,8 +1024,9 @@ const harness: Harness = {
   holdUp: (on) => host.holdUp(on),
   telegram: (text) => host.telegram(text),
   flag: (m) => host.flagAhead(m),
-  fine: (a) => host.fine(a),
+  fine: (a, reason) => host.fine(a, reason),
   rider: (mode, car, roof) => host.riderTo(mode, car, roof),
+  washOff: () => host.washOff(),
   loot: (stolen) => host.loot(stolen),
   set: (patch) => Object.assign(host.s, patch),
   state: () => host.s,
