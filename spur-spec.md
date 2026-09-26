@@ -616,8 +616,8 @@ Act I is Iron Horse (runs 1–3). Act II is Single Track (runs 4–6).
 
 | # | Run | New | Contract |
 |---|---|---|---|
-| 1 | First Light (Juniper → Coyote Bend, dawn) | Throttle and brake, station stop, tunnel and low-bridge calls, a curve limit, horsemen | Mail, $120, not critical |
-| 2 | Payroll to Pale Rock | A junction: the long main line with a tunnel, or the short Dry Gulch cutoff (steep, bandit ambush). The safe. Water towers and the spout. Starts with 55 water. | Payroll, $220, critical |
+| 1 | First Light (Juniper → Coyote Bend, dawn) | Throttle and brake, station stop, tunnel, low-bridge and ford calls, a curve limit, horsemen | Mail, $120, not critical |
+| 2 | Payroll to Pale Rock | A junction: the long main line with a tunnel, or the short Dry Gulch cutoff (steep, bandit ambush). The safe. Water towers and the spout. The lurch. Starts with 55 water. | Payroll, $220, critical |
 | 3 | Signal Country | Block and junction signals and the rulebook. Two variants: a rockslide on one of two routes. Cattle and the whistle. Set piece: **the Devil's Trestle**, burning, crossed at ≥ 30 mph just after a 30 mph curve. | Silver, $260, critical |
 | 4 | Single Track | Passing loops, the timetable chart, an opposing freight (meet at a loop), block signals protecting the single line. Side job: passengers. | Bank cash, $240, critical |
 | 5 | Night Freight | Night: lamps only, a shorter spyglass. Two meets: an opposing freight and an overtaking express. Dynamite: the powder car, with horsemen shooting at it. | Dynamite, $300, critical |
