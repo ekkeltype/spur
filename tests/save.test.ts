@@ -3,12 +3,10 @@
 // results screen apply (money, unlocks, replays, the shop and the consist).
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RUNS } from '../src/content/runs';
-import { cargoPayFor, composeConsist, newGame, runResult, step } from '../src/sim/game';
+import { cargoCars, composeConsist, newGame, runResult, step } from '../src/sim/game';
 import { REPLAY_PAY_FACTOR, SHOP } from '../src/sim/rules';
-import { NO_INPUT, type CampaignProgress, type CarType, type Checkpoint, type GameState, type Medal, type RunDef, type RunResult, type Settings } from '../src/sim/types';
+import { NO_INPUT, type CampaignProgress, type Checkpoint, type GameState, type Medal, type RunDef, type RunResult, type Settings } from '../src/sim/types';
 import { cargoLabel } from '../src/ui/screens';
-import { cargoCars } from '../src/ui/text';
 import {
   CLIENT_SETTINGS_KEY,
   SAVE_KEY,
@@ -666,16 +664,6 @@ describe('cargo cars in the depot and on the results screen (spec §12)', () => 
     ]);
     expect(cargoCars(['express', 'boxcar'], ['express'])).toEqual([{ car: 'boxcar', pay: 30 }]);
     expect(cargoCars(['powder', 'caboose'], ['powder'])).toEqual([]);
-  });
-
-  it("agrees with the sim's cargo pay for every run", () => {
-    const optional: CarType[][] = [[], ['express'], ['passenger', 'boxcar'], ['express', 'passenger', 'boxcar', 'armored', 'caboose']];
-    for (const run of RUNS) {
-      for (const cars of optional) {
-        const consist = composeConsist(run, cars);
-        expect(cargoCars(consist, run.requiredCars).reduce((n, c) => n + c.pay, 0)).toBe(cargoPayFor(run, consist));
-      }
-    }
   });
 
   it('names the cars that earned it in the payout row', () => {

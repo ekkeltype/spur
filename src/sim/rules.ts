@@ -312,7 +312,7 @@ export const SHOP: readonly ShopItem[] = [
   { id: 'airBrakes', name: 'Westinghouse air brakes', cost: 180, seat: 'engineer', blurb: 'Brakes bite 35% harder.' },
   { id: 'bigTender', name: 'Big tender', cost: 140, seat: 'engineer', blurb: 'Carries 140 water instead of 100.' },
   { id: 'governor', name: 'Firebox governor', cost: 200, seat: 'engineer', blurb: 'Keeps the pressure near 175 psi by itself.' },
-  { id: 'headlamp', name: 'Carbide headlamp', cost: 90, seat: 'engineer', blurb: 'The spyglass sees 450 m at night instead of 300 m.' },
+  { id: 'headlamp', name: 'Carbide headlamp', cost: 90, seat: 'engineer', blurb: 'The spyglass sees 490 yards at night instead of 330.' },
   { id: 'armored', name: 'Armored car', cost: 220, seat: 'train', blurb: 'A roof parapet for cover and gun slits to shoot from inside. Heavy.' },
   { id: 'caboose', name: 'Caboose', cost: 160, seat: 'train', blurb: 'Respawn faster, and heal while inside.' },
 ];

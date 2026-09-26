@@ -18,7 +18,7 @@ import type {
   UpgradeId,
 } from '../sim/types';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type Role = 'rider' | 'engineer';
 

@@ -2,9 +2,10 @@
 // and plain message screens (spec §3).
 
 import type { Payout, Role } from '../net/protocol';
+import { cargoCars } from '../sim/game';
 import type { CarType, EngineerRun, RunResult } from '../sim/types';
 import { button, h } from './dom';
-import { ACT_NAMES, CAR_LABELS, CARGO_NAMES, cargoCars, formatClock, formatDuration, LOSS_TITLES, MEDALS, money, mph, signedMoney } from './text';
+import { ACT_NAMES, CAR_LABELS, CARGO_NAMES, formatClock, formatDuration, LOSS_TITLES, MEDALS, money, mph, signedMoney } from './text';
 
 export const SEAT_NAMES: Record<Role, string> = { rider: 'the Rider', engineer: 'the Engineer' };
 const Seat = (role: Role): string => (role === 'rider' ? 'Rider' : 'Engineer');

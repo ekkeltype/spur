@@ -265,9 +265,24 @@ export function medalsFor(state: GameState, run: RunDef): Medal[] {
   return out;
 }
 
-/** What the optional cargo cars in a consist earn on a win (spec §12): the contract's own cars earn nothing extra. */
-export function cargoPayFor(run: RunDef, cars: readonly CarKind[]): number {
-  return cars.reduce((n, k) => (k === 'loco' || k === 'tender' || run.requiredCars.includes(k) ? n : n + (CARGO_PAY[k] ?? 0)), 0);
+/**
+ * The cars in a consist that carry paying cargo of their own (spec §12, CARGO_PAY), front to back:
+ * the optional express, passenger and boxcars. The run's required cars carry the contract, and the
+ * armored car and the caboose carry nothing.
+ */
+export function cargoCars(consist: readonly CarKind[], required: readonly CarType[]): { car: CarType; pay: number }[] {
+  const out: { car: CarType; pay: number }[] = [];
+  for (const k of consist) {
+    if (k === 'loco' || k === 'tender' || required.includes(k)) continue;
+    const pay = CARGO_PAY[k] ?? 0;
+    if (pay > 0) out.push({ car: k, pay });
+  }
+  return out;
+}
+
+/** What the optional cargo cars in a consist earn on a win (spec §12). */
+export function cargoPayFor(run: Pick<RunDef, 'requiredCars'>, cars: readonly CarKind[]): number {
+  return cargoCars(cars, run.requiredCars).reduce((n, c) => n + c.pay, 0);
 }
 
 export function runResult(state: GameState, run: RunDef): RunResult {

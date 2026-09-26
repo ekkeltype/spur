@@ -6,10 +6,11 @@
 
 import type { DepotAction, LobbyState, RunCard } from '../net/protocol';
 import { availableCars } from '../save/save';
+import { cargoCars } from '../sim/game';
 import { CARGO_PAY, CAR_SPECS, REPLAY_PAY_FACTOR, SHOP, type ShopItem } from '../sim/rules';
 import type { CarKind, CarType } from '../sim/types';
 import { button, clear, h } from './dom';
-import { ACT_NAMES, BOARDING_SPEED, CAR_LABELS, CARGO_NAMES, cargoCars, distance, formatClock, formatDuration, MEDALS, money, mph, plural, tons, topSpeed, trainMass } from './text';
+import { ACT_NAMES, BOARDING_SPEED, CAR_LABELS, CARGO_NAMES, distance, formatClock, formatDuration, MEDALS, money, mph, plural, tons, topSpeed, trainMass } from './text';
 
 export interface DepotModel {
   lobby: LobbyState;
