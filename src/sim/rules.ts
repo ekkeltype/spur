@@ -15,6 +15,8 @@ export const TIME_SCALE = 1.25;
 /** EngineerView snapshots per real second. */
 export const SNAPSHOT_HZ = 15;
 export const COUNTDOWN_SECONDS = 3;
+/** Real seconds of the opening shot before the countdown, when a run leaves its origin (spec §3). */
+export const INTRO_SECONDS = 6.5;
 
 /** mph per m/s. */
 export const MPH = 2.23694;

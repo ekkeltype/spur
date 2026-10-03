@@ -19,7 +19,7 @@ import type {
   UpgradeId,
 } from '../sim/types';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type Role = 'rider' | 'engineer';
 
@@ -146,7 +146,8 @@ export type Msg =
   | { type: 'cmd'; cmd: EngineerCmd }
   | { type: 'ack'; seq: number; ok: boolean; reason?: string }
   | { type: 'pause'; by: Role; reason?: 'disconnect' }
-  | { type: 'countdown'; seconds: number }
+  /** The countdown's seconds, after `intro` seconds of the run's opening shot (0 for none). */
+  | { type: 'countdown'; seconds: number; intro: number }
   | { type: 'ping'; t: number }
   | { type: 'pong'; t: number }
   | { type: 'result'; result: RunResult; payout: Payout; campaign: CampaignProgress; checkpointName: string | null }

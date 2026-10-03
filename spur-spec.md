@@ -87,7 +87,10 @@ campaign (Acts I and II). Money earned from contracts buys cars and upgrades bet
    unticked. While the seats switch, the depot and Start wait. If the new room can't open, or the
    Engineer drops out first, nothing changes and the lobby says why.
 3. **Briefing.** The run's name and flavor, the contract, and "new this time" lines for each seat,
-   plus controls. Both press Ready, then a 3-2-1 countdown.
+   plus controls. Both press Ready, then a 3-2-1 countdown. A run leaving its origin (a new run, the
+   next, a restart) first opens with its shot: 6.5 s of the engine pulling out under the run's title
+   (§18.4), on both screens at once. Continuing or retrying from a checkpoint, and resuming from a
+   pause, go straight to the countdown.
 4. **The run.** The train starts stopped at the origin station. Departing a checkpoint station, after
    its dwell, saves a checkpoint.
 5. **Pause.** Esc on either side. Both press Ready to resume.
@@ -682,7 +685,7 @@ low bridges and fords), about one every minute of driving, mixing "get down" (tu
 
 ## 14. Tunables
 
-All live in `src/sim/rules.ts`, grouped as simulation (`TICK_HZ`, `SNAPSHOT_HZ`, `COUNTDOWN_SECONDS`),
+All live in `src/sim/rules.ts`, grouped as simulation (`TICK_HZ`, `SNAPSHOT_HZ`, `COUNTDOWN_SECONDS`, `INTRO_SECONDS`),
 train, boiler, limits, stations, obstacles, signals, Rider, weapons, bandits, economy, and car
 specs. The values are the numbers in this spec.
 
@@ -762,7 +765,8 @@ the last value wins. Transport, chunking, goodbyes, reconnects and TURN work exa
 
 `hello` (with the Engineer's copy of the campaign, if their browser has one, §17), `welcome`,
 `reject`, `ready`, `lobby`, `depot` (a client action in the lobby: toggle a car, buy an item, toggle
-an assist), `start`, `snapshot`, `event`, `cmd`, `ack`, `pause`, `countdown`, `ping`, `pong`,
+an assist), `start`, `snapshot`, `event`, `cmd`, `ack`, `pause`, `countdown` (its seconds, after the
+opening shot's, 0 for none), `ping`, `pong`,
 `result` and `debug` (dev only). Switching seats (§3): `switchSeats` (the Engineer ticks or unticks
 the box), `switchBegin` (both have: open a room), `switchRoom` (its code) or `switchFailed`, then
 `switchSave` (the save to host with). The checkpoint, and with it the seed, only crosses the wire in
@@ -870,6 +874,27 @@ cattle lowing (a questioning low when they get used to the whistle, a bellow whe
 The Engineer hears the cab (muffled gunfire from outside). In local test mode, only the Rider's
 audio plays.
 
+### 18.4 The opening shot
+
+When a run leaves its origin, both seats see the same 6.5 s before the countdown (`INTRO_SECONDS`),
+drawn procedurally like everything else and timed from the countdown message:
+
+- **0–1 s:** up from black between letterbox bars, tight on the crosshead, guides and cylinder of a
+  4-4-0 standing at the platform. Steam curls from the cylinder cocks, the safety valve blows off and
+  the bell swings and rings.
+- **1 s:** the throttle's clank. The cocks roar and the drivers start to turn: side rods, main rod,
+  crosshead, and a Walschaerts-style valve gear rocking its link. The ties, the telegraph poles, the
+  flat and the ridges slide past at their depths; the mesas barely move.
+- **About 2.1 s, the first exhaust beat:** the title is stamped on: the act and run, the run's name in
+  Rye, a brass rule, "origin → destination · departs time". One long whistle.
+- **To 6.5 s:** the engine works up to about 20 mph, the beats quickening and the stack's smoke laid
+  back over the train, while the camera draws back to the whole engine. Then the shot fades onto the
+  play screen and the numbers.
+
+The sky and light are the run's own at its start time (dawn for *First Light*, night for *Night
+Freight*, with the headlamp lit). Every exhaust beat heard is a quarter turn of the drivers and a puff
+from the cocks and the stack. With screen shake off, the camera holds still and the title only fades.
+
 ## 19. Dev tools and testing
 
 - **Query params** (dev builds): `?local=1` (every build), `?join=CODE` (every build), `?run=N`,
@@ -883,7 +908,8 @@ audio plays.
   tunnels, low bridges), shooting and line of sight, bandits (spawn, pacing, boarding, cracking, loot,
   hold-up, powder), game (win and loss, checkpoints round-trip through JSON), views (the leak test),
   content (well-formedness, plus the autopilot completing every run and variant before the deadline),
-  net (local pair, sessions), save, and a soak test (bots play every run for 8 simulated minutes,
+  net (local pair, sessions), save, the opening shot (its timeline, the engine's beats landing on the
+  drivers' quarter turns, whole frames), and a soak test (bots play every run for 8 simulated minutes,
   checking invariants every tick).
 
 ## 20. Milestones
@@ -927,6 +953,7 @@ Round 3 (the same day), from the user's own play:
 | More bandits and cattle | Half as many waves again; herds from run 2 on, up to three a run (§13) |
 | The world should run about 25% faster | `TIME_SCALE` 1.25: the host steps 75 ticks a real second (§16.1) |
 | Speed and power upgrades for the train, in tiers | Two lines of three loco tiers (§5.3, §12) |
+| A short cutscene as a run starts, to set the mood | The opening shot: the running gear getting under way, train sounds, the run's title (§3, §18.4) |
 
 ## 22. Out of scope for v1
 

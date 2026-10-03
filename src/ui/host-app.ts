@@ -16,6 +16,7 @@ import { NO_INPUT, type GameState, type RunDef, type SimEvent } from '../sim/typ
 import { button, clear, copyText, h } from './dom';
 import { Hints, hintsOn, Toaster } from './feedback';
 import { RiderControls, type AimContext } from './input';
+import { introInfo, IntroOverlay } from './intro';
 import { depotBoard } from './lobby';
 import { briefingScreen, countdownOverlay, pauseOverlay, readyRow, resultsScreen, switchSeatsRow, type PauseView } from './screens';
 import { RiderSounds, type ViewSpan } from './sounds';
@@ -450,6 +451,7 @@ class RiderPlay {
   private hints: Hints;
   private pause: PauseView;
   private countdown = countdownOverlay();
+  private intro: IntroOverlay;
   private debugEl = h('div', { class: 'debug-badge' });
   private pending: SimEvent[] = [];
   private runningSince: number | null = null;
@@ -465,6 +467,7 @@ class RiderPlay {
     this.canvas = h('canvas', { class: 'rider-canvas' });
     this.renderer = new RiderRenderer(this.canvas);
     this.sounds = new RiderSounds(opts.sfx);
+    this.intro = new IntroOverlay(introInfo(game.run), opts.sfx);
     this.hints = new Hints(() => hintsOn(opts.store.get(), !game.replay));
     this.pause = pauseOverlay('rider', (r) => s.setReady(r), [['Abandon the run and go to the lobby', () => s.toLobby()]]);
     this.controls = new RiderControls({
@@ -477,7 +480,7 @@ class RiderPlay {
     this.controls.attach(this.canvas);
     s.inputSource = () => this.controls.next(this.aim());
     this.debugEl.hidden = !import.meta.env.DEV || !opts.debug;
-    this.el = h('div', { class: 'play rider' }, this.canvas, this.toaster.el, this.hints.el, this.debugEl, this.countdown.el, this.pause.el);
+    this.el = h('div', { class: 'play rider' }, this.canvas, this.toaster.el, this.hints.el, this.debugEl, this.intro.el, this.countdown.el, this.pause.el);
   }
 
   /** The train-frame x at the view's left and right edges now, for panning by screen position. */
@@ -504,6 +507,7 @@ class RiderPlay {
     this.app.session.inputSource = () => NO_INPUT;
     this.renderer.destroy();
     this.sounds.stop();
+    this.intro.destroy();
   }
 
   update(): void {
@@ -622,8 +626,10 @@ class RiderPlay {
     } finally {
       this.pending = [];
     }
-    this.sounds.frame(g.state, g.run, s.mode !== 'paused', this.viewSpan());
-    this.countdown.set(s.mode === 'countdown' ? Math.max(1, Math.ceil((s.countdownEndMs - now) / 1000)) : null);
+    // The run's opening shot plays first in the countdown, with its own sounds.
+    const intro = this.intro.frame(now, s.mode === 'countdown' ? s.introEndMs : null, settings.screenShake);
+    if (!intro) this.sounds.frame(g.state, g.run, s.mode !== 'paused', this.viewSpan());
+    this.countdown.set(s.mode === 'countdown' && !intro ? Math.max(1, Math.ceil((s.countdownEndMs - now) / 1000)) : null);
     if (running) {
       this.runningSince ??= now;
       const t = now - this.runningSince;

@@ -153,6 +153,15 @@ Tuned against `tests/balance.test.ts`: the autopilot drives while a bot Rider fi
 - **A mirrored campaign keeps the browser's own settings**, and drops its checkpoint when the campaign has moved on (it would be from an earlier point). Switching seats brings the Rider's checkpoint along.
 - **The protocol is version 3.**
 
+## The opening shot
+
+- **When it plays.** Only as a run leaves its origin: a new run, the next one, a restart. Continuing or retrying from a checkpoint skips it, so a retry loop stays quick, and so does resuming from a pause. It sits inside the countdown: the host adds its length to the `countdown` message (`intro`, 0 for none), and both seats time the shot and then the numbers from there. The host's mode is `countdown` throughout, so controls, the sim and pausing behave exactly as they did in the countdown. Esc during the shot pauses; the resume is a plain countdown. **The protocol is version 4.**
+- **Not skippable.** Both players watch it together, and a skip would need both to agree; at 6.5 s it isn't worth a vote.
+- **Sound and picture in step.** The engine's sound queues its beats 0.25 s ahead (`LOOKAHEAD`) at the speed it's given, which would put each beat a quarter second behind the drivers while they gather speed. The shot gives it the speed 0.25 s on, and starts a fresh engine voice at the standstill, so each beat lands (within a frame or so) as the drivers finish a quarter turn. Steam and smoke are a pure function of the time into the shot, so a frame can be drawn at any moment on either seat.
+- **Screen shake off means no camera move**, no title stamp and no rocking on the springs; the title still fades in and out. It's the one motion setting the game has.
+- **Each seat plays it with its own sounds, from outside** (the Rider's listener, not the cab), since the shot is outside. In local test mode only the Rider's plays.
+- **The whole engine, drawn for the shot.** The Rider's view draws the loco small; the shot needs it close up, so it has its own drawing: a 4-4-0 with a balloon stack, a swinging bell, crank pins, a crosshead in its guides and an outside valve gear (Walschaerts, a little ahead of its time for the 1880s, because it moves beautifully).
+
 ## Audio
 
 - **The engine and the wind ignore the effects slider.** They sit on a "world" bus scaled by master only, like Clew's ambience, because the Rider judges speed by the engine.

@@ -56,8 +56,8 @@ const START_GRACE_MS = 250;
 const VOLUME_TC = 0.04;
 /** Glide time constant (s) of continuous-layer parameters: quick enough to follow a lever, too slow to click. */
 const GLIDE_TC = 0.08;
-/** Rhythmic layers are queued this far (s) ahead of the audio clock… */
-const LOOKAHEAD = 0.25;
+/** Rhythmic layers are queued this far (s) ahead of the audio clock, at the speed given now… */
+export const LOOKAHEAD = 0.25;
 /** …or this far while the page is hidden, where timers wake only about once a second… */
 const LOOKAHEAD_HIDDEN = 1.6;
 /** …by the per-frame calls and by a timer that wakes this often (realtime contexts only; offline ones are pumped by calls). */
