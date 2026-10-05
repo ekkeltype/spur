@@ -9,7 +9,7 @@ import type { CarType, EngineerRun, EngineerView } from '../../sim/types';
 import { slowAdvice, TRAIN_HAZARDS, type AheadItem, type StopTarget } from './ahead';
 import { btn, capitalise, el, escapeHtml, kbd, setClass, setHtml, setText } from './dom';
 import { lossText, type LogTone } from './events';
-import { clockParts, formatClock, formatDistance, formatEta, formatMoney, formatRemaining, formatYards, limitMph, toMph, windowYards } from './format';
+import { clockParts, formatClock, formatDistance, formatEta, formatMoney, formatRemaining, formatYards, limitMph, secondsTo, toMph, windowYards } from './format';
 import { ICONS } from './icons';
 
 /** Rows in the Ahead list (spec §11). */
@@ -156,7 +156,7 @@ const AT_SIGNAL = 100;
  */
 export function aheadRow(it: AheadItem, speed: number, ix: NetIndex, numbers: ReadonlyMap<string, number>): AheadRowText {
   const inside = it.until !== undefined;
-  const secs = speed > STANDING ? it.dist / speed : Infinity;
+  const secs = speed > STANDING ? secondsTo(it.dist, speed) : Infinity;
   const brake = it.limit !== undefined && slowAdvice(it.dist, speed, it.limit) === 'brake';
   const urgency = inside ? ' dk-here' : brake || secs <= IMMINENT_S ? ' dk-imminent' : secs <= SOON_S ? ' dk-soon' : '';
   return {

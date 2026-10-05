@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { clock, estimate, HATCH_BEHIND_FRONT, Line, longestTrain, makeRun, plannedPath, runawayRollTime, sliceSpans } from '../src/content/builder';
+import { clock, estimate, HATCH_BEHIND_FRONT, Line, longestTrain, makeRun, plannedPath, runawayRollTime, sliceSpans, type PlannedPath } from '../src/content/builder';
 import { RUNS, runById } from '../src/content/runs';
+import { AP_WHISTLE_SECONDS } from '../src/sim/autopilot';
 import { edgeOf, netIndex, spansFromFront, spansLength, spansOverlap, validateRun, walk, xOnSpans, type NetIndex } from '../src/sim/network';
-import { HORSE_AMBUSH_AHEAD, MILE, SPOUT_WINDOW, WHISTLE_EARSHOT, WHISTLE_SCARE_MAX, WHISTLE_SCARE_MIN, WHISTLE_SCARE_SECONDS } from '../src/sim/rules';
+import {
+  HORSE_AMBUSH_AHEAD,
+  HORSE_AMBUSH_WAKE,
+  HORSE_SPAWN_BEHIND,
+  MILE,
+  SPAWN_SPACING,
+  SPOUT_WINDOW,
+  WHISTLE_EARSHOT,
+  WHISTLE_SCARE_MAX,
+  WHISTLE_SCARE_MIN,
+  WHISTLE_SCARE_SECONDS,
+} from '../src/sim/rules';
 import { routeDistanceAt, routeSpans, timeAtRouteDistance } from '../src/sim/schedule';
-import type { AiTrainDef, CarType, Cargo, RunDef, RunPlan, Span, SwitchState, TrackPoint } from '../src/sim/types';
+import type { AiTrainDef, CarType, Cargo, ObstacleDef, RunDef, RunPlan, Span, SwitchState, TrackPoint, WaveDef } from '../src/sim/types';
 
 // ---- Helpers -------------------------------------------------------------------------------
 
@@ -108,6 +120,33 @@ const FORD_LENGTH: readonly [number, number] = [60, 150];
 /** A plan's blast for cattle begins and ends at least this far inside the scare window (m). */
 const WHISTLE_SPARE = 30;
 
+// ---- Bandits and cattle, more of both since round 3 --------------------------------------------
+
+/** Waves each plan meets, at least: half as many again as before round 3 (3, 3, 4, 3, 4 and 5). */
+const MIN_WAVES = [5, 5, 6, 5, 6, 7];
+/** A new wave rides in at least this often (s of driving), the meets aside: they're breathers… */
+const WAVE_EVERY = 180;
+/** …and no sooner than this after the last (s), save a gang sprung together, like the boss's. */
+const WAVE_APART = 30;
+/** Waves sprung within this of each other (m) ride in as one gang. */
+const GANG = 300;
+/** Nobody rides in from this far (m) short of a burning trestle's run-up, or a runaway's trigger, until they're over. */
+const SET_PIECE_CLEAR = 500;
+/** Herds each plan meets: none in run 1 (the cattle come in run 2), then at least these… */
+const MIN_HERDS = [0, 1, 2, 2, 2, 2];
+/** …and never more than this. */
+const MAX_HERDS = 3;
+/** Herds keep this clear (m) of a standing train and of a switch… */
+const HERD_STAND_CLEAR = 60;
+const HERD_SWITCH_CLEAR = 100;
+/** …and stand this far apart, so a blast in time for one is never heard too soon by the next. */
+const HERD_SPACING = 600;
+
+/** Where a wave's riders come at the train along a path: the trigger, or the waiting ambush as it wakes. */
+function rideIn(w: WaveDef, x: number): number {
+  return w.from === 'ahead' ? x + HORSE_AMBUSH_AHEAD - HORSE_AMBUSH_WAKE : x;
+}
+
 /** A way from the start to the destination's stop mark: a plan's, or any switch setting's. */
 interface Route {
   spans: Span[];
@@ -132,6 +171,18 @@ function routesOf(run: RunDef): Route[] {
     if (!routes.has(key)) routes.set(key, { spans, length, x: (p) => xOnSpans(spans, p) });
   }
   return [...routes.values()];
+}
+
+/** Where the runaway's roll leaves a planned path: the switch that turns it off our road (spec §10.2). */
+function runawaySwitchX(run: RunDef, path: PlannedPath): number | null {
+  const rw = run.aiTrains.find((t) => t.kind === 'runaway')?.runaway;
+  if (!rw) return null;
+  const roll = walk(netIndex(run), path.switches, { ...rw.start, dir: rw.dir }, 1e5);
+  const ours = new Set(path.spans.map((s) => s.edge));
+  const leave = roll.spans.findIndex((s) => !ours.has(s.edge));
+  if (leave <= 0) return null;
+  const last = roll.spans[leave - 1];
+  return path.x({ edge: last.edge, off: last.to });
 }
 
 /** Where a stretch of one edge lies along a route, or null if the route doesn't pass it. */
@@ -214,6 +265,41 @@ function keepClear(run: RunDef, route: Route): Zone[] {
   }
   return zones;
 }
+
+/**
+ * The stretches of a route that herds keep clear of: wherever the train stands (a platform, a
+ * tower, a hold), switches, trestles and a burning trestle's run-up. Tunnels, fords and low bridges
+ * keep clear of the herds' lookout already (keepClear).
+ */
+function herdZones(run: RunDef, route: Route): Zone[] {
+  const ix = netIndex(run);
+  const L = longestTrain(run);
+  const zones: Zone[] = [];
+  const around = (p: TrackPoint, before: number, after: number, what: string): void => {
+    const x = route.x(p);
+    if (x !== null) zones.push({ a: x - before, b: x + after, what });
+  };
+  for (const s of run.stations) around({ edge: s.edge, off: s.at }, L + HERD_STAND_CLEAR, s.platform / 2 + HERD_STAND_CLEAR, `${s.id} platform`);
+  // At a tower the loco's front stands HATCH_BEHIND_FRONT past the spout.
+  for (const w of run.waterTowers) around({ edge: w.edge, off: w.at }, L - HATCH_BEHIND_FRONT + HERD_STAND_CLEAR, HATCH_BEHIND_FRONT + HERD_STAND_CLEAR, w.id);
+  for (const v of run.variants) run.plan[v].holds.forEach((h, i) => around(h.at, L + HERD_STAND_CLEAR, HERD_STAND_CLEAR, `plan ${v}'s hold ${i + 1}`));
+  for (const j of junctionsOn(ix, route)) zones.push({ a: j.x - HERD_SWITCH_CLEAR, b: j.x + HERD_SWITCH_CLEAR, what: `the switch at ${j.node}` });
+  for (const t of run.trestles) {
+    const r = rangeOn(route, t.edge, t.from, t.to);
+    if (!r) continue;
+    zones.push({ a: r[0] - TRESTLE_CLEAR, b: r[1] + TRESTLE_CLEAR, what: t.id });
+    if (!t.burning) continue;
+    const before = run.curves
+      .map((c) => rangeOn(route, c.edge, c.from, c.to))
+      .filter((c): c is [number, number] => c !== null && c[1] <= r[0])
+      .sort((a, b) => b[1] - a[1])[0];
+    zones.push({ a: before ? before[0] : r[0] - RUN_UP, b: r[0], what: `${t.id}'s run-up` });
+  }
+  return zones;
+}
+
+/** Can two obstacles be on the line in the same variant? */
+const together = (a: ObstacleDef, b: ObstacleDef): boolean => !a.variants || !b.variants || a.variants.some((v) => b.variants!.includes(v));
 
 // ---- The builder ---------------------------------------------------------------------------
 
@@ -391,9 +477,22 @@ describe('the campaign', () => {
     const boss = RUNS[5].waves.find((w) => w.boss)!;
     expect(boss.goal).toBe('safe');
     // The boss rides in with a mixed-tier gang: waves sprung at the same place.
-    const gang = RUNS[5].waves.filter((w) => w.trigger.edge === boss.trigger.edge && Math.abs(w.trigger.off - boss.trigger.off) < 300);
+    const gang = RUNS[5].waves.filter((w) => w.trigger.edge === boss.trigger.edge && Math.abs(w.trigger.off - boss.trigger.off) < GANG);
     expect(gang.reduce((n, w) => n + w.count, 0)).toBeGreaterThanOrEqual(6);
     expect(new Set(gang.map((w) => w.tier)).size).toBeGreaterThanOrEqual(2);
+    // Rider for rider, the tiers rise from run to run.
+    const meanTier = RUNS.map((r) => r.waves.reduce((n, w) => n + w.tier * w.count, 0) / r.waves.reduce((n, w) => n + w.count, 0));
+    for (let i = 1; i < RUNS.length; i++) expect(meanTier[i], RUNS[i].id).toBeGreaterThanOrEqual(meanTier[i - 1]);
+  });
+
+  it('brings the cattle in run 2: both seats’ briefings give the whistle rule there, and only there', () => {
+    expect(RUNS.map((r) => r.obstacles.some((o) => o.kind === 'cattle'))).toEqual([false, true, true, true, true, true]);
+    const briefed = (r: RunDef, seat: 'rider' | 'engineer'): boolean => r.briefing[seat].some((l) => /cattle/i.test(l) && /whistle/i.test(l));
+    expect(RUNS.filter((r) => briefed(r, 'rider')).map((r) => r.index + 1)).toEqual([2]);
+    expect(RUNS.filter((r) => briefed(r, 'engineer')).map((r) => r.index + 1)).toEqual([2]);
+    // One blast, when the Rider calls it: the timing is the whole trick (spec §8).
+    expect(RUNS[1].briefing.rider.some((l) => /one blast/i.test(l) && /spyglass/i.test(l))).toBe(true);
+    expect(RUNS[1].briefing.engineer.some((l) => /once when the Rider calls it/.test(l) && /\(H\)/.test(l))).toBe(true);
   });
 
   it('gets busier: more track, more riders, more traffic', () => {
@@ -560,6 +659,24 @@ for (const run of RUNS) {
       }
     });
 
+    it('keeps its herds clear of standing trains, switches, trestles and each other, whichever way the train goes', () => {
+      // Signals don't see cattle, so a herd may stand in any block; tunnels, fords and low bridges
+      // keep clear of the herds' lookout (above).
+      const herds = run.obstacles.filter((o) => o.kind === 'cattle');
+      for (const route of routesOf(run)) {
+        const zones = herdZones(run, route);
+        for (const h of herds) {
+          const x = route.x({ edge: h.edge, off: h.at });
+          if (x === null) continue;
+          for (const z of zones) expect(x < z.a || x > z.b, `${h.id} clear of ${z.what}`).toBe(true);
+          for (const o of herds) {
+            const y = o === h || !together(h, o) ? null : route.x({ edge: o.edge, off: o.at });
+            if (y !== null) expect(Math.abs(y - x), `${h.id} and ${o.id}`).toBeGreaterThanOrEqual(HERD_SPACING);
+          }
+        }
+      }
+    });
+
     for (const [variant, plan] of variantsOf(run)) {
       describe(`plan ${variant}`, () => {
         const path = plannedPath(run, variant);
@@ -660,9 +777,10 @@ for (const run of RUNS) {
               const short = plan.whistles.map((p) => x - path!.x(p)!);
               const timed = short.filter((d) => d <= WHISTLE_SCARE_MAX - WHISTLE_SPARE && d - plan.cruise * WHISTLE_SCARE_SECONDS >= WHISTLE_SCARE_MIN + WHISTLE_SPARE);
               expect(timed.length, `${o.id} gets one timed blast`).toBe(1);
-              // …and the herd hears nothing sooner, or it gets used to the whistle.
+              // …and the herd hears none sooner, another herd's included, not even as the autopilot's
+              // blast runs on toward it, or it gets used to the whistle.
               expect(
-                short.filter((d) => d > WHISTLE_SCARE_MAX && d <= WHISTLE_EARSHOT),
+                short.filter((d) => d > WHISTLE_SCARE_MAX && d <= WHISTLE_EARSHOT + plan.cruise * AP_WHISTLE_SECONDS),
                 `${o.id} hears no early whistle`,
               ).toEqual([]);
             }
@@ -670,7 +788,9 @@ for (const run of RUNS) {
               const halt = est!.halts.find((h) => x - h.x >= 15 && x - h.x <= 40);
               expect(halt, `${o.id} just past a stop`).toBeDefined();
             }
-            // Cattle and barricades lie outside every signal's block, or its signal would hold us short.
+            // Barricades lie outside every signal's block, or its signal would hold us short of
+            // something we can't clear. Signals don't see cattle, so a herd may stand anywhere.
+            if (o.kind !== 'barricade') continue;
             const sigs = run.signals.map((s) => path!.x({ edge: s.edge, off: s.at })).filter((sx): sx is number => sx !== null && sx < x);
             if (sigs.length > 0) expect(x - Math.max(...sigs), `${o.id} is in a block`).toBeGreaterThan(2600);
           }
@@ -728,18 +848,93 @@ for (const run of RUNS) {
 
         it('fords no wave of horsemen before it has ridden up: a ford sheds them', () => {
           const fords = hazardsOn(run, path!).filter((h) => h.kind === 'ford');
+          const L = longestTrain(run);
           for (const w of run.waves.filter(inVariant)) {
             const x = path!.x(w.trigger);
             if (x === null) continue;
             const reach = (w.from === 'ahead' ? HORSE_AMBUSH_AHEAD : 0) + WAVE_CLEAR;
             for (const f of fords) expect(f.x1 <= x || f.x0 >= x + reach, `${f.id} and ${w.id}`).toBe(true);
+            // Riders from the rear start behind the last car: not in a ford the train has just left.
+            if (w.from !== 'rear') continue;
+            const back = x - L - HORSE_SPAWN_BEHIND - SPAWN_SPACING * w.count;
+            for (const f of fords) expect(f.x1 < back || f.x0 > x, `${w.id} starts in ${f.id}`).toBe(true);
           }
         });
 
-        it('meets bandits on the way', () => {
-          const passed = run.waves.filter(inVariant).filter((w) => path!.x(w.trigger) !== null);
-          expect(passed.length).toBeGreaterThanOrEqual(2);
-          for (const w of passed) expect(path!.x(w.trigger)!).toBeLessThan(path!.length - 300);
+        it('meets more bandits on the way, spread through the run', () => {
+          const rides = run.waves
+            .filter(inVariant)
+            .map((w) => ({ w, trigger: path!.x(w.trigger) }))
+            .filter((r): r is { w: WaveDef; trigger: number } => r.trigger !== null)
+            .map((r) => ({ ...r, x: rideIn(r.w, r.trigger) }))
+            .sort((a, b) => a.x - b.x);
+          expect(rides.length).toBeGreaterThanOrEqual(MIN_WAVES[run.index]);
+          for (const r of rides) expect(r.trigger, r.w.id).toBeLessThan(path!.length - 300);
+          // Seconds of driving between two places by the estimate: stops and holds don't count.
+          const driving = (a: number, b: number): number =>
+            est!.timeAt(b) - est!.timeAt(a) - est!.halts.filter((h) => h.x > a && h.x < b).reduce((n, h) => n + h.leave - h.arrive, 0);
+          // Not bunched: each band gets its moment, save a gang sprung together (the boss's).
+          for (let i = 1; i < rides.length; i++) {
+            const [p, q] = [rides[i - 1], rides[i]];
+            if (Math.abs(q.trigger - p.trigger) <= GANG) continue;
+            expect(driving(p.x, q.x), `${p.w.id} then ${q.w.id}`).toBeGreaterThanOrEqual(WAVE_APART);
+          }
+          // Action through the run: never long without riders, save across a meet, which is a breather.
+          const holds = plan.holds.map((h) => path!.x(h.at)!);
+          const marks = [{ id: 'the start', x: 0 }, ...rides.map((r) => ({ id: r.w.id, x: r.x })), { id: 'the destination', x: path!.length }];
+          for (let i = 1; i < marks.length; i++) {
+            const [p, q] = [marks[i - 1], marks[i]];
+            if (holds.some((hx) => hx > p.x && hx < q.x)) continue;
+            expect(driving(p.x, q.x), `${p.id} to ${q.id}`).toBeLessThanOrEqual(WAVE_EVERY);
+          }
+        });
+
+        it('leaves the crew a breather at the set pieces: a burning trestle, a meet, the runaway', () => {
+          const rides = run.waves
+            .filter(inVariant)
+            .map((w) => ({ w, trigger: path!.x(w.trigger) }))
+            .filter((r): r is { w: WaveDef; trigger: number } => r.trigger !== null)
+            .map((r) => ({ w: r.w, x: rideIn(r.w, r.trigger) }));
+          const quiet = (a: number, b: number, what: string, except: (w: WaveDef, x: number) => boolean = () => false): void => {
+            for (const r of rides) if (!except(r.w, r.x)) expect(r.x < a || r.x > b, `${r.w.id} rides in at ${what}`).toBe(true);
+          };
+          // A burning trestle: from short of the curve before it until it's crossed. A gun in the cab
+          // there would slow the train, and the trestle comes down under it.
+          for (const tr of run.trestles.filter((t) => t.burning)) {
+            const r = rangeOn(path!, tr.edge, tr.from, tr.to);
+            if (!r) continue;
+            const curve = run.curves
+              .map((c) => rangeOn(path!, c.edge, c.from, c.to))
+              .filter((c): c is [number, number] => c !== null && c[1] <= r[0])
+              .sort((a, b) => b[1] - a[1])[0];
+            quiet((curve ? curve[0] : r[0] - RUN_UP) - SET_PIECE_CLEAR, r[1], tr.id);
+          }
+          // A meet: from the junction signal guarding the siding until the hold is over. A gun in the
+          // cab there could leave the train standing on the main.
+          for (const h of plan.holds) {
+            const sig = run.signals.find((s) => s.junction === edgeOf(ix, h.at.edge).a);
+            expect(sig, `a signal guards ${h.at.edge}`).toBeDefined();
+            quiet(path!.x({ edge: sig!.edge, off: sig!.at })!, path!.x(h.at)!, `the meet in ${h.at.edge}`);
+          }
+          // The runaway: from short of its trigger until we're past the switch that turns it off our
+          // road, nobody rides in but the gang waiting at the barricade.
+          const runaway = run.aiTrains.find((t) => t.kind === 'runaway')?.runaway;
+          if (runaway) {
+            const bars = run.obstacles
+              .filter((o) => o.kind === 'barricade' && inVariant(o))
+              .map((o) => path!.x({ edge: o.edge, off: o.at }))
+              .filter((x): x is number => x !== null);
+            const atBarricade = (w: WaveDef, x: number): boolean => w.from === 'ahead' && bars.some((b) => Math.abs(b - (x + HORSE_AMBUSH_WAKE)) <= HORSE_AMBUSH_WAKE);
+            quiet(path!.x(runaway.trigger)! - SET_PIECE_CLEAR, runawaySwitchX(run, path!)!, 'the runaway', atBarricade);
+          }
+        });
+
+        it('meets its herds on the way, from run 2 on, and every herd of its variant', () => {
+          const herds = run.obstacles.filter((o) => o.kind === 'cattle' && inVariant(o));
+          // A herd off the plan's road would stand there all run: give it the variants that pass it.
+          for (const o of herds) expect(path!.x({ edge: o.edge, off: o.at }), `${o.id} on the plan's road`).not.toBeNull();
+          expect(herds.length).toBeGreaterThanOrEqual(MIN_HERDS[run.index]);
+          expect(herds.length).toBeLessThanOrEqual(MAX_HERDS);
         });
       });
     }
@@ -775,12 +970,16 @@ describe('what each run introduces', () => {
     expect(run.waves.every((w) => w.tier === 1 && w.count <= 3 && w.goal === 'hunt')).toBe(true);
   });
 
-  it('2. Payroll to Pale Rock: the long way or the steep cutoff, the safe, water towers, 55 water, the lurch', () => {
+  it('2. Payroll to Pale Rock: the long way or the steep cutoff, the safe, water towers, 55 water, the lurch, cattle', () => {
     const run = RUNS[1];
     expect(stationName(run, run.contract.destination)).toBe('Pale Rock');
     // The lurch (spec §5.2) is briefed to both seats: the Rider calls for the brake, the Engineer slams it on.
     expect(run.briefing.rider.some((l) => /brake/i.test(l))).toBe(true);
     expect(run.briefing.engineer.some((l) => /brake/i.test(l))).toBe(true);
+    // The first herd stands where both ways meet again, so every crew meets it.
+    const herds = run.obstacles.filter((o) => o.kind === 'cattle');
+    expect(herds.length).toBeGreaterThanOrEqual(1);
+    for (const h of herds) for (const route of routesOf(run)) expect(route.x({ edge: h.edge, off: h.at }), h.id).not.toBeNull();
     expect(run.requiredCars).toContain('express');
     expect(run.waves.some((w) => w.goal === 'safe')).toBe(true);
     expect(run.waterTowers.length).toBeGreaterThanOrEqual(2);
@@ -798,7 +997,7 @@ describe('what each run introduces', () => {
     expect(run.aiTrains).toEqual([]);
   });
 
-  it('3. Signal Country: signals, a rockslide one of two ways, cattle, the burning Devil’s Trestle', () => {
+  it('3. Signal Country: signals, a rockslide one of two ways, more cattle, the burning Devil’s Trestle', () => {
     const run = RUNS[2];
     const ix = netIndex(run);
     expect(new Set(run.signals.map((s) => s.kind))).toEqual(new Set(['block', 'junction']));

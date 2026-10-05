@@ -2,7 +2,7 @@
 // the host, sends commands with sequence numbers, and surfaces the host's refusals. Everything it
 // knows arrives through the messages in protocol.ts.
 
-import { TICK_HZ } from '../sim/rules';
+import { TICK_HZ, TIME_SCALE } from '../sim/rules';
 import type {
   Assists,
   CampaignProgress,
@@ -39,7 +39,8 @@ export interface Refusal {
   t: number;
 }
 
-const TICK_MS = 1000 / TICK_HZ;
+/** Real milliseconds per host tick: the world runs TIME_SCALE times the wall clock. */
+const TICK_MS = 1000 / (TICK_HZ * TIME_SCALE);
 const PING_MS = 2000;
 
 export interface ClientOptions {
@@ -62,6 +63,8 @@ export class ClientSession {
   hostReady = false;
   pausedBy: Role | null = null;
   pauseReason: 'disconnect' | null = null;
+  /** When the run's opening shot ends and the numbers start (performance.now); the countdown mode covers both. */
+  introEndMs = 0;
   countdownEndMs = 0;
   result: RunResult | null = null;
   payout: Payout | null = null;
@@ -260,7 +263,8 @@ export class ClientSession {
         this.mode = 'countdown';
         this.pausedBy = null;
         this.pauseReason = null;
-        this.countdownEndMs = now + m.seconds * 1000;
+        this.introEndMs = now + (Number.isFinite(m.intro) ? Math.max(0, m.intro) : 0) * 1000;
+        this.countdownEndMs = this.introEndMs + m.seconds * 1000;
         this.ready = false;
         this.hostReady = false;
         this.originMs = null;

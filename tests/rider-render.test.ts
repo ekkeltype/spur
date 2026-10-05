@@ -3,7 +3,8 @@
 // 2: the lookout's framing, fords (the water's surface, bow waves, banks), the HUD's distances and
 // flag, spray and the lurch's jolt; and whole frames drawn through a stand-in canvas, to check that
 // the river's water lies over the train, its figures and the horses, and that the lookout reaches
-// past the loco's front.
+// past the loco's front. Round 3: the scout alert (what's worth a look, how far, what's been seen,
+// which edge), in the pure watch and in whole frames.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -25,18 +26,34 @@ import {
 import { trainLook } from '../src/render/rider/cars';
 import { Effects, P_WATER } from '../src/render/rider/effects';
 import { BANK_TOP_Y, bankX, bowWaves, locoFaceX, SHOULDER_OUT, surfaceY, wash, WATER_Y } from '../src/render/rider/ford';
-import { distanceText, flagText, waitText } from '../src/render/rider/hud';
+import { distanceText, flagText, glassHalfWidth, waitText } from '../src/render/rider/hud';
 import { advancePhase, gallopLegs, kneeBend, legSwing, TickInterp } from '../src/render/rider/motion';
 import { hash01, layerRange, layerScreenX, tileSpan, wrap } from '../src/render/rider/parallax';
 import { onLookout, RiderRenderer, type RiderFrame } from '../src/render/rider/renderer';
 import type { Scene } from '../src/render/rider/scene';
+import { badgeSide, runDir, scoutThings, ScoutWatch, SEEN_SECONDS, type ScoutLook, type ScoutThing } from '../src/render/rider/scout';
 import { lampLetter, signalHeads } from '../src/render/rider/signal-look';
 import { skyAt } from '../src/render/rider/sky';
 import { RUNS } from '../src/content/runs';
-import { newGame } from '../src/sim/game';
+import { newGame, scopeMaxFor } from '../src/sim/game';
 import { trainGeometry } from '../src/sim/geometry';
-import { CAB_LENGTH, CAR_SPECS, COUPLER_GAP, CUPOLA_Y, FLAG_MAX, FORD_WATER_Y, PLATFORM_DEPTH, TENDER_DECK, YARD } from '../src/sim/rules';
-import type { CarState, GameState, RunDef, SimEvent } from '../src/sim/types';
+import { frontHead, netIndex, walk } from '../src/sim/network';
+import {
+  CAB_LENGTH,
+  CAR_SPECS,
+  COUPLER_GAP,
+  CUPOLA_Y,
+  FLAG_MAX,
+  FORD_WATER_Y,
+  PLATFORM_DEPTH,
+  SCOPE_MAX,
+  SCOPE_MAX_HEADLAMP,
+  SCOPE_MAX_NIGHT,
+  SCOPE_MIN,
+  TENDER_DECK,
+  YARD,
+} from '../src/sim/rules';
+import type { CarState, GameState, HorsemanState, RunDef, SimEvent, TracksideItem, UpgradeId } from '../src/sim/types';
 
 const close = (a: number, b: number, eps = 1e-9): void => {
   expect(Math.abs(a - b)).toBeLessThan(eps);
@@ -526,6 +543,166 @@ describe('effects (round 2)', () => {
   });
 });
 
+// ---- Round 3 --------------------------------------------------------------------------------------
+
+describe('the scout alert (round 3)', () => {
+  const L = 100;
+  /** A look from a Rider standing mid-train: the view ends 5 m short of the loco's front. */
+  const look = (over: Partial<ScoutLook> = {}): ScoutLook => ({ dir: 1, length: L, near: 13, far: SCOPE_MAX, view: { x0: L - 40, x1: L - 5 }, glass: null, dt: 1 / 60, ...over });
+  const herd = (id: string, x: number): TracksideItem => ({ kind: 'obstacle', id, x, obstacle: 'cattle', state: 'present', calm: false });
+  const things = (items: TracksideItem[], dir: 1 | -1 = 1): ScoutThing[] => scoutThings(items, [], dir);
+  const rider = (mode: 'active' | 'off' | 'down', scoped: boolean): { mode: 'active' | 'off' | 'down'; scoped: boolean } => ({ mode, scoped });
+  const waiting = (id: number, x: number, mode: HorsemanState['mode']): Pick<HorsemanState, 'id' | 'x' | 'mode'> => ({ id, x, mode });
+
+  it('counts what the Rider must spot and call: obstacles, waiting horsemen, a train on our track, a stop signal facing us', () => {
+    const items: TracksideItem[] = [
+      herd('cows', L + 300),
+      { kind: 'obstacle', id: 'leaving', x: L + 310, obstacle: 'cattle', state: 'scattering', calm: false },
+      { kind: 'obstacle', id: 'slide', x: L + 320, obstacle: 'rocks', state: 'present', calm: false },
+      { kind: 'obstacle', id: 'bar', x: L + 330, obstacle: 'barricade', state: 'present', calm: false },
+      { kind: 'obstacle', id: 'smashed', x: L + 340, obstacle: 'barricade', state: 'hit', calm: false },
+      { kind: 'signal', id: 'red', x: L + 350, facing: 'toward', heads: 1, aspect: 'stop' },
+      { kind: 'signal', id: 'yellow', x: L + 360, facing: 'toward', heads: 1, aspect: 'approach' },
+      { kind: 'signal', id: 'green', x: L + 370, facing: 'toward', heads: 2, aspect: 'divergeClear' },
+      { kind: 'signal', id: 'back', x: L + 380, facing: 'away', heads: 1, aspect: 'stop' },
+      { kind: 'train', id: 'no7', x0: L + 400, x1: L + 520, lane: 'same', ai: 'freight', v: 10, cars: 8 },
+      { kind: 'train', id: 'runaway', x0: L + 540, x1: L + 584, lane: 'same', ai: 'runaway', v: 12, cars: 4 },
+      { kind: 'train', id: 'ex9', x0: L + 200, x1: L + 290, lane: 'adjacent', ai: 'express', v: 14, cars: 4 },
+      // The Engineer's calls, and the rest of the scenery: none of these raise it.
+      { kind: 'tunnel', id: 'tn', x0: L + 100, x1: L + 180, name: 'Tunnel' },
+      { kind: 'ford', id: 'fd', x0: L + 190, x1: L + 230, name: 'Ford' },
+      { kind: 'trestle', id: 'tr', x0: L + 240, x1: L + 280, name: 'Trestle', burning: true },
+      { kind: 'lowBridge', id: 'lb', x: L + 60 },
+      { kind: 'station', id: 'st', x: L + 420, platform: 60, name: 'Station' },
+      { kind: 'water', id: 'wt', x: L + 430, spoutDown: false },
+      { kind: 'milepost', x: L + 440, mile: 3 },
+      { kind: 'curve', id: 'cv', x0: L + 450, x1: L + 500, limit: 12 },
+      { kind: 'junction', id: 'jn', x: L + 460, state: 'normal', name: 'Junction' },
+    ];
+    const horsemen = [waiting(5, L + 450, 'waiting'), waiting(6, L + 20, 'pace'), waiting(7, -30, 'approach')];
+    const keys = scoutThings(items, horsemen, 1).map((t) => t.key);
+    expect(keys.sort()).toEqual(['g:red', 'h:5', 'o:bar', 'o:cows', 'o:leaving', 'o:slide', 't:no7', 't:runaway']);
+    // Backing, the signals that face the train are the ones facing the rear.
+    const back = scoutThings(items, horsemen, -1).map((t) => t.key);
+    expect(back).toContain('g:back');
+    expect(back).not.toContain('g:red');
+    // Placed where they're drawn: shifted to render time, with the width of what's drawn.
+    const [cows] = scoutThings([herd('cows', 250)], [], 1, 0.4);
+    expect(cows.x0).toBeLessThan(250.4);
+    expect(cows.x1).toBeGreaterThan(250.4);
+    close((cows.x0 + cows.x1) / 2, 250.4, 1e-9);
+  });
+
+  it('reaches as far as the spyglass: 650 m by day, 300 m at night, 450 m with the headlamp', () => {
+    const run = RUNS[0];
+    const night: RunDef = { ...run, night: true };
+    const make = (r: RunDef, upgrades: UpgradeId[]): GameState => newGame(r, { seed: 3, consist: ['express'], upgrades, assists: { rider: false, engineer: false } });
+    const day = scopeMaxFor(make(run, []), run);
+    const dark = scopeMaxFor(make(night, []), night);
+    const lamp = scopeMaxFor(make(night, ['headlamp']), night);
+    expect([day, dark, lamp]).toEqual([SCOPE_MAX, SCOPE_MAX_NIGHT, SCOPE_MAX_HEADLAMP]);
+    const sideAt = (x: number, far: number): number => new ScoutWatch().update(things([herd('cows', x)]), look({ far }));
+    expect(sideAt(L + 400, day)).toBe(1);
+    expect(sideAt(L + 400, dark)).toBe(0);
+    expect(sideAt(L + 400, lamp)).toBe(1);
+    expect(sideAt(L + 280, dark)).toBe(1);
+    // Out to the reach and no farther (a herd's near end within it counts).
+    expect(sideAt(L + day - 10, day)).toBe(1);
+    expect(sideAt(L + day + 10, day)).toBe(0);
+    // Nearer than the glass can show at its shortest reach, it's left to the view.
+    const near = SCOPE_MIN - glassHalfWidth(1280, 720);
+    expect(near).toBeGreaterThan(10);
+    expect(near).toBeLessThan(16);
+    // (A herd is drawn 4 m either side of its point.)
+    const at = (x: number): number => new ScoutWatch().update(things([herd('cows', x)]), look({ near }));
+    expect(at(L + near - 4 - 1)).toBe(0);
+    expect(at(L + near - 4 + 1)).toBe(1);
+  });
+
+  it('goes once the thing has been in the spyglass’s glass a moment, not for a sweep past it', () => {
+    const w = new ScoutWatch();
+    const cows = things([herd('cows', L + 400)]);
+    expect(w.update(cows, look())).toBe(1);
+    const glass = { x0: L + 393, x1: L + 407 };
+    // Swept past in a few frames: still worth a look.
+    for (let i = 0; i < 3; i++) w.update(cows, look({ view: null, glass }));
+    expect(w.side).toBe(1);
+    expect(w.hasSeen('o:cows')).toBe(false);
+    // Held there a moment: seen, and the badge stays down with the glass lowered again.
+    let frames = 3;
+    while (!w.hasSeen('o:cows') && frames < 60) {
+      w.update(cows, look({ view: null, glass }));
+      frames++;
+    }
+    expect(frames).toBe(Math.round(SEEN_SECONDS * 60));
+    expect(w.side).toBe(0);
+    expect(w.update(cows, look())).toBe(0);
+    // Glass elsewhere, or a game paused (no time passes), sees nothing.
+    const other = new ScoutWatch();
+    for (let i = 0; i < 60; i++) other.update(cows, look({ view: null, glass: { x0: L + 200, x1: L + 214 } }));
+    for (let i = 0; i < 60; i++) other.update(cows, look({ view: null, glass, dt: 0 }));
+    expect(other.side).toBe(1);
+  });
+
+  it('goes once the thing comes into plain view, and stays gone', () => {
+    const w = new ScoutWatch();
+    const cows = things([herd('cows', L + 60)]);
+    expect(w.update(cows, look({ view: { x0: L - 20, x1: L + 27 } }))).toBe(1);
+    expect(w.update(cows, look({ view: { x0: L - 10, x1: L + 58 } }))).toBe(0);
+    expect(w.update(cows, look({ view: { x0: L - 40, x1: L - 5 } }))).toBe(0);
+    // A signal seen at clear is news when it drops to stop out of sight.
+    const signal = (aspect: 'clear' | 'stop'): ScoutThing[] => things([{ kind: 'signal', id: 'j', x: L + 30, facing: 'toward', heads: 2, aspect }]);
+    const s = new ScoutWatch();
+    expect(s.update(signal('clear'), look({ view: { x0: L - 10, x1: L + 40 } }))).toBe(0);
+    expect(s.update(signal('stop'), look())).toBe(1);
+  });
+
+  it('turns to the rear when the train backs: the badge at the left edge, for what lies behind it', () => {
+    expect(runDir(12, 1)).toBe(1);
+    expect(runDir(0, -1)).toBe(1);
+    expect(runDir(-2, 1)).toBe(-1);
+    // A margin as the train slows to a stand, so it doesn't flit between edges.
+    expect(runDir(-0.2, -1)).toBe(-1);
+    expect(runDir(-0.2, 1)).toBe(1);
+    const items: TracksideItem[] = [herd('ahead', L + 300), { kind: 'train', id: 'runaway', x0: -344, x1: -300, lane: 'same', ai: 'runaway', v: 8, cars: 4 }];
+    const view = { x0: -12, x1: 22 };
+    expect(new ScoutWatch().update(things(items, 1), look({ view }))).toBe(1);
+    const back = new ScoutWatch();
+    expect(back.update(things(items, -1), look({ dir: -1, view }))).toBe(-1);
+    expect(back.update(things(items, -1), look({ dir: -1, view: { x0: -310, x1: -260 } }))).toBe(0);
+  });
+
+  it('shows only to a Rider on the train and not at the spyglass', () => {
+    expect(badgeSide(1, rider('active', false))).toBe(1);
+    expect(badgeSide(-1, rider('active', false))).toBe(-1);
+    expect(badgeSide(1, rider('active', true))).toBe(0);
+    expect(badgeSide(1, rider('off', false))).toBe(0);
+    expect(badgeSide(-1, rider('down', false))).toBe(0);
+    expect(badgeSide(0, rider('active', false))).toBe(0);
+  });
+
+  it('pops for something new, and keeps what was seen for the game', () => {
+    const w = new ScoutWatch();
+    w.forGame('run:1', 10);
+    w.update(things([herd('a', L + 300)]), look());
+    expect(w.fresh).toBe(true);
+    w.update(things([herd('a', L + 290)]), look());
+    expect(w.fresh).toBe(false);
+    w.update(things([herd('a', L + 280), herd('b', L + 500)]), look());
+    expect(w.fresh).toBe(true);
+    w.update(things([herd('a', L + 20)]), look({ view: { x0: L - 10, x1: L + 30 } }));
+    expect(w.hasSeen('o:a')).toBe(true);
+    w.forGame('run:1', 400);
+    expect(w.hasSeen('o:a')).toBe(true);
+    // A new game, or this one restored to an earlier tick (a checkpoint), starts afresh.
+    w.forGame('run:1', 200);
+    expect(w.hasSeen('o:a')).toBe(false);
+    w.update(things([herd('a', L + 20)]), look({ view: { x0: L - 10, x1: L + 30 } }));
+    w.forGame('run:2', 300);
+    expect(w.hasSeen('o:a')).toBe(false);
+  });
+});
+
 // ---- Whole frames, through a stand-in canvas ------------------------------------------------------
 
 /** A 2D context that accepts every call and returns harmless values. */
@@ -673,5 +850,64 @@ describe('the Rider’s view, drawn', () => {
     const other = new RiderRenderer(fakeCanvas(1280, 720));
     for (let i = 0; i < 60; i++) other.draw(frame(st, run));
     expect(other.camera.zoom).toBe(1);
+  });
+
+  it('raises the scout alert for a herd 400 m ahead, as far as the spyglass reaches, and drops it after a look', () => {
+    stub();
+    const withHerd = (r: RunDef, upgrades: UpgradeId[] = []): GameState => {
+      const st = newGame(r, { seed: 5, consist: ['express', 'passenger', 'boxcar'], upgrades, assists: { rider: false, engineer: false } });
+      const p = walk(netIndex(r), st.switches, frontHead(st.train.spans), 400).end;
+      st.obstacles = [{ id: 'herd', kind: 'cattle', edge: p.edge, at: p.off, state: 'present', ticks: 0, calmTicks: 0 }];
+      return st;
+    };
+    const run = RUNS[0];
+    const st = withHerd(run);
+    const view = new RiderRenderer(fakeCanvas(1280, 720));
+    view.draw(frame(st, run));
+    expect(view.scoutBadge).toBe(1);
+    // At the spyglass it's hidden; held on the herd a moment, the herd is seen, and the "!" stays down.
+    Object.assign(st.rider, { scoped: true, scopeDist: 400 });
+    for (let i = 0; i < 45; i++) view.draw(frame(st, run));
+    expect(view.scoutBadge).toBe(0);
+    st.rider.scoped = false;
+    for (let i = 0; i < 60; i++) view.draw(frame(st, run));
+    expect(view.scoutBadge).toBe(0);
+    // Off the train, hidden.
+    const off = withHerd(run);
+    const offView = new RiderRenderer(fakeCanvas(1280, 720));
+    offView.draw(frame(off, run));
+    expect(offView.scoutBadge).toBe(1);
+    off.rider.mode = 'off';
+    offView.draw(frame(off, run));
+    expect(offView.scoutBadge).toBe(0);
+    // At night the spyglass sees 300 m, or 450 m with the headlamp: the herd out of reach, then in it.
+    const night: RunDef = { ...run, night: true };
+    const dark = new RiderRenderer(fakeCanvas(1280, 720));
+    dark.draw(frame(withHerd(night), night));
+    expect(dark.scoutBadge).toBe(0);
+    const lamp = new RiderRenderer(fakeCanvas(1280, 720));
+    lamp.draw(frame(withHerd(night, ['headlamp']), night));
+    expect(lamp.scoutBadge).toBe(1);
+  });
+
+  it('raises it for riders waiting in ambush, and the glass finds them in their lane', () => {
+    stub();
+    const run = RUNS[0];
+    const st = game(run);
+    const L = st.train.length;
+    const rider = (id: number, d: number): HorsemanState => ({ id, x: L + d, worldV: 0, hp: 1, tier: 1, boss: false, goal: 'hunt', mode: 'waiting', modeTicks: 0, stamina: 8, targetX: L + d, aimTicks: 0, cooldownTicks: 0, behindTicks: 0, pickup: false, shyTicks: 0 });
+    st.horsemen = [rider(1, 450), rider(2, 452)];
+    const view = new RiderRenderer(fakeCanvas(1280, 720));
+    view.draw(frame(st, run));
+    expect(view.scoutBadge).toBe(1);
+    Object.assign(st.rider, { scoped: true, scopeDist: 451 });
+    for (let i = 0; i < 45; i++) view.draw(frame(st, run));
+    st.rider.scoped = false;
+    for (let i = 0; i < 60; i++) view.draw(frame(st, run));
+    expect(view.scoutBadge).toBe(0);
+    // Once they ride, they're no longer waiting to be spotted: a new ambush pops it up again.
+    st.horsemen = [{ ...rider(1, 300), mode: 'approach' }, rider(3, 500)];
+    view.draw(frame(st, run));
+    expect(view.scoutBadge).toBe(1);
   });
 });

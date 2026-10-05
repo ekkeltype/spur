@@ -9,7 +9,7 @@ import { cleanCmd, GUNFIRE_MIN_TICKS, HostSession, runCard, type HostOptions } f
 import { createLocalPair } from '../src/net/local';
 import type { Msg, SwitchSave } from '../src/net/protocol';
 import { defaultCampaign, defaultSave, recordResult, type SaveV1 } from '../src/save/save';
-import { COUNTDOWN_SECONDS, TICK_HZ } from '../src/sim/rules';
+import { COUNTDOWN_SECONDS, INTRO_SECONDS, TICK_HZ, TIME_SCALE } from '../src/sim/rules';
 import type { CampaignProgress, EngineerCmdBody, RunDef, SimEvent } from '../src/sim/types';
 import { toEngineerRun, toEngineerView } from '../src/sim/views';
 import { yRun } from './fixtures';
@@ -166,6 +166,28 @@ describe('host and client sessions', () => {
     expect(Object.keys(client.view!).sort()).toEqual(Object.keys(toEngineerView(host.game!.state, RUNS3[0])).sort());
   });
 
+  it('runs the world TIME_SCALE times the wall clock, and the desk keeps pace with it', async () => {
+    const ctx = setup();
+    await toPlaying(ctx);
+    const { host, client, advance } = ctx;
+    // The client stamps snapshots with performance.now(): make that the test's clock.
+    const clock = vi.spyOn(performance, 'now');
+    const t0 = host.game!.state.tick;
+    // The desk's estimate of the host's tick, between snapshots, stays where the host is.
+    let worst = 0;
+    for (let i = 0; i < 60; i++) {
+      advance(1000 / 60);
+      clock.mockReturnValue(ctx.time());
+      await flush(1);
+      if (i >= 10) worst = Math.max(worst, Math.abs(client.estTick(ctx.time()) - host.game!.state.tick));
+    }
+    const ran = host.game!.state.tick - t0;
+    expect(ran).toBeGreaterThanOrEqual(Math.round(TICK_HZ * TIME_SCALE) - 2);
+    expect(ran).toBeLessThanOrEqual(Math.round(TICK_HZ * TIME_SCALE) + 1);
+    expect(worst).toBeLessThan(1.5);
+    clock.mockRestore();
+  });
+
   it('applies commands with acks, and refuses them while paused or malformed', async () => {
     const ctx = setup();
     await toPlaying(ctx);
@@ -221,6 +243,70 @@ describe('host and client sessions', () => {
     host.requestPause();
     await flush();
     expect(client.pausedBy).toBe('rider');
+  });
+
+  it('opens a run with its shot only when it leaves the origin', async () => {
+    const ctx = setup();
+    const { host, client, advance, received } = ctx;
+    const countdowns = (): Msg[] => received.filter((m) => m.type === 'countdown');
+    await toBriefing(ctx);
+    client.setReady(true);
+    host.setReady(true);
+    await flush();
+    // The shot, then the numbers: the countdown mode covers both, on both sides.
+    expect(countdowns().at(-1)).toEqual({ type: 'countdown', seconds: COUNTDOWN_SECONDS, intro: INTRO_SECONDS });
+    expect(host.countdownEndMs - host.introEndMs).toBeCloseTo(COUNTDOWN_SECONDS * 1000);
+    expect(client.countdownEndMs - client.introEndMs).toBeCloseTo(COUNTDOWN_SECONDS * 1000);
+    expect(client.introEndMs - performance.now()).toBeGreaterThan((INTRO_SECONDS - 1) * 1000);
+    advance(500);
+    expect(host.mode).toBe('countdown');
+    expect(client.mode).toBe('countdown');
+    host.countdownEndMs = 0;
+    client.countdownEndMs = 0;
+    advance(500);
+    await flush();
+    expect(host.mode).toBe('running');
+
+    // Resuming from a pause: just the numbers.
+    host.requestPause();
+    await flush();
+    host.setReady(true);
+    client.setReady(true);
+    await flush();
+    expect(countdowns().at(-1)).toEqual({ type: 'countdown', seconds: COUNTDOWN_SECONDS, intro: 0 });
+    expect(host.countdownEndMs - host.introEndMs).toBeCloseTo(COUNTDOWN_SECONDS * 1000);
+    expect(client.introEndMs).toBeLessThanOrEqual(performance.now());
+    host.countdownEndMs = 0;
+    client.countdownEndMs = 0;
+    advance(500);
+    await flush();
+
+    // Retrying from a checkpoint: just the numbers. Restarting the run: the shot again.
+    addEvents({ type: 'checkpoint', stationId: 'orig' });
+    advance(20);
+    await flush();
+    endGame(ctx, 'lost');
+    advance(100);
+    await flush();
+    host.retryFromCheckpoint();
+    await flush();
+    host.setReady(true);
+    client.setReady(true);
+    await flush();
+    expect(countdowns().at(-1)).toMatchObject({ intro: 0 });
+    host.countdownEndMs = 0;
+    client.countdownEndMs = 0;
+    advance(100);
+    await flush();
+    endGame(ctx, 'lost');
+    advance(100);
+    await flush();
+    host.restart();
+    await flush();
+    host.setReady(true);
+    client.setReady(true);
+    await flush();
+    expect(countdowns().at(-1)).toMatchObject({ intro: INTRO_SECONDS });
   });
 
   it('pauses when the Engineer drops, and resyncs them when they come back', async () => {

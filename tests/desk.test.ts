@@ -15,6 +15,7 @@ import {
   formatYards,
   junctionNumbers,
   roundYards,
+  secondsTo,
   toMph,
   windowYards,
 } from '../src/render/desk/format';
@@ -51,7 +52,7 @@ import {
 import { aheadRow } from '../src/render/desk/panels';
 import { rulebookText } from '../src/render/desk/rulebook';
 import { netIndex, rearHead } from '../src/sim/network';
-import { YARD } from '../src/sim/rules';
+import { TIME_SCALE, YARD } from '../src/sim/rules';
 import type { AiTrainDef, RunDef, Span, SwitchState } from '../src/sim/types';
 import { toEngineerRun } from '../src/sim/views';
 import { loopRun, yRun } from './fixtures';
@@ -149,10 +150,13 @@ describe('distances, speeds and ETAs', () => {
     expect(toMph(10)).toBeCloseTo(22.3694, 3);
   });
 
-  it('gives the time to reach something at the current speed', () => {
-    expect(formatEta(100, 20)).toBe('5 s');
-    expect(formatEta(1500, 20)).toBe('1:15');
-    expect(formatEta(20000, 20)).toBe('17 min');
+  it('gives the time to reach something at the current speed, on the wall clock', () => {
+    // The world runs TIME_SCALE times the wall clock: 125 m at 20 m/s is 6.25 s of it, 5 real ones.
+    expect(secondsTo(100, 20)).toBeCloseTo(5 / TIME_SCALE, 9);
+    expect(secondsTo(100, 0)).toBe(Infinity);
+    expect(formatEta(100 * TIME_SCALE, 20)).toBe('5 s');
+    expect(formatEta(1500 * TIME_SCALE, 20)).toBe('1:15');
+    expect(formatEta(20000 * TIME_SCALE, 20)).toBe('17 min');
     expect(formatEta(0, 10)).toBe('now');
     expect(formatEta(5, 20)).toBe('now');
     expect(formatEta(100, 0)).toBe('—'); // standing
@@ -476,7 +480,7 @@ describe('the Ahead list’s rows', () => {
     const r = row(ford);
     expect(r.name).toBe('Salt Creek ford');
     expect(r.detail).toBe('Ford, 66 yd: <span class="dk-warn">get up top</span>');
-    expect(r.eta).toBe('10 s');
+    expect(r.eta).toBe('8 s'); // 150 m at 15 m/s is 10 s of the world, 8 on the wall clock
     expect(r.dist).toBe('165 yd');
     expect(r.cls).toBe('ah-row ah-ford dk-soon');
     expect(row({ ...ford, dist: 400 }).cls).toBe('ah-row ah-ford');
@@ -494,7 +498,7 @@ describe('the Ahead list’s rows', () => {
   it('asks what a signal shows as the train passes it', () => {
     const sig: AheadItem = { kind: 'signal', id: 'g2', name: 'Block signal', dist: 120 };
     expect(row(sig).detail).toBe('As it passes: what does it show?');
-    expect(row(sig).eta).toBe('8 s');
+    expect(row(sig).eta).toBe('6 s');
     // Standing at it, waiting for it to clear: the Rider reads it from there.
     expect(row({ ...sig, dist: 30 }, 0).detail).toBe('What does it show now?');
     expect(row({ ...sig, dist: 900 }, 0).detail).toBe('As it passes: what does it show?');

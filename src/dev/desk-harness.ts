@@ -59,6 +59,7 @@ import {
   SWITCH_FOUL_DISTANCE,
   TENDER_HATCH_FROM_REAR,
   TICK_HZ,
+  TIME_SCALE,
   TRACTIVE_MAX,
   WATER_FILL_RATE,
   WATER_PER_PSI,
@@ -847,7 +848,7 @@ function frame(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (!paused && !frozen && desk) {
-    acc += dt * timeScale;
+    acc += dt * timeScale * TIME_SCALE;
     viewAcc += dt;
     const stepDt = 1 / TICK_HZ;
     let n = 0;

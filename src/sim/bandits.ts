@@ -39,6 +39,7 @@ import {
   FALL_OFF_Y,
   FALL_SECONDS,
   FIRE_BURN_SECONDS,
+  LURCH_BANDIT_STAGGER_SECONDS,
   FAST_MOVE_WINDOW,
   FORD_HORSE_SPEED,
   HORSE_ACCEL,
@@ -543,7 +544,7 @@ function stepBandit(ctx: FightCtx, geo: TrainGeometry, b: BanditState, events: S
   if (b.stunTicks > 0) b.stunTicks--;
   if (b.burnTicks > 0) b.burnTicks--;
   // The brakes slammed on: thrown like the Rider, and his aim spoiled (spec §5.2, §7.3).
-  if (state.train.lurchTick === state.tick && throwFigure(geo, b, state.train.v)) {
+  if (state.train.lurchTick === state.tick && throwFigure(geo, b, state.train.v, LURCH_BANDIT_STAGGER_SECONDS)) {
     b.aimTicks = 0;
     events.push({ type: 'thrown', who: 'bandit', id: b.id });
   }

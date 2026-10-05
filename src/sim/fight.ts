@@ -164,7 +164,7 @@ export function riderDown(ctx: FightCtx, events: SimEvent[]): void {
  * like a knockdown, but unhurt. One already in the air is only shoved forward. Crouching, ladders,
  * the cab and the insides of cars brace you. Returns whether the figure was thrown.
  */
-export function throwFigure(geo: TrainGeometry, f: Body & { stunTicks: number }, trainV: number): boolean {
+export function throwFigure(geo: TrainGeometry, f: Body & { stunTicks: number }, trainV: number, staggerSeconds = LURCH_STAGGER_SECONDS): boolean {
   if (f.ladder !== null || interiorAt(geo, f.x, f.y) !== null) return false;
   const shove = Math.sign(trainV) * LURCH_HOP_VX;
   if (!f.onGround) {
@@ -173,7 +173,7 @@ export function throwFigure(geo: TrainGeometry, f: Body & { stunTicks: number },
   }
   if (f.crouch || !windySurface(f.surface)) return false;
   Object.assign(f, { vx: f.vx + shove, vy: LURCH_HOP_VY, onGround: false, surface: null, crouch: false });
-  f.stunTicks = Math.max(f.stunTicks, secondsToTicks(LURCH_STAGGER_SECONDS));
+  f.stunTicks = Math.max(f.stunTicks, secondsToTicks(staggerSeconds));
   return true;
 }
 

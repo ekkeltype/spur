@@ -451,6 +451,10 @@ describe('migrate', () => {
     expect(migrate({ version: 1, campaign: { owned: 'everything' } }).campaign.owned).toEqual([]);
   });
 
+  it("drops a loco tier without the tier below it, and so the ones above it", () => {
+    expect(migrate({ version: 1, campaign: { owned: ['power2', 'speed2', 'speed1', 'power3'] } }).campaign.owned).toEqual(['speed1', 'speed2']);
+  });
+
   it('keeps assists as two booleans', () => {
     expect(migrate({ version: 1, campaign: { assists: { rider: true, engineer: 'yes' } } }).campaign.assists).toEqual({ rider: true, engineer: false });
     expect(migrate({ version: 1, campaign: { assists: 'on' } }).campaign.assists).toEqual({ rider: false, engineer: false });
@@ -775,6 +779,31 @@ describe('the depot', () => {
       if (out.ok) c = out.campaign;
     }
     expect(c.owned).toEqual(SHOP.map((s) => s.id).filter((id) => ['caboose', 'shotgun', 'governor'].includes(id)));
+  });
+
+  it("sells the loco's tiers in order, each after the one below it", () => {
+    let c = campaign({ money: 5000 });
+    expect(buyItem(c, 'power2')).toEqual({ ok: false, reason: 'Buy the Bored-out cylinders first.' });
+    expect(buyItem(c, 'speed3')).toEqual({ ok: false, reason: 'Buy the Babbitt bearings first.' });
+    for (const item of ['power1', 'speed1', 'power2', 'power3'] as const) {
+      const out = buyItem(c, item);
+      expect(out.ok).toBe(true);
+      if (out.ok) c = out.campaign;
+    }
+    expect(c.owned).toEqual(['power1', 'power2', 'power3', 'speed1']);
+    expect(c.money).toBe(5000 - 120 - 100 - 240 - 400);
+    expect(buyItem(c, 'speed3')).toEqual({ ok: false, reason: 'Buy the Balanced drivers first.' });
+  });
+
+  it('has two loco lines of three tiers, each needing the one below and dearer than it', () => {
+    for (const line of ['power', 'speed'] as const) {
+      const tiers = SHOP.filter((s) => s.line === line);
+      expect(tiers.map((s) => s.seat)).toEqual(['loco', 'loco', 'loco']);
+      expect(tiers.map((s) => s.requires)).toEqual([undefined, tiers[0].id, tiers[1].id]);
+      expect(tiers[1].cost).toBeGreaterThan(tiers[0].cost);
+      expect(tiers[2].cost).toBeGreaterThan(tiers[1].cost);
+    }
+    expect(SHOP.filter((s) => s.seat === 'loco').every((s) => s.line !== undefined)).toBe(true);
   });
 
   it('offers the free cars, and bought cars once owned', () => {

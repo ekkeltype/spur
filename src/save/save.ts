@@ -12,7 +12,7 @@
 import { RUNS } from '../content/runs';
 import type { Payout } from '../net/protocol';
 import { composeConsist, newGame } from '../sim/game';
-import { DEFAULT_MAX_CARS, FREE_CARS, REPLAY_PAY_FACTOR, SHOP } from '../sim/rules';
+import { DEFAULT_MAX_CARS, FREE_CARS, REPLAY_PAY_FACTOR, SHOP, type ShopItem } from '../sim/rules';
 import type {
   Assists,
   CampaignProgress,
@@ -218,7 +218,10 @@ function cleanMoney(value: unknown): number {
 
 function cleanOwned(value: unknown): UpgradeId[] {
   if (!Array.isArray(value)) return [];
-  return SHOP.map((s) => s.id).filter((id) => value.includes(id));
+  // In shop order, so a loco tier comes after the one it needs; one without it isn't kept.
+  const owned: UpgradeId[] = [];
+  for (const s of SHOP) if (value.includes(s.id) && (!s.requires || owned.includes(s.requires))) owned.push(s.id);
+  return owned;
 }
 
 function cleanAssists(value: unknown): Assists {
@@ -603,6 +606,10 @@ export function buyItem(campaign: CampaignProgress, item: UpgradeId): DepotResul
   const entry = SHOP.find((s) => s.id === item);
   if (!entry) return refuse("The depot doesn't sell that.");
   if (campaign.owned.includes(entry.id)) return refuse(`You already own the ${entry.name}.`);
+  // A loco tier needs the ones below it: name the lowest one missing, the one to buy now.
+  let needs: ShopItem | undefined;
+  for (let id = entry.requires; id && !campaign.owned.includes(id); id = needs?.requires) needs = SHOP.find((s) => s.id === id);
+  if (needs) return refuse(`Buy the ${needs.name} first.`);
   if (campaign.money < entry.cost) return refuse(`Not enough money: the ${entry.name} costs $${entry.cost}.`);
   const owned = cleanOwned([...campaign.owned, entry.id]);
   return { ok: true, campaign: { ...campaign, money: campaign.money - entry.cost, owned } };

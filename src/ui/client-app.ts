@@ -11,6 +11,7 @@ import type { DebugInfo, SwitchSave } from '../net/protocol';
 import type { EngineerEvent } from '../sim/types';
 import { button, clear, h } from './dom';
 import { Hints, hintsOn, Toaster } from './feedback';
+import { introInfo, IntroOverlay } from './intro';
 import { depotBoard } from './lobby';
 import { briefingScreen, countdownOverlay, messageScreen, noticeOverlay, pauseOverlay, readyRow, resultsScreen, switchSeatsRow, type Actions, type PauseView } from './screens';
 import { CabSounds } from './sounds';
@@ -356,6 +357,7 @@ class EngineerPlay {
   private hints: Hints;
   private pause: PauseView;
   private countdown = countdownOverlay();
+  private intro: IntroOverlay;
   private reconnecting = noticeOverlay('Reconnecting…', 'Lost contact with the Rider. Trying again every 2 seconds.');
   private debugEl = h('div', { class: 'debug-badge' });
   private sounds: CabSounds | null;
@@ -372,6 +374,7 @@ class EngineerPlay {
     const local = opts.mode === 'local';
     const settings = opts.settings.get();
     this.sounds = opts.sfx ? new CabSounds(opts.sfx) : null;
+    this.intro = new IntroOverlay(introInfo(game.run), opts.sfx ?? null);
     this.desk = new EngineerDesk(game.run, {
       onCmd: (cmd) => {
         session.sendCmd(cmd);
@@ -393,6 +396,7 @@ class EngineerPlay {
       h('div', { class: 'desk-host' }, this.desk.el),
       this.hints.el,
       this.debugEl,
+      this.intro.el,
       this.countdown.el,
       this.pause.el,
       this.reconnecting,
@@ -410,6 +414,7 @@ class EngineerPlay {
     this.unsubs = [];
     this.desk.destroy();
     this.sounds?.stop();
+    this.intro.destroy();
   }
 
   private onEvent(e: EngineerEvent): void {
@@ -458,8 +463,10 @@ class EngineerPlay {
       this.desk.setEnabled(running);
     }
     this.desk.frame(now);
-    this.countdown.set(s.mode === 'countdown' ? Math.max(1, Math.ceil((s.countdownEndMs - now) / 1000)) : null);
-    this.sounds?.frame(s.view, s.mode !== 'paused');
+    // The run's opening shot plays first in the countdown, with its own sounds.
+    const intro = this.intro.frame(now, s.mode === 'countdown' ? s.introEndMs : null, this.opts.settings.get().screenShake);
+    this.countdown.set(s.mode === 'countdown' && !intro ? Math.max(1, Math.ceil((s.countdownEndMs - now) / 1000)) : null);
+    if (!intro) this.sounds?.frame(s.view, s.mode !== 'paused');
     if (running) {
       this.runningSince ??= now;
       const t = now - this.runningSince;

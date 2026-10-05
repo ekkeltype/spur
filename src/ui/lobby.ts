@@ -7,8 +7,8 @@
 import type { DepotAction, LobbyState, RunCard } from '../net/protocol';
 import { availableCars } from '../save/save';
 import { cargoCars } from '../sim/game';
-import { CARGO_PAY, CAR_SPECS, REPLAY_PAY_FACTOR, SHOP, type ShopItem } from '../sim/rules';
-import type { CarKind, CarType } from '../sim/types';
+import { CARGO_PAY, CAR_SPECS, REPLAY_PAY_FACTOR, SHOP, type LocoLine, type ShopItem } from '../sim/rules';
+import type { CampaignProgress, CarKind, CarType } from '../sim/types';
 import { button, clear, h } from './dom';
 import { ACT_NAMES, BOARDING_SPEED, CAR_LABELS, CARGO_NAMES, distance, formatClock, formatDuration, MEDALS, money, mph, plural, tons, topSpeed, trainMass } from './text';
 
@@ -28,7 +28,13 @@ const CHIP_CARS: readonly CarType[] = ['express', 'passenger', 'boxcar', 'armore
 const SHOP_GROUPS: readonly [ShopItem['seat'], string][] = [
   ['rider', 'For the Rider'],
   ['engineer', 'For the Engineer'],
+  ['loco', 'The locomotive'],
   ['train', 'Cars'],
+];
+
+const LOCO_LINES: readonly [LocoLine, string][] = [
+  ['power', 'Power'],
+  ['speed', 'Speed'],
 ];
 
 /** A section that rebuilds its content only when its key changes. */
@@ -238,7 +244,7 @@ function trainSection(card: RunCard, lobby: LobbyState, act: (a: DepotAction) =>
     }
   }
   const mass = trainMass(consist);
-  const top = topSpeed(mass);
+  const top = topSpeed(mass, lobby.campaign.owned);
   const cargo = cargoCars(consist, card.requiredCars).reduce((n, c) => n + c.pay, 0);
   const replay = card.times > 0;
   return [
@@ -286,6 +292,10 @@ function shopList(lobby: LobbyState, act: (a: DepotAction) => void): Node[] {
   for (const [seat, title] of SHOP_GROUPS) {
     const group = h('div', { class: 'shop-group' }, h('div', { class: 'shop-head', text: title }));
     out.push(group);
+    if (seat === 'loco') {
+      for (const [line, name] of LOCO_LINES) group.append(tierRow(c, line, name, act));
+      continue;
+    }
     for (const item of SHOP.filter((s) => s.seat === seat)) {
       const owned = c.owned.includes(item.id);
       const short = !owned && c.money < item.cost;
@@ -305,4 +315,34 @@ function shopList(lobby: LobbyState, act: (a: DepotAction) => void): Node[] {
     }
   }
   return out;
+}
+
+/**
+ * One of the loco's tier lines (spec §12): the tiers owned as pips, then the next tier to buy, or
+ * the top one once it's owned. Each tier needs the one before, so there's only ever one to buy.
+ */
+function tierRow(c: CampaignProgress, line: LocoLine, name: string, act: (a: DepotAction) => void): HTMLElement {
+  const tiers = SHOP.filter((s) => s.line === line);
+  const have = tiers.filter((s) => c.owned.includes(s.id)).length;
+  const item = tiers[Math.min(have, tiers.length - 1)];
+  const owned = have === tiers.length;
+  const short = !owned && c.money < item.cost;
+  const label = `${name}: tier ${have} of ${tiers.length}`;
+  return h(
+    'div',
+    { class: `shop-item tiered ${owned ? 'owned' : ''}` },
+    h(
+      'span',
+      { class: 'tier', title: tiers.map((s, i) => `${i + 1}. ${s.name}, ${money(s.cost)}`).join('\n') },
+      h('span', { class: 'tier-name', text: name }),
+      h('span', { class: 'tier-pips', ariaLabel: label }, ...tiers.map((s) => h('span', { class: `pip ${c.owned.includes(s.id) ? 'on' : ''}` }))),
+    ),
+    h('span', { class: 'shop-text' }, h('strong', { text: item.name }), h('span', { class: 'shop-blurb', text: item.blurb })),
+    owned
+      ? h('span', { class: 'owned-tag', text: 'Owned' })
+      : button(money(item.cost), () => act({ kind: 'buy', item: item.id }), 'btn small-btn buy', {
+          disabled: short,
+          title: short ? `Not enough money: it costs ${money(item.cost)}` : `Buy the ${item.name} for ${money(item.cost)}: ${name.toLowerCase()} tier ${have + 1}`,
+        }),
+  );
 }

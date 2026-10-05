@@ -87,7 +87,10 @@ campaign (Acts I and II). Money earned from contracts buys cars and upgrades bet
    unticked. While the seats switch, the depot and Start wait. If the new room can't open, or the
    Engineer drops out first, nothing changes and the lobby says why.
 3. **Briefing.** The run's name and flavor, the contract, and "new this time" lines for each seat,
-   plus controls. Both press Ready, then a 3-2-1 countdown.
+   plus controls. Both press Ready, then a 3-2-1 countdown. A run leaving its origin (a new run, the
+   next, a restart) first opens with its shot: 6.5 s of the engine pulling out under the run's title
+   (§18.4), on both screens at once. Continuing or retrying from a checkpoint, and resuming from a
+   pause, go straight to the countdown.
 4. **The run.** The train starts stopped at the origin station. Departing a checkpoint station, after
    its dwell, saves a checkpoint.
 5. **Pause.** Esc on either side. Both press Ready to resume.
@@ -226,6 +229,10 @@ slower train is easier to board.
 - `F = TRACTIVE_MAX (60 kN) × throttle × min(1, pressure / FULL_POWER_PSI (160)) × reverser`
 - `resist = ROLL (0.02) + DRAG (0.0007) × v²`, opposing motion. A light train tops out near
   27 m/s (60 mph), and a heavy one near 20 m/s (45 mph), which is slow enough for horsemen to board.
+- The loco's tiers (§12) change both: the power tiers multiply `TRACTIVE_MAX` by 1.15, 1.3 or 1.5,
+  and the speed tiers multiply `DRAG` by 0.9, 0.8 or 0.7 (top speed goes as 1/√ of it: +5, +12,
+  +20%). Each factor is the whole gain over stock; the highest tier owned in a line counts
+  (`tractiveMax()`, `dragCoef()` in `rules.ts`).
 - `grade = GRAVITY × grade × (direction of travel on that edge)`, using the grade under the loco.
 - `brake = brake × BRAKE_MAX (1.1 m/s²)`, opposing motion. The `airBrakes` upgrade multiplies it by 1.35.
 - The train can't reverse through zero by braking. When `|v| < 0.05`, with no net force to overcome
@@ -352,6 +359,19 @@ the runaway, a junction signal read before choosing a route. Everyday signals ar
 train passes them**, straight from the line: a yellow arm or lamp means the next signal is at stop,
 so the Engineer, who knows exactly where that signal is, can stop at it (§9).
 
+**The scout alert** says when to look. A "!" in a brass caution diamond comes up at the edge of the
+Rider's view when something worth a look lies past the end the train runs toward, from where the
+glass starts at its shortest reach (about 13 m) out to the spyglass's reach now: cattle, rocks or a
+barricade on the line, riders waiting in ambush, another train or the runaway on our own track, or a
+signal facing the train at stop. What the Engineer calls from the map (tunnels, bridges, fords) never
+raises it. There's one badge however many things there are, and it never says what or how far. A
+thing stops counting once it has been in plain view, or in the settled glass for 0.1 s, for the rest
+of the game (a signal seen at clear counts again when it drops to stop). The "!" sits at the right
+edge, or the left while the train backs faster than 0.3 m/s (until it's backing slower than
+0.1 m/s), and shows only to a Rider on the train and not at the spyglass. It pops for something new
+and fades back in after the spyglass. What the Rider has seen is presentation state, kept by the
+renderer per game (`render/rider/scout.ts`), never the sim's.
+
 ### 6.6 Interactions (E)
 
 - **Water spout:** §5.5.
@@ -462,8 +482,9 @@ A signal governs trains moving in its `facing` direction. Its **block** runs fro
 next signal facing the same way along the current route (following the switches as they are now), at
 most 2.5 km.
 
-- **Block signal:** `stop` if the block contains an active obstacle or any part of another train (or
-  the runaway); else `approach` if the next signal shows `stop`; else `clear`.
+- **Block signal:** `stop` if the block contains a rockslide or barricade still on the line, or any
+  part of another train (or the runaway); else `approach` if the next signal shows `stop`; else
+  `clear`. Cattle never count: nothing lineside can tell a herd is there, so the Rider has to spot it.
 - **Junction signal** (for the junction just beyond it): the route is whichever leg the switch
   selects. `stop` if that route's block is obstructed. Otherwise:
   - normal leg: `clear` (or `approach` if the next signal shows `stop`);
@@ -613,8 +634,14 @@ In local test mode, only the arrows, H, 1–9 and Tab work, since the Rider has 
   | headlamp | 90 |
   | armored car | 220 |
   | caboose | 160 |
+  | power1 (Bored-out cylinders), power2 (Balanced slide valves), power3 (Vauclain compound) | 120, 240, 400 |
+  | speed1 (Babbitt bearings), speed2 (Balanced drivers), speed3 (Tall drivers) | 100, 200, 350 |
 
   Express, passenger and boxcar are always available.
+- **The loco's tiers** come in two lines, power and speed (§5.3), and each tier needs the one below
+  it: the depot sells them in order and refuses a tier out of order by naming the lowest one
+  missing. The shop shows a line as one row: a pip per tier, filled when owned, and the next tier to
+  buy. A save never keeps a tier without the one below it. The depot's top speed counts the tiers.
 - **Consist:** the run's `requiredCars` are always included. Optional cars you own can be added up to
   `maxCars`. Heavier trains are slower (§5.3), which is the trade-off.
 - **Assists** (per seat, in the depot, on or off):
@@ -628,8 +655,8 @@ Act I is Iron Horse (runs 1–3). Act II is Single Track (runs 4–6).
 | # | Run | New | Contract |
 |---|---|---|---|
 | 1 | First Light (Juniper → Coyote Bend, dawn) | Throttle and brake, station stop, tunnel, low-bridge and ford calls, a curve limit, horsemen | Mail, $120, not critical |
-| 2 | Payroll to Pale Rock | A junction: the long main line with a tunnel, or the short Dry Gulch cutoff (steep, bandit ambush). The safe. Water towers and the spout. The lurch. Starts with 55 water. | Payroll, $220, critical |
-| 3 | Signal Country | Block and junction signals and the rulebook. Two variants: a rockslide on one of two routes. Cattle and the whistle. Set piece: **the Devil's Trestle**, burning, crossed at ≥ 30 mph just after a 30 mph curve. | Silver, $260, critical |
+| 2 | Payroll to Pale Rock | A junction: the long main line with a tunnel, or the short Dry Gulch cutoff (steep, bandit ambush). The safe. Water towers and the spout. The lurch. Cattle and the whistle. Starts with 55 water. | Payroll, $220, critical |
+| 3 | Signal Country | Block and junction signals and the rulebook. Two variants: a rockslide on one of two routes. Set piece: **the Devil's Trestle**, burning, crossed at ≥ 30 mph just after a 30 mph curve. | Silver, $260, critical |
 | 4 | Single Track | Passing loops, the timetable chart, an opposing freight (meet at a loop), block signals protecting the single line. Side job: passengers. | Bank cash, $240, critical |
 | 5 | Night Freight | Night: lamps only, a shorter spyglass. Two meets: an opposing freight and an overtaking express. Dynamite: the powder car, with horsemen shooting at it. | Dynamite, $300, critical |
 | 6 | The Blackwater Line | Everything, plus **the Runaway** (divert it into the quarry spur) and the gang's boss, Black Jack Harlan (8 HP, goes for the safe). A barricade ambush. | Gold, $400, critical |
@@ -643,13 +670,22 @@ Difficulty rises through the network size, the number of simultaneous demands, w
 timetable tightness and night. Waves grow from 3 tier-1 horsemen in run 1 to 5–6 mixed-tier horsemen
 plus the boss in run 6.
 
+**The bandits' rhythm.** Each plan meets 5, 5, 6, 5, 6 and 7 waves, chases from the rear and
+ambushes ahead, a new one at least every three minutes of driving (a meet's wait doesn't count) and
+none within 30 s of the last, save the boss's gang. Where the variants take different roads, each
+road gets its own waves. There are breathers at the set pieces: no wave rides in from 500 m short of
+a burning trestle's run-up until it's crossed, from a meet siding's junction signal until the hold is
+over, or from 500 m short of the runaway's trigger until past its switch (save the gang at the
+barricade). **Herds** stand on the line from run 2 (one there, two or three a run after that), each
+with a plan whistle point 170 m before it, 600 m or more from the next herd.
+
 **The Rider's rhythm.** Every run has at least 7 track hazards for the people on the train (tunnels,
 low bridges and fords), about one every minute of driving, mixing "get down" (tunnels), "get up"
 (fords) and "crouch" (bridges). Fords arrive in run 1.
 
 ## 14. Tunables
 
-All live in `src/sim/rules.ts`, grouped as simulation (`TICK_HZ`, `SNAPSHOT_HZ`, `COUNTDOWN_SECONDS`),
+All live in `src/sim/rules.ts`, grouped as simulation (`TICK_HZ`, `SNAPSHOT_HZ`, `COUNTDOWN_SECONDS`, `INTRO_SECONDS`),
 train, boiler, limits, stations, obstacles, signals, Rider, weapons, bandits, economy, and car
 specs. The values are the numbers in this spec.
 
@@ -711,9 +747,13 @@ around the train in train-frame coordinates, plus the tick's events (for effects
 
 ### 16.1 Topology and rates
 
-The Rider hosts (Clew's `PeerHost`, room id `spur-<CODE>`). The sim runs at 60 Hz. The host sends the
-Engineer:
-- `EngineerView` snapshots at 15 Hz;
+The Rider hosts (Clew's `PeerHost`, room id `spur-<CODE>`). The sim runs at 60 ticks to a second of
+the world, and the world runs `TIME_SCALE` (1.25) times the wall clock, so the host steps 75 ticks a
+real second. The sim never sees the scale: what shows a player a duration counts wall-clock seconds
+(the Ahead list's ETAs and when a row turns urgent, a flag's age, the respawn count), and the
+engine's beats and rail clicks keep the pace the drivers turn on screen. The game clock (the
+timetable, the deadline) is the world's. The host sends the Engineer:
+- `EngineerView` snapshots at 15 a real second (every 5 ticks);
 - filtered events as they happen;
 - acks for commands.
 
@@ -725,7 +765,8 @@ the last value wins. Transport, chunking, goodbyes, reconnects and TURN work exa
 
 `hello` (with the Engineer's copy of the campaign, if their browser has one, §17), `welcome`,
 `reject`, `ready`, `lobby`, `depot` (a client action in the lobby: toggle a car, buy an item, toggle
-an assist), `start`, `snapshot`, `event`, `cmd`, `ack`, `pause`, `countdown`, `ping`, `pong`,
+an assist), `start`, `snapshot`, `event`, `cmd`, `ack`, `pause`, `countdown` (its seconds, after the
+opening shot's, 0 for none), `ping`, `pong`,
 `result` and `debug` (dev only). Switching seats (§3): `switchSeats` (the Engineer ticks or unticks
 the box), `switchBegin` (both have: open a room), `switchRoom` (its code) or `switchFailed`, then
 `switchSave` (the save to host with). The checkpoint, and with it the seed, only crosses the wire in
@@ -818,7 +859,7 @@ scoped. Layers, back to front:
 9. effects: muzzle flashes, tracers, sparks, smoke, steam, wind streaks, tunnel darkness, night
    lighting
 10. HUD: hearts, ammo, weapon, a train strip at the top (cars, the Rider, bandits aboard, safe status,
-    hold-up), prompts, spyglass vignette and range, respawn countdown
+    hold-up), prompts, spyglass vignette and range, the scout alert's "!" (§6.5), respawn countdown
 
 Everything is drawn procedurally with Canvas 2D. There are no image assets.
 
@@ -833,6 +874,27 @@ cattle lowing (a questioning low when they get used to the whistle, a bellow whe
 The Engineer hears the cab (muffled gunfire from outside). In local test mode, only the Rider's
 audio plays.
 
+### 18.4 The opening shot
+
+When a run leaves its origin, both seats see the same 6.5 s before the countdown (`INTRO_SECONDS`),
+drawn procedurally like everything else and timed from the countdown message:
+
+- **0–1 s:** up from black between letterbox bars, tight on the crosshead, guides and cylinder of a
+  4-4-0 standing at the platform. Steam curls from the cylinder cocks, the safety valve blows off and
+  the bell swings and rings.
+- **1 s:** the throttle's clank. The cocks roar and the drivers start to turn: side rods, main rod,
+  crosshead, and a Walschaerts-style valve gear rocking its link. The ties, the telegraph poles, the
+  flat and the ridges slide past at their depths; the mesas barely move.
+- **About 2.1 s, the first exhaust beat:** the title is stamped on: the act and run, the run's name in
+  Rye, a brass rule, "origin → destination · departs time". One long whistle.
+- **To 6.5 s:** the engine works up to about 20 mph, the beats quickening and the stack's smoke laid
+  back over the train, while the camera draws back to the whole engine. Then the shot fades onto the
+  play screen and the numbers.
+
+The sky and light are the run's own at its start time (dawn for *First Light*, night for *Night
+Freight*, with the headlamp lit). Every exhaust beat heard is a quarter turn of the drivers and a puff
+from the cocks and the stack. With screen shake off, the camera holds still and the title only fades.
+
 ## 19. Dev tools and testing
 
 - **Query params** (dev builds): `?local=1` (every build), `?join=CODE` (every build), `?run=N`,
@@ -846,7 +908,8 @@ audio plays.
   tunnels, low bridges), shooting and line of sight, bandits (spawn, pacing, boarding, cracking, loot,
   hold-up, powder), game (win and loss, checkpoints round-trip through JSON), views (the leak test),
   content (well-formedness, plus the autopilot completing every run and variant before the deadline),
-  net (local pair, sessions), save, and a soak test (bots play every run for 8 simulated minutes,
+  net (local pair, sessions), save, the opening shot (its timeline, the engine's beats landing on the
+  drivers' quarter turns, whole frames), and a soak test (bots play every run for 8 simulated minutes,
   checking invariants every tick).
 
 ## 20. Milestones
@@ -879,6 +942,18 @@ The first playtest's notes, and what changed (details in the sections above; cho
 | Slamming the brakes should cost a heart if the Rider doesn't crouch | Thrown off their feet, the Rider loses a heart (§5.2) |
 | The flames should force the Rider into a certain position | A burning trestle burns everyone outside the cars: get inside (§4.3) |
 | The Engineer should see something when held up | An outlaw at the desk, gun levelled (§11) |
+
+Round 3 (the same day), from the user's own play:
+
+| Note | Change |
+|---|---|
+| A slammed bandit should stay down longer | A bandit thrown by the lurch staggers 1.8 s; the Rider still 0.6 s (§5.2) |
+| The outlaw should say different things | Twelve lines, a new one every 6 s, never the same twice running (§11) |
+| The Rider still spends most of the time in the spyglass; a "!" when there's something to scout | The scout alert (§6.5); signals no longer give a herd away (§9.2) |
+| More bandits and cattle | Half as many waves again; herds from run 2 on, up to three a run (§13) |
+| The world should run about 25% faster | `TIME_SCALE` 1.25: the host steps 75 ticks a real second (§16.1) |
+| Speed and power upgrades for the train, in tiers | Two lines of three loco tiers (§5.3, §12) |
+| A short cutscene as a run starts, to set the mood | The opening shot: the running gear getting under way, train sounds, the run's title (§3, §18.4) |
 
 ## 22. Out of scope for v1
 

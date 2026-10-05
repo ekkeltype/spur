@@ -381,7 +381,13 @@ export type UpgradeId =
   | 'governor'
   | 'headlamp'
   | 'armored'
-  | 'caboose';
+  | 'caboose'
+  | 'power1'
+  | 'power2'
+  | 'power3'
+  | 'speed1'
+  | 'speed2'
+  | 'speed3';
 
 export interface Assists {
   /** +2 hearts and aim assist. */

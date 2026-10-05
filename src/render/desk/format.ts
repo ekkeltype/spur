@@ -2,7 +2,7 @@
 // miles, and a 12-hour clock). Pure: tests/desk.test.ts imports this under Node. The menus use
 // the same distance format (ui/text.ts).
 
-import { MILE, MPH, YARD } from '../../sim/rules';
+import { MILE, MPH, TIME_SCALE, YARD } from '../../sim/rules';
 import type { AnyRun } from '../../sim/network';
 
 const DAY = 24 * 3600;
@@ -84,13 +84,22 @@ export function windowYards(m: number): string {
 const ETA_MIN_SPEED = 0.3;
 
 /**
- * How long until the train covers `dist` metres at `speed` (m/s, + = toward it): what the Engineer
- * calls out ("Tunnel in 5 seconds!"). "—" when standing or backing away.
+ * Real seconds until the train covers `dist` metres at `speed` (the sim's m/s, + = toward it):
+ * the world runs TIME_SCALE times the wall clock, and the players count on the wall clock.
+ * Infinity when standing or backing away.
+ */
+export function secondsTo(dist: number, speed: number): number {
+  return speed < ETA_MIN_SPEED ? Infinity : Math.max(0, dist) / (speed * TIME_SCALE);
+}
+
+/**
+ * How long until the train covers `dist` metres at `speed` (m/s, + = toward it), in real seconds:
+ * what the Engineer calls out ("Tunnel in 5 seconds!"). "—" when standing or backing away.
  */
 export function formatEta(dist: number, speed: number): string {
   if (dist <= 0) return 'now';
   if (speed < ETA_MIN_SPEED) return '—';
-  const t = Math.round(dist / speed);
+  const t = Math.round(secondsTo(dist, speed));
   if (t < 1) return 'now';
   if (t < 60) return `${t} s`;
   if (t < 600) return formatMmSs(t);

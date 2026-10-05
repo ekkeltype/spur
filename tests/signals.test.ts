@@ -217,14 +217,19 @@ describe('aspects', () => {
     expect(aspects(s, run)).toEqual(ALL_CLEAR);
   });
 
-  it('scattering cattle still obstruct; obstacles that are gone, or that a train went through, do not', () => {
+  it('rocks obstruct until a train goes through them or they are gone; cattle never do', () => {
     const run = signalRun();
     const s = game(run);
-    const cattle = addObstacle(s, 'e1', 700, 'cattle', 'scattering');
+    const rocks = addObstacle(s, 'e1', 700, 'rocks');
     expect(aspectOf(s, run, 'b1')).toBe('stop');
-    cattle.state = 'hit'; // pushed aside or smashed through by a train: the line is open again
+    rocks.state = 'hit'; // smashed through by a train: the line is open again
     expect(aspectOf(s, run, 'b1')).toBe('clear');
-    cattle.state = 'gone';
+    rocks.state = 'gone';
+    expect(aspectOf(s, run, 'b1')).toBe('clear');
+    // Nothing lineside can tell a herd is there, standing or scattering: the Rider has to spot it.
+    const cattle = addObstacle(s, 'e1', 650, 'cattle');
+    expect(aspectOf(s, run, 'b1')).toBe('clear');
+    cattle.state = 'scattering';
     expect(aspectOf(s, run, 'b1')).toBe('clear');
   });
 });

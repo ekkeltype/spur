@@ -12,7 +12,7 @@ The full design is in [`spur-spec.md`](spur-spec.md). Choices made where the spe
 
 1. **The Rider** opens the game and chooses **Host as Rider**. The lobby shows a five-character room code.
 2. **The Engineer** opens the same URL, chooses **Join as Engineer** and types the code.
-3. In the depot, pick a run, couple the cars you want (an extra express, passenger car or boxcar carries paying cargo, but a heavier train is slower), spend your earnings in the shop, and both press **Ready**. The Rider presses **Start**. Read the briefing, press Ready again, and go.
+3. In the depot, pick a run, couple the cars you want (an extra express, passenger car or boxcar carries paying cargo, but a heavier train is slower), spend your earnings in the shop, and both press **Ready**. The Rider presses **Start**. Read the briefing and press Ready again: the run opens with a few seconds of the engine pulling out under its title, then a 3-2-1, and you go.
 
 To switch seats, both players tick **Switch seats** in the depot: the Engineer becomes the Rider (and hosts), the Rider becomes the Engineer, and the campaign goes with you. Both browsers keep a copy of the campaign, so either of you can host the next session.
 
@@ -29,7 +29,7 @@ A run is lost by:
 
 After a loss you can retry from the last station.
 
-The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, *Signal Country*, *Single Track*, *Night Freight* and *The Blackwater Line*. Contracts and cargo pay money, which buys guns, gear, cars and upgrades.
+The v1 campaign is six runs in two acts: *First Light*, *Payroll to Pale Rock*, *Signal Country*, *Single Track*, *Night Freight* and *The Blackwater Line*. Contracts and cargo pay money, which buys guns, gear, cars and upgrades, among them two lines of locomotive tiers: power (pulls harder) and speed (runs faster), each tier bought after the one below it.
 
 Nowhere on the train is safe from everything. Tunnels sweep everyone above the car floors off the train, fords wash off everyone below the roofs, low bridges knock down anyone standing on a roof or the tender top, and a burning trestle burns anyone outside the cars. The Engineer sees them coming and calls them; the Rider gets down, gets up or crouches. Speeds are in mph and distances in yards and miles.
 
@@ -43,7 +43,7 @@ Nowhere on the train is safe from everything. Tunnels sweep everyone above the c
 | Mouse, left click | Aim and fire |
 | R | Reload |
 | Q, or 1–3 | Switch weapon (revolver, coach gun, rifle, once bought) |
-| Shift or right mouse (hold) | Spyglass: look far down the line (cattle, a barricade, a runaway). Move the pointer right to look farther; click to plant a flag on the Engineer's map (one at a time). Signals you read as the train passes them |
+| Shift or right mouse (hold) | Spyglass: look far down the line when a **!** shows at the edge of the view (cattle, a barricade, a runaway, riders in wait, a red signal). Move the pointer right to look farther; click to plant a flag on the Engineer's map (one at a time). Signals you read as the train passes them |
 | E | On the tender by the hatch, at a water tower: lower the spout |
 | Esc | Pause |
 
@@ -92,7 +92,7 @@ Debug keys (the Rider's keyboard):
 | `K` | Kill every bandit |
 | `N` | Skip 500 m down the line |
 
-Dev-only pages: `/rider.html` (the Rider's renderer with staged scenes), `/desk.html` (the Engineer's desk against a fake train), `/sfx.html` (every sound).
+Dev-only pages: `/rider.html` (the Rider's renderer with staged scenes), `/desk.html` (the Engineer's desk against a fake train), `/sfx.html` (every sound), `/intro.html` (a run's opening shot on a loop: click to replay it with sound; `?run=N`, `?t=2.5` to freeze a moment, `?motion=0`).
 
 ### Tuning
 
@@ -140,4 +140,4 @@ src/
 tests/               Vitest suites
 ```
 
-The Rider's browser is the host. It runs the authoritative simulation at 60 Hz and sends the Engineer only their view: 15 snapshots a second, plus filtered events. `toEngineerView()` and `filterForEngineer()` are the only producers of what the Engineer receives, and `tests/views.test.ts` checks that bandits, obstacles, signal aspects and the runaway never leak into it.
+The Rider's browser is the host. It runs the authoritative simulation at 60 ticks to a second of the world, and the world runs a quarter faster than the wall clock (`TIME_SCALE`); what shows a player a duration counts real seconds. It sends the Engineer only their view: 15 snapshots a second, plus filtered events. `toEngineerView()` and `filterForEngineer()` are the only producers of what the Engineer receives, and `tests/views.test.ts` checks that bandits, obstacles, signal aspects and the runaway never leak into it.

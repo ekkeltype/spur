@@ -2,8 +2,8 @@
 // names of things. Units are the railroad's (spec §0 note 6): mph, yards and miles, and tons.
 
 import { formatDistance } from '../render/desk/format';
-import { CAR_SPECS, DRAG, HORSE_MAX, MPH, ROLL, TRACTIVE_MAX } from '../sim/rules';
-import type { Cargo, CarKind, LossReason, Medal } from '../sim/types';
+import { CAR_SPECS, dragCoef, HORSE_MAX, MPH, ROLL, tractiveMax } from '../sim/rules';
+import type { Cargo, CarKind, LossReason, Medal, UpgradeId } from '../sim/types';
 
 /** Seconds since midnight as a railroad clock: "2:15 PM". */
 export function formatClock(sec: number): string {
@@ -60,9 +60,9 @@ export function trainMass(consist: readonly CarKind[]): number {
  * Top speed on the level at full throttle and full pressure (spec §5.3): where F/m = ROLL + DRAG·v².
  * An estimate for the depot; grades and pressure change it on the line.
  */
-export function topSpeed(massTonnes: number): number {
-  const a = TRACTIVE_MAX / Math.max(1, massTonnes) - ROLL;
-  return a > 0 ? Math.sqrt(a / DRAG) : 0;
+export function topSpeed(massTonnes: number, upgrades: readonly UpgradeId[] = []): number {
+  const a = tractiveMax(upgrades) / Math.max(1, massTonnes) - ROLL;
+  return a > 0 ? Math.sqrt(a / dragCoef(upgrades)) : 0;
 }
 
 /** Horsemen can board at up to this speed (spec §7.2). */
